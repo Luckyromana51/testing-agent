@@ -1,0 +1,42 @@
+{
+  "name": "glv-testing-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI testing agent: scans websites for broken links, errors, accessibility, SEO and security issues, with Claude triage.",
+  "type": "module",
+  "bin": {
+    "glvtest": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web \"tsx watch src/server.ts\" \"vite --config web/vite.config.ts\"",
+    "build": "tsc -p tsconfig.json && vite build --config web/vite.config.ts",
+    "start": "node dist/server.js",
+    "scan": "tsx src/cli.ts",
+    "demo-site": "tsx test/fixtures/demo-site.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.9.0",
+    "@axe-core/playwright": "^4.14.0",
+    "@fastify/static": "^8.3.0",
+    "fastify": "^5.12.8",
+    "playwright": "1.63.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^10.0.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.6"
+  }
+}
