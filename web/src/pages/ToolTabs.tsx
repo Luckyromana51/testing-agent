@@ -2,8 +2,10 @@ import { useState } from "react";
 import type { AgentInfo } from "../../../src/agents/types.ts";
 import type { ToolChoice } from "../../../src/tools/types.ts";
 import type { ProductType } from "../../../src/types.ts";
-import type { Meta, MetaTool } from "../api.ts";
+import { api, type Meta, type MetaTool } from "../api.ts";
 import { CATEGORY_LABEL } from "../lib.ts";
+
+const WEB_PRODUCTS: ProductType[] = ["website", "ecommerce", "webapp", "saas", "crm"];
 
 /** Which tools are on, and their options, while the tester is choosing. */
 export type ToolDraft = Record<string, { on: boolean; options: Record<string, string> }>;
@@ -20,9 +22,15 @@ export function toolDraft(meta: Meta, type: ProductType, saved?: ToolChoice[]): 
   const draft: ToolDraft = {};
   for (const t of toolsForType(meta, type)) {
     const s = saved?.find((c) => c.id === t.id);
+    const needsFile = (t.options ?? []).some((o) => o.required);
     draft[t.id] = {
-      on: saved ? Boolean(s) : t.ready && t.safety === "safe",
-      options: Object.fromEntries((t.options ?? []).map((o) => [o.id, s?.options?.[o.id] ?? o.default])),
+      on: saved ? Boolean(s) : t.ready && t.safety === "safe" && !needsFile,
+      options: Object.fromEntries(
+        (t.options ?? []).flatMap((o) => [
+          [o.id, s?.options?.[o.id] ?? o.default],
+          ...(o.kind === "file" && s?.options?.[`${o.id}:name`] ? [[`${o.id}:name`, s.options[`${o.id}:name`]]] : []),
+        ]),
+      ),
     };
   }
   return draft;
@@ -59,6 +67,21 @@ export function ToolTabs({
   const [active, setActive] = useState("glv");
   const tool = tools.find((t) => t.id === active);
   const set = (id: string, patch: Partial<ToolDraft[string]>) => onChange({ ...draft, [id]: { ...draft[id], ...patch } });
+  const [uploading, setUploading] = useState<string>();
+  const [uploadError, setUploadError] = useState<string>();
+  const missingFile = tool ? (tool.options ?? []).some((o) => o.required && !draft[tool.id]?.options[o.id]) : false;
+  const loginNote = (t: MetaTool) =>
+    WEB_PRODUCTS.includes(type)
+      ? t.signedIn === "uses-login"
+        ? "With a saved login, it tests the signed-in pages too, using the same session."
+        : "Tests what anyone on the internet can reach; it does not use the saved login."
+      : type === "api"
+        ? t.signedIn === "uses-login"
+          ? "Uses the project's saved API login."
+          : "Does not use the saved login."
+        : t.signedIn === "uses-login"
+          ? "Reads the code on this server; uses the saved Git token only to download more history."
+          : "Reads the code on this server; nothing is sent to the client's systems.";
 
   return (
     <div className="tool-tabs-wrap">
@@ -122,14 +145,51 @@ export function ToolTabs({
               ))}
             </ul>
             <div className="muted small">
-              {tool.signedIn === "uses-login"
-                ? "With a saved login, it tests the signed-in pages too, using the same session."
-                : "Tests what anyone on the internet can reach; it does not use the saved login."}{" "}
-              Findings count towards {CATEGORY_LABEL[tool.category]}.
+              {loginNote(tool)} Findings count towards {CATEGORY_LABEL[tool.category]}.
             </div>
             {(tool.options ?? []).length > 0 && (
               <div className="form-row tool-options">
-                {tool.options!.map((o) => (
+                {tool.options!.map((o) =>
+                  o.kind === "file" ? (
+                    <div className="form-field tool-file" key={o.id}>
+                      <span>{o.label}</span>
+                      <label className={`btn ${draft[tool.id]?.options[o.id] ? "" : "primary"} small`}>
+                        {uploading === o.id ? "Uploading…" : draft[tool.id]?.options[o.id] ? "Replace file" : `Upload ${o.accept ?? ""} file`}
+                        <input
+                          type="file"
+                          accept={o.accept}
+                          hidden
+                          disabled={!tool.ready || uploading === o.id}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (!file) return;
+                            setUploading(o.id);
+                            setUploadError(undefined);
+                            try {
+                              const up = await api.upload(file);
+                              set(tool.id, { on: true, options: { ...draft[tool.id].options, [o.id]: up.file, [`${o.id}:name`]: up.fileName } });
+                            } catch (err) {
+                              setUploadError((err as Error).message);
+                            } finally {
+                              setUploading(undefined);
+                            }
+                          }}
+                        />
+                      </label>
+                      <span className="small">
+                        {draft[tool.id]?.options[o.id] ? (
+                          <>
+                            Using <strong>{draft[tool.id].options[`${o.id}:name`] ?? "the uploaded file"}</strong>
+                          </>
+                        ) : (
+                          "Nothing uploaded yet."
+                        )}
+                      </span>
+                      {o.hint && <span className="muted small">{o.hint}</span>}
+                      {uploadError && <span className="error-text small">{uploadError}</span>}
+                    </div>
+                  ) : (
                   <label className="form-field" key={o.id}>
                     <span>{o.label}</span>
                     <select
@@ -144,15 +204,22 @@ export function ToolTabs({
                         </option>
                       ))}
                     </select>
+                    {o.hint && <span className="muted small">{o.hint}</span>}
                   </label>
-                ))}
+                  ),
+                )}
               </div>
             )}
             {!tool.ready && <div className="tool-missing">Not available on this server: {tool.notReady}</div>}
             <div className="tool-foot">
               <label className="check dark">
-                <input type="checkbox" checked={Boolean(draft[tool.id]?.on)} disabled={!tool.ready && !draft[tool.id]?.on} onChange={(e) => set(tool.id, { on: e.target.checked })} /> Run{" "}
-                {tool.name} in this test
+                <input
+                  type="checkbox"
+                  checked={Boolean(draft[tool.id]?.on)}
+                  disabled={(!tool.ready || missingFile) && !draft[tool.id]?.on}
+                  onChange={(e) => set(tool.id, { on: e.target.checked })}
+                />{" "}
+                Run {tool.name} in this test{missingFile && !draft[tool.id]?.on ? " (upload the file first)" : ""}
               </label>
               <a href={tool.homepage} target="_blank" rel="noreferrer" className="small">
                 About {tool.name} ↗

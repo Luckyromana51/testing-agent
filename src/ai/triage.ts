@@ -25,7 +25,7 @@ export function compactFindings(findings: Finding[], limit = 60, unit = "page"):
     .slice(0, limit)
     .map(
       ({ first: f, severity, pages }) =>
-        `- [${severity}] [${f.category}] ${f.title} (${pages.length} ${unit}(s), e.g. ${f.pageUrl})${
+        `- [${severity}] [${f.category}]${f.agent?.startsWith("tool.") ? ` [found by ${f.agent.slice(5)}]` : ""} ${f.title} (${pages.length} ${unit}(s), e.g. ${f.pageUrl})${
           f.evidence ? ` evidence: ${f.evidence.split("\n").slice(0, 2).join(" | ").slice(0, 200)}` : ""
         }`,
     )
@@ -50,7 +50,13 @@ export async function summariseWithClaude(result: ScanResult): Promise<AiSummary
         ? `An automated offline test checked ${result.startUrl} (source code or a mobile app)`
         : `An automated scan of ${result.startUrl} tested ${result.pages.length} page(s)`;
   const prompt = `You are a senior QA and security engineer at a software agency. ${what}.
-${result.notes?.length ? `\nWhat was tested:\n${result.notes.map((n) => `- ${n}`).join("\n")}\n` : ""}
+${result.notes?.length ? `\nWhat was tested:\n${result.notes.map((n) => `- ${n}`).join("\n")}\n` : ""}${
+    result.tools?.length
+      ? `\nOutside tools that ran in the same test (their findings are in the list below):\n${result.tools
+          .map((t) => `- ${t.name}: ${t.status === "untested" ? `could not run (${t.untested})` : [t.tested, ...(t.summary ?? [])].filter(Boolean).join("; ")}`)
+          .join("\n")}\n`
+      : ""
+  }
 Scores out of 100: ${Object.entries(result.scores)
     .map(([k, v]) => `${k} ${v}`)
     .join(", ")}. Overall ${result.overallScore}.
@@ -58,7 +64,7 @@ Scores out of 100: ${Object.entries(result.scores)
 Findings (grouped by rule):
 ${compactFindings(result.findings, 60, unit) || "- none"}
 
-Write a summary for the product owner and pick the fixes with the biggest impact on users, security${kind === "web" ? " and search ranking" : " and release readiness"}. Ignore info-level items unless nothing else exists. Base everything only on the findings above; do not invent issues.`;
+Write a summary for the product owner and pick the fixes (for packages, name the version to upgrade to) with the biggest impact on users, security${kind === "web" ? " and search ranking" : " and release readiness"}. Ignore info-level items unless nothing else exists. Base everything only on the findings above; do not invent issues.`;
 
   const response = await client.beta.messages.parse({
     model,

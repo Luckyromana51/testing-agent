@@ -1,0 +1,93 @@
+# GLV rules for Java and Kotlin. Written by GLV Infotech for the testing platform.
+rules:
+  - id: glv.java.sql-injection
+    languages: [java]
+    severity: ERROR
+    message: >-
+      SQL query built by joining text (SQL injection). Use a PreparedStatement with ?
+      placeholders and setString or setInt.
+    metadata:
+      glv-same-as: "code:sql-injection"
+      glv-title: "SQL query built by joining text (SQL injection)"
+      cwe: "CWE-89"
+    patterns:
+      - pattern-either:
+          - pattern: $S.executeQuery("..." + $X)
+          - pattern: $S.executeUpdate("..." + $X)
+          - pattern: $S.execute("..." + $X)
+          - pattern: $C.prepareStatement("..." + $X)
+          - pattern: $EM.createQuery("..." + $X)
+          - pattern: $EM.createNativeQuery("..." + $X)
+          - pattern: $J.queryForList("..." + $X, ...)
+          - pattern: $J.queryForObject("..." + $X, ...)
+          - pattern: $J.update("..." + $X, ...)
+          - pattern: $S.executeQuery(String.format(...))
+
+  - id: glv.java.command-injection
+    languages: [java]
+    severity: WARNING
+    message: >-
+      A command is run from text that is not fixed (command injection risk). Pass a fixed
+      program and an argument list, and check every value.
+    metadata:
+      glv-same-as: "code:command-injection"
+      glv-title: "Command run from text that is not fixed (command injection)"
+      cwe: "CWE-78"
+    patterns:
+      - pattern-either:
+          - pattern: Runtime.getRuntime().exec($CMD)
+          - pattern: new ProcessBuilder("sh", "-c", $CMD)
+          - pattern: new ProcessBuilder("bash", "-c", $CMD)
+          - pattern: new ProcessBuilder("cmd", "/c", $CMD)
+      - pattern-not: Runtime.getRuntime().exec("...")
+      - pattern-not: new ProcessBuilder("sh", "-c", "...")
+      - pattern-not: new ProcessBuilder("bash", "-c", "...")
+
+  - id: glv.java.unsafe-deserialize
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Java deserialization of outside data can run code (ObjectInputStream.readObject). Use
+      JSON, or a filter that allows only known classes.
+    metadata:
+      glv-same-as: "code:unsafe-deserialize"
+      glv-title: "Data read with Java deserialization, which can run code"
+      cwe: "CWE-502"
+    pattern-either:
+      - pattern: new ObjectInputStream(...).readObject()
+      - pattern: new java.io.ObjectInputStream(...).readObject()
+      - pattern: (ObjectInputStream $IN).readObject()
+      - pattern: (java.io.ObjectInputStream $IN).readObject()
+
+  - id: glv.java.trust-all-certs
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Every certificate or host name is accepted, so anyone on the network can read and change
+      the traffic. Remove the trust-all code and use the default checks.
+    metadata:
+      glv-same-as: "code:tls-verify-off"
+      glv-title: "Certificate checks turned off"
+      cwe: "CWE-295"
+    pattern-either:
+      - pattern: |
+          public void checkServerTrusted(...) {}
+      - pattern: |
+          public void checkServerTrusted(...) throws $E {}
+      - pattern: $X.setHostnameVerifier((...) -> true)
+      - pattern: SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER
+      - pattern: NoopHostnameVerifier.INSTANCE
+
+  - id: glv.java.weak-cipher
+    languages: [java]
+    severity: WARNING
+    message: >-
+      A weak or broken cipher is used (DES, RC4, or AES in ECB mode). Use AES/GCM/NoPadding.
+    metadata:
+      glv-title: "Weak or broken cipher"
+      cwe: "CWE-327"
+    patterns:
+      - pattern: Cipher.getInstance("$ALG", ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          regex: "(?i)^(DES|DESede|RC4|RC2|Blowfish|AES)(/ECB/.*)?$|^.*/ECB/.*$"

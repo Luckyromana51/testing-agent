@@ -257,8 +257,9 @@ export async function scanCode(opts: CodeScanOptions): Promise<ScanResult> {
   }
 
   const bytes = tree.files.reduce((s, f) => s + f.size, 0);
-  log(`Read ${tree.files.length} text files (${(bytes / 1e6).toFixed(1)} MB)`);
-  notes.push(`Tested ${tree.files.length.toLocaleString("en-IN")} text files (${(bytes / 1e6).toFixed(1)} MB) from ${label}.`);
+  const size = bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} KB` : `${(bytes / 1e6).toFixed(1)} MB`;
+  log(`Read ${tree.files.length} text files (${size})`);
+  notes.push(`Tested ${tree.files.length.toLocaleString("en-IN")} text files (${size}) from ${label}.`);
   if (tree.skippedDirs.length) {
     notes.push(`Skipped installed packages and build output: ${tree.skippedDirs.slice(0, 5).join(", ")}${tree.skippedDirs.length > 5 ? " and more" : ""}.`);
   }

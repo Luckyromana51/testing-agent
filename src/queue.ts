@@ -194,8 +194,10 @@ export class ScanQueue {
             target: project.target,
             choices,
             cookie,
+            login,
             secrets: [...secretsOf(login, project.target.repoUrl), ...cookieValues],
             artifactsDir: this.artifactsDir(run.id),
+            uploadsDir: this.uploadsDir(),
             workDir,
             signal,
             log: (m) => {

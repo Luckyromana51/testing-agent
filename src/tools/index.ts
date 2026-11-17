@@ -1,10 +1,17 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { finding } from "../runner/finding.js";
 import { scoreFindings } from "../runner/score.js";
-import type { AgentStat, Category, Finding, ProductType, ProjectTarget, ScanResult } from "../types.js";
+import type { AgentStat, Category, Finding, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
 import { redact } from "../vault.js";
+import { gitleaksTool } from "./gitleaks.js";
 import { lighthouseTool } from "./lighthouse.js";
+import { newmanTool } from "./newman.js";
+import { opengrepTool } from "./opengrep.js";
+import { osvTool } from "./osv.js";
+import { schemathesisTool } from "./schemathesis.js";
+import { sourceDirFor, specFileFor } from "./source.js";
+import { trivyTool } from "./trivy.js";
 import { nucleiTool } from "./nuclei.js";
 import { testsslTool } from "./testssl.js";
 import type { Tool, ToolChoice, ToolFinding, ToolInfo, ToolOutput, ToolStat } from "./types.js";
@@ -14,7 +21,22 @@ import { zapTool } from "./zap.js";
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
 /** Every outside tool the platform can run, in the order of their tabs. Add new tools here. */
-export const TOOLS: Tool[] = [lighthouseTool, vnuTool, zapTool, nucleiTool, testsslTool];
+export const TOOLS: Tool[] = [
+  // Websites and web apps
+  lighthouseTool,
+  vnuTool,
+  zapTool,
+  nucleiTool,
+  testsslTool,
+  // APIs
+  schemathesisTool,
+  newmanTool,
+  // Source code
+  gitleaksTool,
+  opengrepTool,
+  osvTool,
+  trivyTool,
+];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);
 
@@ -55,6 +77,17 @@ export function cleanChoices(product: ProductType, input: unknown): ToolChoice[]
     const options: Record<string, string> = {};
     for (const opt of tool.options ?? []) {
       const v = c.options?.[opt.id];
+      if (opt.kind === "file") {
+        // An upload's stored name (from POST /api/uploads), and the name the tester knows it by.
+        if (v && !/^[0-9a-f-]{36}\.json$/.test(v)) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
+        if (!v && opt.required) throw new Error(`${tool.name}: upload the ${opt.label} first, or turn ${tool.name} off.`);
+        if (v) {
+          options[opt.id] = v;
+          const name = c.options?.[`${opt.id}:name`];
+          if (typeof name === "string") options[`${opt.id}:name`] = name.replace(/[^\w. ()-]/g, "_").slice(0, 200);
+        }
+        continue;
+      }
       if (v === undefined) continue;
       if (!opt.choices.some((ch) => ch.value === v)) throw new Error(`${tool.name}: "${v}" is not a choice for ${opt.label}.`);
       options[opt.id] = v;
@@ -72,7 +105,7 @@ export async function defaultChoices(product: ProductType): Promise<ToolChoice[]
   if (process.env.DEFAULT_TOOLS === "none") return [];
   const status = await toolStatus();
   return toolsFor(product)
-    .filter((t) => t.safety === "safe" && status[t.id] === null)
+    .filter((t) => t.safety === "safe" && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
     .map((t) => ({ id: t.id }));
 }
 
@@ -82,12 +115,18 @@ export interface ToolRunInput {
   choices: ToolChoice[];
   /** Cookie header of the signed-in session, when the test signed in. */
   cookie?: string;
+  /** The project's saved login, for tools that use it (API keys for Schemathesis, a Git token for history). */
+  login?: Login;
   /** Secrets to hide from every tool's findings and reports. */
   secrets: string[];
   artifactsDir: string;
+  uploadsDir: string;
   workDir: string;
   signal: AbortSignal;
   log: (message: string) => void;
+  /** The command line's local folder of code, or its local OpenAPI file, instead of the project's. */
+  sourceDir?: string;
+  specFile?: string;
 }
 
 const host = (u: string) => {
@@ -97,14 +136,34 @@ const host = (u: string) => {
     return "";
   }
 };
+const pathOf = (u: string) => {
+  try {
+    return new URL(u).pathname;
+  } catch {
+    return u;
+  }
+};
+/** Case and a "v" before a version do not matter: "Django@v3.2.0" is "django@3.2.0". */
+const norm = (s: string) => s.toLowerCase().replace(/@v(?=\d)/g, "@");
+/** "/users/{id}" matches the end of "/v1/users/1". */
+const endpointRe = (template: string) =>
+  new RegExp(`${template.split(/\{[^}]+\}/).map((p) => p.replace(/[.*+?^$()|[\]\\]/g, "\\$&")).join("[^/]+")}/?$`);
+
 /**
- * Folds a tool's finding into the platform's own finding for the same problem on the same site,
- * when there is one. The platform reports a site-wide problem (a missing header) once, while ZAP
- * reports it on every page: without this, one problem would be counted as two issues.
+ * Folds a tool's finding into a finding already in the report for the same problem: the
+ * platform's own (a missing header ZAP also reports on every page, a leaked key Gitleaks also
+ * found), or an earlier tool's (the same vulnerable package from Trivy and OSV-Scanner). Without
+ * this, one problem would be counted as two issues. Returns true when it was folded.
  */
-function fold(f: ToolFinding, own: Finding[], toolName: string): boolean {
-  if (!f.sameAs?.length) return false;
-  const match = own.find((o) => f.sameAs!.includes(o.rule) && host(o.pageUrl) === host(f.pageUrl));
+function fold(f: ToolFinding, own: Finding[], byKey: Map<string, Finding>, toolName: string): boolean {
+  const scope = f.sameScope ?? "site";
+  const where = (o: Finding) => {
+    if (scope === "file") return o.pageUrl === f.pageUrl && (!f.sameText || norm(`${o.title}\n${o.evidence ?? ""}`).includes(norm(f.sameText)));
+    if (host(o.pageUrl) !== host(f.pageUrl)) return false;
+    if (scope === "endpoint") return Boolean(f.sameText) && endpointRe(f.sameText!).test(pathOf(o.pageUrl));
+    return !f.sameText || `${o.title}\n${o.evidence ?? ""}`.includes(f.sameText);
+  };
+  const match = (f.sameAs?.length ? own.find((o) => f.sameAs!.includes(o.rule) && where(o)) : undefined) ?? (f.key ? byKey.get(f.key) : undefined);
   if (!match) return false;
   const note = ` Also found by ${toolName}.`;
   if (!match.detail.includes(note)) match.detail += note;
@@ -124,7 +183,7 @@ async function scrub(file: string, secrets: string[]): Promise<void> {
 /** The addresses tools work on: the pages the crawl opened, or the API's base address and endpoints. */
 function startOf(result: ScanResult, product: ProductType, target: ProjectTarget): string {
   if (product === "api") {
-    const base = target.url ?? result.pages[0]?.url ?? result.startUrl;
+    const base = target.url || result.pages[0]?.url || result.startUrl;
     try {
       return new URL(base).origin + "/";
     } catch {
@@ -141,13 +200,24 @@ function startOf(result: ScanResult, product: ProductType, target: ProjectTarget
  */
 export async function runTools(result: ScanResult, input: ToolRunInput): Promise<ScanResult> {
   const { signal, log } = input;
-  const startUrl = startOf(result, input.product, input.target);
+  // An API project without its own base address uses the one the engine took from the API file.
+  const apiBase = result.scanned?.[1];
+  const target =
+    input.product === "api" && !input.target.url && apiBase && /^https?:\/\//.test(apiBase) ? { ...input.target, url: apiBase } : input.target;
+  const startUrl = startOf(result, input.product, target);
   const urls = result.pages.map((p) => p.url).filter((u) => /^https?:/.test(u));
   const own = result.findings;
   const added: Finding[] = [];
+  const byKey = new Map<string, Finding>();
   const stats: AgentStat[] = [];
   const tools: ToolStat[] = [];
   const secrets = input.secrets.filter((s) => s.length >= 6);
+  // Code tools read the project's files from disk: the clone, or the uploaded zip unpacked once.
+  const sourceDir =
+    input.sourceDir ?? (input.choices.length ? await sourceDirFor(input.product, input.target, input.uploadsDir, input.workDir).catch(() => undefined) : undefined);
+  const specFile = input.specFile ?? specFileFor(input.product, input.target, input.uploadsDir);
+  // Tools write their own reports next to the run's screenshots; code and API runs have none yet.
+  if (input.choices.length) await mkdir(input.artifactsDir, { recursive: true });
 
   for (const choice of input.choices) {
     const tool = toolById(choice.id);
@@ -165,10 +235,14 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
       try {
         out = await tool.run({
           product: input.product,
-          target: input.target,
+          target,
           startUrl,
           urls,
           ...(input.cookie && tool.signedIn === "uses-login" ? { cookie: input.cookie } : {}),
+          ...(input.login && tool.signedIn === "uses-login" ? { login: input.login } : {}),
+          ...(sourceDir ? { sourceDir } : {}),
+          ...(specFile ? { specFile } : {}),
+          uploadsDir: input.uploadsDir,
           options,
           outDir: input.artifactsDir,
           workDir: input.workDir,
@@ -186,12 +260,14 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
       for (const r of out.reports ?? []) await scrub(path.join(input.artifactsDir, r.file), secrets).catch(() => {});
       let merged = 0;
       for (const f of out.findings) {
-        if (fold(f, own, tool.name)) {
+        if (fold(f, own, byKey, tool.name)) {
           merged++;
           continue;
         }
-        const { sameAs: _s, ...rest } = f;
-        added.push(finding({ ...rest, agent: `tool.${tool.id}` }));
+        const { sameAs: _s, sameScope: _sc, sameText: _t, key, ...rest } = f;
+        const made = finding({ ...rest, agent: `tool.${tool.id}` });
+        added.push(made);
+        if (key) byKey.set(key, made);
       }
       Object.assign(stat, {
         findings: out.findings.length - merged,

@@ -108,11 +108,18 @@ Well-known testing tools run in the same test as the platform's agents. Their fi
 | OWASP ZAP (passive) | Web types and API | Over 60 passive security rules: headers, cookies, information leaks, unsafe forms | Yes |
 | Nuclei | Web types and API | Thousands of community checks: known CVEs, exposed files and panels, wrong server and DNS settings | No |
 | TLS check (testssl.sh) | Web types and API | TLS versions, weak ciphers, the certificate, and known TLS attacks, with a grade | No |
+| Schemathesis | API | Tens of generated calls per GET endpoint from the OpenAPI file: server errors, answers that break the schema, wrong status codes and content types, endpoints that work without a valid login. Each problem comes with the request that shows it | Yes (API login) |
+| Newman (Postman) | API | Runs the team's own Postman collection (uploaded in the tab) and reports every test that fails. Only its GET requests are sent | Yes (API login) |
+| Gitleaks | Source code | More than 150 kinds of keys and tokens in the code, and optionally in the whole Git history (a deleted key is still in old commits) | Git token, for the history |
+| Opengrep, with GLV's own rules | Source code | Follows request data through the code to SQL, shell commands, file paths, redirects and HTML: 40 rules for JavaScript/TypeScript, Python, PHP, Java, Go and C# | No |
+| OSV-Scanner (Google) | Source code | Every package in the lockfiles against Google's OSV database: npm, pnpm, yarn, pip, Poetry, Composer, Go, Cargo, Maven, Gradle, NuGet, Pub, Gems; malware packages too | No |
+| Trivy (Aqua Security) | Source code | A second package database, plus unsafe Dockerfile, Kubernetes, Helm, Terraform and Compose settings, and package licences (AGPL, GPL) that may not allow closed-source client delivery | No |
 
 How they are kept safe and accurate:
 
-- **Safe tools only for now.** ZAP only looks at the pages the test already opened (GET requests): no spider, no form posts, no active scan. Nuclei leaves out every check tagged as an attack, flood, password guess or call to an outside service, and every check that sends POST, PUT, PATCH or DELETE. A test in `tools.test.ts` checks that nothing but GET reaches the site. Tools that attack or load a site come later, behind a permission step.
-- **One problem is shown once.** When a tool finds what a platform check already found (a missing header, a slow LCP, the public .env file), the tool's copy is folded into the platform's finding ("Also found by OWASP ZAP") instead of counting twice.
+- **Safe tools only for now.** ZAP only looks at the pages the test already opened (GET requests): no spider, no form posts, no active scan. Nuclei leaves out every check tagged as an attack, flood, password guess or call to an outside service, and every check that sends POST, PUT, PATCH or DELETE. Schemathesis tests GET operations only, and its coverage phase is told not to try other methods (by default it sends POST, PUT and DELETE to every path to see they are refused). Newman runs only the GET and HEAD requests of a collection, leaves out scripts that send requests of their own (`pm.sendRequest`), refuses addresses on the server's own network, and cannot read files outside its work folder. Tests in `tools.test.ts` and `tools-code-api.test.ts` count the requests and check nothing but GET reaches the site or API. Tools that attack, write or load a site come later, behind a permission step.
+- **Code is never run.** The code tools only read files. OSV-Scanner's call analysis (which builds the code, and runs Rust build scripts) is switched off. Gitleaks uses its own rules, not a `.gitleaks.toml` in the project, so a project cannot switch its own checks off. The Git history is fetched with the same rules as the clone: https only, never this server's own Git logins.
+- **One problem is shown once.** When a tool finds what a platform check already found (a missing header, a slow LCP, the public .env file, a leaked key in the same file, a crash on the same endpoint), the tool's copy is folded into the platform's finding ("Also found by OWASP ZAP") instead of counting twice. Two tools that find the same vulnerable package (Trivy and OSV-Scanner) give one finding too.
 - **Never counted as passed.** A tool that is switched on but cannot run (not installed, timed out, its checks not downloaded) makes the test "incomplete" and says why, and its issues stay open until it runs again.
 - **Logins stay hidden.** With a saved web login, Lighthouse, the HTML checker and ZAP test the signed-in pages with the same session. The session cookie is passed in a file, not on the command line, and is replaced with `[hidden]` in every finding and in each tool's own report (Lighthouse copies request headers into its report). Each tool's HTML report opens in a browser sandbox, so it cannot read the dashboard's data.
 - **Speed findings settle over two runs.** Lighthouse's speed findings follow the same two-run rule as the platform's own (below).
@@ -120,7 +127,11 @@ How they are kept safe and accurate:
 
 Tests started without a tool choice (the API, a quick test, projects made before the tabs existed) run every safe tool that is installed on the server. Set `DEFAULT_TOOLS=none` to run only the platform's own checks unless tools are chosen.
 
-**Installing the tools.** The Docker image includes Lighthouse, Java for the W3C HTML checker, testssl.sh and Nuclei (built from source at a fixed version, with its community checks downloaded when the image is built), and `docker compose` starts OWASP ZAP 2.17.0 in its own container that only the app can reach. Without Docker, `npm install` brings Lighthouse and the HTML checker (it needs Java); install testssl.sh and Nuclei yourself, run ZAP in daemon mode and set `ZAP_URL` and `ZAP_API_KEY`. The tabs show any tool that is missing as "Not available on this server", with the reason. On a server, set your own random `ZAP_API_KEY` in `.env`.
+**Why GLV's own Opengrep rules.** The free rule packs (Semgrep's registry rules, and the opengrep-rules fork of them) are under licences that do not allow selling a service built on them: the Opengrep rules repository carries the Commons Clause and says it is for "research, testing & benchmarking". GLV sells testing to clients, so the platform ships its own rules in `rules/opengrep/`, written for it, with examples in `test/opengrep/` that each rule must find (`ruleid:`) and must not find (`ok:`). `opengrep scan --test` checks them all; the tests run it when Opengrep (or Semgrep CE, through `OPENGREP_PATH`) is installed. A project's own rules can be added in a later phase.
+
+**Installing the tools.** The Docker image includes Lighthouse, Java for the W3C HTML checker, testssl.sh, Schemathesis 4.32.7 (in its own Python folder) and Newman 6.2.3 (in its own Node folder, so its old dependencies never load into the app). Nuclei 3.11.1, Gitleaks 8.30.1, OSV-Scanner 2.7.0 and Trivy 0.76.1 are built from source at those versions; Go checks every module against its public checksum database, which is how Trivy is installed safely after its release binaries were hijacked in March 2026 (v0.69.4 and the Docker tags 0.69.5 and 0.69.6). Opengrep 1.30.0's release binary is downloaded and its signature checked with cosign; if it cannot be verified it is left out. `docker compose` starts OWASP ZAP 2.17.0 in its own container that only the app can reach. Trivy downloads its vulnerability database on its first run and keeps it in the data volume (`trivy-cache`, about 2 GB unpacked), updating it at most once a day. Without Docker, `npm install` brings Lighthouse and the HTML checker (it needs Java); install the others yourself, run ZAP in daemon mode and set `ZAP_URL` and `ZAP_API_KEY`. The tabs show any tool that is missing as "Not available on this server", with the reason. On a server, set your own random `ZAP_API_KEY` in `.env`.
+
+**SARIF and JUnit.** Every finished test can be downloaded from its report (Download): SARIF for GitHub code scanning, GitLab, Azure DevOps and security dashboards (code findings point at the file and line), and JUnit XML for CI test reports (a failed test per issue, a skipped test for a check that could not run). The command line writes both next to `report.json`. Schemathesis and Newman also attach their own JUnit files.
 
 ## Logged-in testing and the login vault
 
@@ -193,9 +204,13 @@ npm run scan -- code .                      # the folder you are in (or a repo U
 npm run scan -- apk app-release.apk
 # or after npm run build:
 node dist/cli.js code . --fail-on high
+# add outside tools (a list, or all for every installed one):
+node dist/cli.js code . --tools gitleaks,opengrep,osv-scanner,trivy --fail-on high
+node dist/cli.js api ./openapi.json --tools schemathesis
+node dist/cli.js tools                      # which tools are installed on this machine
 ```
 
-`--fail-on high` exits with code 1 if anything high or critical is found, so it can block a deploy in GitHub Actions or GitLab CI. The full report is written to `glvtest-report/report.json` with screenshots alongside it.
+`--fail-on high` exits with code 1 if anything high or critical is found, so it can block a deploy in GitHub Actions or GitLab CI. The full report is written to `glvtest-report/report.json` with screenshots alongside it, and `report.sarif` and `report.junit.xml` next to it for GitHub code scanning and CI test views.
 
 ## Run on GLV servers (Docker)
 
@@ -311,4 +326,4 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
-- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): Schemathesis, Newman, Opengrep, Gitleaks, OSV-Scanner and Trivy next; then MobSF, k6 and ZAP active scans behind a permission step
+- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): a permission step for tools that send changes or attacks, then ZAP active scans, k6 load tests, MobSF for Android and iOS apps, screenshot compare and PDF reports

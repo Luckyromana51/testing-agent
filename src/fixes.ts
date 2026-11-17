@@ -524,11 +524,123 @@ const ENGINE_FIXES: Record<string, Fix> = {
   "android:16kb-pages": { steps: "Update the libraries that ship these .so files to versions built for 16 KB pages, or rebuild your own native code with NDK r28 or newer and Android Gradle Plugin 8.5.1 or newer. Test on the Android 15 16 KB emulator image.", effort: "hours" },
 };
 
+/* Outside tools: their findings get the platform's written fix for the same problem. */
+/** The upgrade command for the package named in the finding ("lodash 4.17.15 in package-lock.json has ... Upgrade to 4.17.21 or newer."). */
+function packageUpgrade(detail: string): Fix {
+  const steps =
+    "Upgrade the package to the version named above or newer, then run the tests. If another package brings it in, upgrade that one, or pin the fixed version (npm overrides, a pip constraint, a Go require).";
+  const m = detail.match(/^(\S+) \S+ in (\S+) has/);
+  const to = detail.match(/Upgrade to (\S+) or newer/)?.[1];
+  if (!m || !to) return { steps, effort: "hours" };
+  const [, name, file] = m;
+  const base = file.split("/").pop() ?? file;
+  const how: [RegExp, string, string][] = [
+    [/^(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?)$/, "npm", `npm install ${name}@${to}`],
+    [/^(requirements.*\.txt|Pipfile(\.lock)?|poetry\.lock|pyproject\.toml|uv\.lock)$/, "requirements.txt", `${name}>=${to}`],
+    [/^go\.(mod|sum)$/, "Go", `go get ${name}@v${to.replace(/^v/, "")} && go mod tidy`],
+    [/^composer\.(json|lock)$/, "Composer", `composer require ${name}:^${to}`],
+    [/^Gemfile(\.lock)?$/, "Bundler", `bundle update ${name}`],
+    [/^Cargo\.(toml|lock)$/, "Cargo", `cargo update -p ${name} --precise ${to}`],
+  ];
+  const hit = how.find(([re]) => re.test(base));
+  return { steps, ...(hit ? { code: [{ label: hit[1], snippet: hit[2] }] } : {}), effort: "hours" };
+}
+const LICENCE_CHECK: Fix = {
+  steps:
+    "Check the licence against how the product reaches the client. If it is delivered closed-source or run as an online service, replace the package with one under MIT, Apache-2.0 or BSD, or buy a commercial licence from its makers.",
+  effort: "hours",
+};
+const POSTMAN_TEST: Fix = {
+  steps:
+    "Send the same request from Postman to the same server and compare the answer with the test. If the API is wrong, fix the API; if it changed on purpose, update the test in the collection and export it again.",
+  effort: "hours",
+};
+/** GLV's Opengrep rules (glv.<language>.<name>): the platform rule with the same fix, or a fix of their own. */
+const OPENGREP_SAME: Record<string, string> = {
+  "eval-input": "code:eval",
+  eval: "code:eval",
+  unserialize: "code:unsafe-deserialize",
+  pickle: "code:unsafe-deserialize",
+  "unsafe-yaml": "code:unsafe-deserialize",
+  "dom-xss": "code:xss",
+  "react-raw-html": "code:xss",
+  "trust-all-certs": "code:tls-verify-off",
+};
+const OPENGREP_FIXES: Record<string, Fix> = {
+  ssrf: {
+    steps: "Do not fetch addresses taken from the request. Keep a list of allowed hosts, check the parsed host against it, and block private and cloud metadata addresses (10.x, 192.168.x, 169.254.169.254).",
+    code: [{ label: "Node", snippet: "const u = new URL(input);\nif (!ALLOWED_HOSTS.includes(u.hostname)) throw new Error('Host not allowed');" }],
+    effort: "hours",
+  },
+  "open-redirect": {
+    steps: "Only redirect to paths on your own site, or to addresses on a fixed list. Reject anything that starts with // or a scheme.",
+    code: [{ label: "Node", snippet: "const next = String(req.query.next ?? '/');\nres.redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/');" }],
+    effort: "minutes",
+  },
+  "path-traversal": {
+    steps: "Never join request input into a file path directly. Resolve the full path and check it is still inside the folder you allow, or look the file up by an id.",
+    code: [
+      { label: "Node", snippet: "const full = path.resolve(BASE, name);\nif (!full.startsWith(BASE + path.sep)) throw new Error('Not allowed');" },
+      { label: "Python", snippet: "full = (BASE / name).resolve()\nif not full.is_relative_to(BASE): abort(400)" },
+    ],
+    effort: "hours",
+  },
+  "cors-any-origin-credentials": {
+    steps: "List the exact sites that may call the API with cookies. Never reflect the request's Origin or use * together with credentials.",
+    code: [{ label: "Express (cors)", snippet: "app.use(cors({ origin: ['https://app.example.com'], credentials: true }));" }],
+    effort: "minutes",
+  },
+  "weak-cipher": {
+    steps: "Use AES-GCM (or ChaCha20-Poly1305) from the platform's crypto library instead of DES, RC4 or ECB mode, and re-encrypt stored data with the new cipher.",
+    code: [{ label: "Java", snippet: 'Cipher.getInstance("AES/GCM/NoPadding")' }],
+    effort: "hours",
+  },
+};
+const SCHEMATHESIS_SAME: Record<string, string> = {
+  ST101: "api:server-error",
+  ST103: "api:undocumented-status",
+  ST105: "api:json-content-type",
+  ST108: "api:schema-mismatch",
+  ST109: "api:invalid-json",
+  ST401: "api:auth-bypass",
+};
+
+const written = (rule: string): Fix | undefined => FIXES[rule] ?? ENGINE_FIXES[rule];
+
+/** The written fix for an outside tool's finding, when the platform has one for the same problem. */
+function toolFix(rule: string, detail: string): Fix | undefined {
+  const [tool, id = ""] = rule.split(/:(.*)/s);
+  switch (tool) {
+    case "pkg":
+      return packageUpgrade(detail);
+    case "gitleaks":
+      return ROTATE_SECRET;
+    case "opengrep": {
+      const name = id.split(".").pop() ?? "";
+      if (name === "hardcoded-jwt-secret") return ROTATE_SECRET;
+      return OPENGREP_FIXES[name] ?? written(OPENGREP_SAME[name] ?? `code:${name}`);
+    }
+    case "trivy": {
+      if (id === "licence") return LICENCE_CHECK;
+      // Trivy's own advice for a settings problem, without repeating the problem itself.
+      const advice = detail.match(/ Fix: (.+)$/s)?.[1];
+      return advice ? { steps: advice, effort: "minutes" } : undefined;
+    }
+    case "schemathesis":
+      return written(SCHEMATHESIS_SAME[id] ?? "");
+    case "newman":
+      return id === "test-failed" ? POSTMAN_TEST : written("api:no-answer");
+  }
+  return undefined;
+}
+
 /** The fix for a finding, or a general one built from the finding's own text. */
 export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
   const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule];
   if (known) return known;
   if (/^(code|android):secret-/.test(f.rule)) return ROTATE_SECRET;
+  const tool = toolFix(f.rule, f.detail);
+  if (tool) return tool;
   if (f.rule.startsWith("axe:")) {
     const link = f.detail.match(/https:\/\/dequeuniversity\.com\S+/)?.[0];
     return {

@@ -29,6 +29,7 @@ function ctx(dir: string, startUrl: string, extra: Partial<ToolContext> = {}): T
     startUrl,
     urls: [startUrl],
     options: {},
+    uploadsDir: dir,
     outDir: dir,
     workDir: dir,
     signal: new AbortController().signal,
@@ -172,9 +173,9 @@ describe("choosing tools", () => {
   it("offers the right tools for each product type", () => {
     const ids = (p: Parameters<typeof cleanChoices>[0]) => TOOLS.filter((t) => t.products.includes(p)).map((t) => t.id);
     assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl"]);
-    assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl"]);
-    assert.deepEqual(ids("code"), []);
-    assert.ok(TOOLS.every((t) => t.safety === "safe"), "phase 1 has only safe tools");
+    assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "schemathesis", "newman"]);
+    assert.deepEqual(ids("code"), ["gitleaks", "opengrep", "osv-scanner", "trivy"]);
+    assert.ok(TOOLS.every((t) => t.safety === "safe"), "phases 1 and 2 have only safe tools");
   });
 });
 
@@ -229,6 +230,7 @@ describe("merging tools into one report", () => {
       cookie: COOKIE,
       secrets: [SECRET],
       artifactsDir: dir,
+      uploadsDir: dir,
       workDir: dir,
       signal: new AbortController().signal,
       log: () => {},
@@ -245,6 +247,42 @@ describe("merging tools into one report", () => {
     assert.deepEqual([fakeStat.status, fakeStat.findings, fakeStat.merged], ["done", 2, 1]);
     assert.equal(brokenStat.status, "untested");
     assert.deepEqual(merged.incomplete, ["Broken tool: Broken tool is not installed on this server."], "a tool that could not run makes the test incomplete");
+  });
+
+  it("gives API tools the base address from the API file, and a report folder, when the project has neither", async () => {
+    const seen: Partial<ToolContext>[] = [];
+    const apiFake: Tool = {
+      ...fake,
+      id: "api-fake",
+      products: ["api"],
+      async run(c) {
+        seen.push({ target: c.target, startUrl: c.startUrl });
+        await writeFile(path.join(c.outDir, "tool-api-fake.json"), "{}");
+        return { findings: [] };
+      },
+    };
+    TOOLS.push(apiFake);
+    try {
+      const engine = { ...result([], ["http://localhost:4260/v1/products"]), scanned: ["http://localhost:4260/openapi.json", "http://localhost:4260/v1"] };
+      const outDir = path.join(dir, "not-made-yet");
+      const merged = await runTools(engine, {
+        product: "api",
+        target: { specUrl: "http://localhost:4260/openapi.json", url: "" },
+        choices: [{ id: "api-fake" }],
+        secrets: [],
+        artifactsDir: outDir,
+        uploadsDir: dir,
+        workDir: dir,
+        signal: new AbortController().signal,
+        log: () => {},
+      });
+      assert.equal(merged.tools![0].status, "done", merged.tools![0].untested);
+      assert.equal(seen[0].target!.url, "http://localhost:4260/v1", "the address the engine tested, not the collection's own");
+      assert.equal(seen[0].startUrl, "http://localhost:4260/");
+      assert.equal(await readFile(path.join(outDir, "tool-api-fake.json"), "utf8"), "{}");
+    } finally {
+      TOOLS.splice(TOOLS.indexOf(apiFake), 1);
+    }
   });
 
   it("closes a tool's issue once the tool runs again without finding it, but not when it could not run", () => {
@@ -285,6 +323,7 @@ describe("the tools on a real site", () => {
       cookie: COOKIE,
       secrets: [SECRET],
       artifactsDir: dir,
+      uploadsDir: dir,
       workDir: dir,
       signal: new AbortController().signal,
       log: () => {},

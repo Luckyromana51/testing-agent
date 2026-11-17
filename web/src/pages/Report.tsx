@@ -93,6 +93,21 @@ export function Report({ id }: { id: string }) {
             Cancel test
           </button>
         )}
+        {run.result && (
+          <details className="download-menu">
+            <summary className="btn ghost">Download</summary>
+            <div className="download-list">
+              <a href={`/api/runs/${run.id}/report.sarif`} download>
+                <strong>SARIF</strong>
+                <span className="muted small">For GitHub code scanning, GitLab, Azure DevOps and security dashboards</span>
+              </a>
+              <a href={`/api/runs/${run.id}/report.junit.xml`} download>
+                <strong>JUnit XML</strong>
+                <span className="muted small">For CI test reports: Jenkins, GitLab, GitHub Actions</span>
+              </a>
+            </div>
+          </details>
+        )}
         {run.projectId && run.status !== "running" && run.status !== "queued" && (
           <button
             className="btn"
