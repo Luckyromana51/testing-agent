@@ -57,6 +57,25 @@ The dashboard runs on port 4000. Scan results and screenshots are kept in the `a
 
 Each scan uses about 1 to 2 CPU cores and 1 to 2 GB of RAM while running (an estimate, not yet measured). `SCAN_CONCURRENCY` (default 2) controls how many scans run at once.
 
+### Troubleshooting Docker
+
+**`exec /bin/sh: exec format error` during `RUN npm ci`**: Docker downloaded the image for the wrong processor type. The base image ships both Intel (amd64) and Apple Silicon/ARM (arm64) versions, so this usually means a `DOCKER_DEFAULT_PLATFORM` setting or an Intel build of Docker Desktop. Check with:
+
+```bash
+uname -m                                         # your machine: arm64 or x86_64
+docker version --format '{{.Server.Arch}}'       # what Docker runs: should match
+echo $DOCKER_DEFAULT_PLATFORM                    # should be empty
+```
+
+To build for Intel explicitly (works on Intel machines and, more slowly, on Apple Silicon through Rosetta):
+
+```bash
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose build --no-cache
+docker compose up -d
+```
+
+On a Mac laptop you can also skip Docker and run it with Node directly (see Quick start).
+
 ## API
 
 | Method | Path | What it does |
