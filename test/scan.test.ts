@@ -8,7 +8,9 @@ import { compactFindings } from "../src/ai/triage.js";
 import { isCrawlable, normaliseUrl, scanSite } from "../src/runner/scan.js";
 import { scoreFindings } from "../src/runner/score.js";
 import type { ScanResult } from "../src/types.js";
-import { startDemoSite } from "./fixtures/demo-site.js";
+import * as demo from "./fixtures/demo-site.js";
+
+const { startDemoSite } = demo;
 
 describe("url helpers", () => {
   it("normalises hashes and trailing slashes", () => {
@@ -105,9 +107,13 @@ describe("scanSite against the demo site", () => {
     assert.equal(scoreFindings([{ ...one, pageUrl: "a" }], 4).scores.seo, 94);
   });
   it("finds SEO problems", () => {
-    for (const r of ["seo:description-missing", "seo:img-alt", "seo:h1-multiple", "seo:lang-missing"]) {
+    for (const r of ["seo:description-missing", "seo:h1-multiple", "seo:canonical-missing"]) {
       assert.ok(rules().has(r), r);
     }
+  });
+  it("reports missing alt text and language once, not as both SEO and accessibility", () => {
+    assert.ok(rules().has("axe:image-alt") && rules().has("axe:html-has-lang"));
+    assert.ok(!rules().has("seo:img-alt") && !rules().has("seo:lang-missing"));
   });
   it("finds accessibility problems", () => {
     assert.ok([...rules()].some((r) => r.startsWith("axe:")));
@@ -117,6 +123,34 @@ describe("scanSite against the demo site", () => {
     for (const r of ["sec:no-https", "sec:csp-missing", "sec:version-disclosure", "sec:clickjacking"]) {
       assert.ok(rules().has(r), r);
     }
+  });
+  it("runs the specialist agents and records what each did", () => {
+    const stats = result.agentStats ?? [];
+    assert.ok(stats.length >= 15, `${stats.length} agents`);
+    assert.ok(stats.every((s) => s.errors === 0), JSON.stringify(stats.filter((s) => s.errors)));
+    assert.ok(result.findings.filter((f) => f.rule !== "page-error-status").every((f) => f.agent));
+  });
+  it("finds content mistakes", () => {
+    for (const r of ["content:placeholder", "content:broken-value", "content:copyright-old"]) assert.ok(rules().has(r), r);
+  });
+  it("finds form, file and search-engine problems", () => {
+    for (const r of [
+      "sec:password-over-http",
+      "forms:email-type",
+      "sec:exposed-env",
+      "seo:robots-blocks-all",
+      "seo:structured-data-invalid",
+      "seo:duplicate-title",
+    ]) {
+      assert.ok(rules().has(r), r);
+    }
+    assert.ok(!rules().has("seo:soft-404"), "the demo site answers 404 for missing pages");
+    const env = result.findings.find((f) => f.rule === "sec:exposed-env");
+    assert.ok(!env?.evidence?.includes("hunter2"), "secrets are masked in the report");
+  });
+  it("never follows log-out links", () => {
+    assert.ok(!result.pages.some((p) => p.url.includes("logout")));
+    assert.equal(demo.unsafeHits, 0);
   });
   it("finds the mobile overflow", () => {
     assert.ok(rules().has("mobile-overflow"));

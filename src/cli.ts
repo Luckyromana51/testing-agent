@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { aiEnabled, summariseWithClaude } from "./ai/triage.js";
 import { scanSite } from "./runner/scan.js";
 import { groupFindings } from "./group.js";
-import type { Severity } from "./types.js";
+import type { ProductType, Severity } from "./types.js";
 
 const HELP = `glvtest - GLV Testing Agent
 
@@ -14,6 +14,7 @@ Usage:
 
 Options:
   --pages <n>     Maximum pages to crawl (default 10)
+  --product <t>   website, ecommerce, webapp, saas or crm (default website)
   --out <dir>     Where to write report.json and screenshots (default ./glvtest-report)
   --no-links      Skip checking every link for 404s
   --no-a11y       Skip accessibility checks
@@ -30,6 +31,7 @@ async function main() {
     allowPositionals: true,
     options: {
       pages: { type: "string", default: "10" },
+      product: { type: "string", default: "website" },
       out: { type: "string", default: "glvtest-report" },
       "no-links": { type: "boolean", default: false },
       "no-a11y": { type: "boolean", default: false },
@@ -47,6 +49,7 @@ async function main() {
   const result = await scanSite({
     url: url.includes("://") ? url : `https://${url}`,
     maxPages: Number(values.pages),
+    product: values.product as ProductType,
     checkLinks: !values["no-links"],
     accessibility: !values["no-a11y"],
     artifactsDir: outDir,
