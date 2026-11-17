@@ -38,6 +38,12 @@ const PNG = Buffer.from(
 export function startDemoSite(port = 4100): Promise<Server> {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
+    // Like a real site moving from example.com to www.example.com: localhost redirects to 127.0.0.1.
+    const host = req.headers.host ?? "";
+    if (host.startsWith("localhost:")) {
+      res.writeHead(301, { location: `http://127.0.0.1:${host.split(":")[1]}${url.pathname}` }).end();
+      return;
+    }
     if (url.pathname === "/logo.png") {
       res.writeHead(200, { "content-type": "image/png" }).end(PNG);
       return;

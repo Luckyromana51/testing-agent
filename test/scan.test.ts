@@ -98,6 +98,18 @@ describe("scanSite against the demo site", () => {
   it("takes screenshots", () => {
     assert.ok(result.pages.every((p) => p.error || p.screenshot));
   });
+  it("follows a redirect to another host and keeps crawling there", async () => {
+    const redirected = await scanSite({
+      url: `http://localhost:${port}/`,
+      maxPages: 5,
+      checkLinks: false,
+      accessibility: false,
+      artifactsDir: dir,
+    });
+    assert.equal(redirected.pages[0].url, `http://127.0.0.1:${port}/`);
+    assert.equal(redirected.pages[0].redirectedFrom, `http://localhost:${port}/`);
+    assert.ok(redirected.pages.length >= 3, `crawled ${redirected.pages.length} pages`);
+  });
   it("builds a compact prompt for Claude", () => {
     const text = compactFindings(result.findings);
     assert.match(text, /\[critical\]/);

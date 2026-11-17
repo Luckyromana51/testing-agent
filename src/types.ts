@@ -27,6 +27,8 @@ export interface Finding {
 
 export interface PageResult {
   url: string;
+  /** The address we asked for, when the site redirected somewhere else. */
+  redirectedFrom?: string;
   status: number | null;
   title: string;
   loadMs: number | null;

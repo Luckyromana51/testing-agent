@@ -126,12 +126,14 @@ function signalFindings(url: string, s: PageSignals): Finding[] {
 
 async function scanPage(
   context: BrowserContext,
-  url: string,
+  requestedUrl: string,
   index: number,
   opts: ScanOptions,
   isFirst: boolean,
 ): Promise<{ result: PageResult; findings: Finding[]; links: string[] }> {
   const page = await context.newPage();
+  // Becomes the final address after redirects (http -> https, example.com -> www.example.com).
+  let url = requestedUrl;
   const signals = listen(page, url);
   const findings: Finding[] = [];
   const result: PageResult = { url, status: null, title: "", loadMs: null };
@@ -160,6 +162,9 @@ async function scanPage(
     const started = Date.now();
     res = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
     result.loadMs = Date.now() - started;
+    url = normaliseUrl(page.url());
+    result.url = url;
+    if (url !== requestedUrl) result.redirectedFrom = requestedUrl;
     // Give late scripts a moment to throw errors or fire requests.
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
     result.status = res?.status() ?? null;
@@ -314,6 +319,7 @@ async function scanPage(
 
 async function checkLinks(
   context: BrowserContext,
+  origin: string,
   linkSources: Map<string, string>,
   onProgress?: (m: string) => void,
 ): Promise<Finding[]> {
@@ -336,16 +342,45 @@ async function checkLinks(
       } catch (e) {
         error = (e as Error).message.split("\n")[0];
       }
+      const source = linkSources.get(link) ?? link;
+      const internal = new URL(link).origin === origin;
+      const ok = !error && status > 0 && status < 400;
       // 401/403/429 usually mean "blocked for bots", not broken.
-      if (error || (status >= 400 && ![401, 403, 429].includes(status))) {
+      if (ok || [401, 403, 429].includes(status)) continue;
+      if (internal) {
         out.push(
           finding({
             category: "functional",
             rule: "broken-link",
-            severity: status >= 500 || status === 404 || error ? "high" : "medium",
-            title: error ? `Link could not be reached` : `Broken link (HTTP ${status})`,
-            detail: `Linked from ${linkSources.get(link)}.${error ? ` ${error}` : ""}`,
-            pageUrl: linkSources.get(link) ?? link,
+            severity: "high",
+            title: error ? "Internal link could not be reached" : `Broken link (HTTP ${status})`,
+            detail: `Linked from ${source}.${error ? ` ${error}` : ""}`,
+            pageUrl: source,
+            evidence: link,
+          }),
+        );
+      } else if (status === 404 || status === 410) {
+        out.push(
+          finding({
+            category: "functional",
+            rule: "broken-external-link",
+            severity: "medium",
+            title: `Broken link to another website (HTTP ${status})`,
+            detail: `The page this links to no longer exists. Linked from ${source}.`,
+            pageUrl: source,
+            evidence: link,
+          }),
+        );
+      } else {
+        // Other sites often refuse automated checks (503, 999, timeouts), so this is not proof of a broken link.
+        out.push(
+          finding({
+            category: "functional",
+            rule: "unverified-external-link",
+            severity: "info",
+            title: "Link to another website could not be checked",
+            detail: `${error || `The site answered HTTP ${status}`}. Many sites block automated checks, so open it by hand to confirm. Linked from ${source}.`,
+            pageUrl: source,
             evidence: link,
           }),
         );
@@ -356,15 +391,49 @@ async function checkLinks(
   return out;
 }
 
+/** An HTTPS site should send visitors who type http:// to the secure version. */
+async function httpsRedirectFindings(context: BrowserContext, origin: string): Promise<Finding[]> {
+  const u = new URL(origin);
+  if (u.protocol !== "https:") return [];
+  const httpUrl = `http://${u.host}/`;
+  try {
+    const res = await context.request.get(httpUrl, { maxRedirects: 0, timeout: 15_000 });
+    const location = res.headers()["location"] ?? "";
+    if (res.status() >= 300 && res.status() < 400 && location.startsWith("https://")) return [];
+    if (res.status() < 300) {
+      return [
+        finding({
+          category: "security",
+          rule: "sec:no-https-redirect",
+          severity: "medium",
+          title: "The http:// address does not redirect to https://",
+          detail:
+            "Visitors who type the address without https:// get an unencrypted page. Add a permanent (301) redirect from HTTP to HTTPS.",
+          pageUrl: httpUrl,
+        }),
+      ];
+    }
+  } catch {
+    // Port 80 closed or unreachable: nothing is served insecurely.
+  }
+  return [];
+}
+
 /** Crawls a website from `opts.url` and runs every check on each page. */
 export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const startedAt = new Date().toISOString();
   const startUrl = normaliseUrl(opts.url);
-  const origin = new URL(startUrl).origin;
+  let origin = new URL(startUrl).origin;
   const maxPages = opts.maxPages ?? 20;
   await mkdir(opts.artifactsDir, { recursive: true });
 
-  const browser: Browser = await chromium.launch();
+  // Behind a company proxy, route both the browser and the link checker through it.
+  const proxyServer = process.env.HTTPS_PROXY || process.env.https_proxy;
+  const browser: Browser = await chromium.launch(
+    proxyServer
+      ? { proxy: { server: proxyServer, bypass: process.env.NO_PROXY || process.env.no_proxy } }
+      : {},
+  );
   const context = await browser.newContext({
     viewport: DESKTOP,
     userAgent:
@@ -381,7 +450,15 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     while (queue.length && pages.length < maxPages) {
       const url = queue.shift()!;
       opts.onProgress?.(`Testing page ${pages.length + 1}: ${url}`);
-      const r = await scanPage(context, url, pages.length, opts, pages.length === 0);
+      const isFirst = pages.length === 0;
+      const r = await scanPage(context, url, pages.length, opts, isFirst);
+      if (isFirst && r.result.redirectedFrom) {
+        // Follow the site to where it really lives, e.g. http://example.com -> https://www.example.com.
+        origin = new URL(r.result.url).origin;
+        seen.add(r.result.url);
+      } else if (r.result.redirectedFrom && pages.some((p) => p.url === r.result.url)) {
+        continue; // Another link that redirects to a page we already tested.
+      }
       pages.push(r.result);
       const source = linkSources.get(url);
       for (const f of r.findings) {
@@ -398,17 +475,18 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
           continue;
         }
         if (!/^https?:/.test(link)) continue;
-        if (!linkSources.has(link)) linkSources.set(link, url);
+        if (!linkSources.has(link)) linkSources.set(link, r.result.url);
         if (isCrawlable(link, origin) && !seen.has(link)) {
           seen.add(link);
           queue.push(link);
         }
       }
     }
+    findings.push(...(await httpsRedirectFindings(context, origin)));
     if (opts.checkLinks !== false) {
       // Pages we already visited were checked by loading them.
       for (const p of pages) linkSources.delete(p.url);
-      findings.push(...(await checkLinks(context, linkSources, opts.onProgress)));
+      findings.push(...(await checkLinks(context, origin, linkSources, opts.onProgress)));
     }
   } finally {
     await browser.close();
