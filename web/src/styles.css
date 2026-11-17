@@ -1709,3 +1709,68 @@ a.brand {
 .brand.dark .brand-sub {
   color: var(--muted);
 }
+
+/* File upload (APK, code zip, API file) */
+.file-drop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14px;
+  background: var(--bg);
+}
+.file-drop:hover {
+  border-color: var(--accent);
+}
+.file-drop.has-file {
+  border-style: solid;
+  border-color: var(--good);
+}
+.file-drop input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.file-drop svg {
+  flex: none;
+  color: var(--accent);
+}
+.or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.form-field.grow {
+  flex: 1;
+}
+
+/* "What was tested" notes on API, code and app reports */
+.notes-card {
+  margin-bottom: 20px;
+}
+.notes-head {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.notes-card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}

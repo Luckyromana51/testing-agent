@@ -3,7 +3,7 @@ import type { Fix } from "../../src/fixes.ts";
 import type { IssueStatus, ProductType, Severity } from "../../src/types.ts";
 import { scoreTone, STATUS_LABEL } from "./lib.ts";
 
-const ICON_PATHS: Record<ProductType | "issues" | "owner" | "projects" | "new" | "logout", string> = {
+const ICON_PATHS: Record<ProductType | "issues" | "owner" | "projects" | "new" | "logout" | "upload", string> = {
   website:
     "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9m0-18c-2.5 2.6-3.8 5.6-3.8 9s1.3 6.4 3.8 9M3.5 9h17M3.5 15h17",
   ecommerce: "M3 4h2l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.7a1.5 1.5 0 0 0 1.4-1.1L21 8H6.2M10 20.5h.01M17 20.5h.01",
@@ -18,6 +18,7 @@ const ICON_PATHS: Record<ProductType | "issues" | "owner" | "projects" | "new" |
   owner: "M12 3 4.5 6v5.5c0 4.5 3.2 8.4 7.5 9.5 4.3-1.1 7.5-5 7.5-9.5V6L12 3Z",
   projects: "M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v9a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V7Z",
   new: "M12 5v14M5 12h14",
+  upload: "M12 15.5V4M7.5 8.5 12 4l4.5 4.5M4.5 14.5v4A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5v-4",
   logout: "M15 4h3.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H15M10 16l-4-4 4-4M6 12h10",
 };
 

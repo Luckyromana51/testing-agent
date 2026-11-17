@@ -425,10 +425,110 @@ const FIXES: Record<string, Fix> = {
   "axe:scrollable-region-focusable": { steps: 'Let keyboard users scroll the area: add tabindex="0" to the scrollable element.', effort: "minutes" },
 };
 
+const ROTATE_SECRET: Fix = {
+  steps:
+    "1. Revoke the key or change the password now: it is already exposed to everyone who has the code. 2. Make a new one and load it from an environment variable or a secrets store. 3. Remove it from the code; if the repository is shared, also purge it from Git history (git filter-repo) because old commits keep it.",
+  code: [
+    { label: "Node.js", snippet: "const key = process.env.PAYMENT_API_KEY;" },
+    { label: "PHP", snippet: "$key = getenv('PAYMENT_API_KEY');" },
+    { label: ".gitignore", snippet: ".env\n.env.*\n!.env.example" },
+  ],
+  effort: "hours",
+};
+
+/** Fixes for the API, source code and Android engines. */
+const ENGINE_FIXES: Record<string, Fix> = {
+  // API
+  "api:down": { steps: "Check the API server is running and reachable from the internet, and that the base address in the API file (servers) is right.", effort: "hours" },
+  "api:no-answer": { steps: "Find why the endpoint hangs: a slow database query, a call to another service without a timeout, or a crash that leaves the request open. Add timeouts and log slow requests.", effort: "hours" },
+  "api:server-error": { steps: "Read the server log at the time of the test for the stack trace. Wrap the handler so unexpected errors become a clean 500 with a request id, and fix the cause.", effort: "hours" },
+  "api:missing-endpoint": { steps: "Either restore the route, or update the API file so it matches what is deployed. Generate the file from the code (for example with swagger-jsdoc or NestJS Swagger) so they cannot drift apart.", effort: "hours" },
+  "api:undocumented-auth": { steps: "Add the security requirement to this operation in the API file.", code: [{ label: "OpenAPI", snippet: "security:\n  - bearerAuth: []" }], effort: "minutes" },
+  "api:rate-limited": { steps: "Nothing to fix if the limit is intended. Allow-list the testing server's IP if you want full results.", effort: "minutes" },
+  "api:slow": { steps: "Time the database queries behind the endpoint and add indexes for the filters it uses. Cache answers that rarely change, and page long lists (limit and offset or cursor).", effort: "hours" },
+  "api:undocumented-status": { steps: "Add the status code the endpoint really returns to its responses in the API file, or change the code to return the documented one.", effort: "minutes" },
+  "api:invalid-json": { steps: "Build the answer with your framework's JSON serializer (res.json(), json_encode()) instead of joining strings, and check nothing prints warnings or debug output before the JSON.", effort: "hours" },
+  "api:not-json": { steps: "Check the route exists in the API server and is not caught by the website's catch-all route. Set Content-Type: application/json on every answer.", effort: "hours" },
+  "api:json-content-type": { steps: "Send Content-Type: application/json.", code: [{ label: "PHP", snippet: "header('Content-Type: application/json');" }, { label: "Express", snippet: "res.json(data);" }], effort: "minutes" },
+  "api:schema-mismatch": { steps: "Compare the answer with the schema in the API file and fix whichever is wrong. Add a contract test so a change to either side fails the build.", effort: "hours" },
+  "api:refusal-200": { steps: "Return 401 Unauthorized (no or bad login) or 403 Forbidden (logged in but not allowed) instead of 200 with an error message.", code: [{ label: "Express", snippet: "return res.status(401).json({ error: 'Login required' });" }, { label: "PHP", snippet: "http_response_code(401);" }], effort: "minutes" },
+  "api:public-marked-secured": { steps: "Mark the operation public in the API file.", code: [{ label: "OpenAPI", snippet: "security: []" }], effort: "minutes" },
+  "api:auth-bypass": {
+    steps: "Put the auth check in front of this route. In Express, add the middleware to the router, not to single routes, so new routes are covered by default. Then check the logs for who already read this data.",
+    code: [{ label: "Express", snippet: "router.use(requireAuth); // before every route in this router" }, { label: "Laravel", snippet: "Route::middleware('auth:sanctum')->group(function () { /* routes */ });" }],
+    effort: "hours",
+  },
+  "api:no-auth-described": { steps: "Describe how clients log in, in components.securitySchemes, and apply it with a top-level security entry.", code: [{ label: "OpenAPI", snippet: "components:\n  securitySchemes:\n    bearerAuth: { type: http, scheme: bearer }\nsecurity:\n  - bearerAuth: []" }], effort: "minutes" },
+  "api:secret-in-response": { steps: "Remove the fields from the answer. Use a response model (DTO) or an allow-list of fields instead of returning database rows as they are.", code: [{ label: "Laravel model", snippet: "protected $hidden = ['password', 'remember_token'];" }], effort: "hours" },
+  "api:personal-data-public": { steps: "Require a login for this endpoint and return only the logged-in user's own records. If the list must be public, leave out e-mail addresses and phone numbers.", effort: "hours" },
+  "api:error-leak": { steps: "Turn off debug mode in production and return a short error message with a request id; write the details to the server log only.", code: [{ label: "Laravel .env", snippet: "APP_DEBUG=false" }, { label: "Express", snippet: "app.use((err, req, res, next) => { log(err); res.status(500).json({ error: 'Server error' }); });" }, { label: "PHP", snippet: "ini_set('display_errors', '0');" }], effort: "minutes" },
+  "api:bad-input-crash": { steps: "Check inputs before using them: answer 400 Bad Request for an id of the wrong type and 404 Not Found for unknown ids or routes. Add a catch-all 404 handler.", effort: "hours" },
+  "api:no-https": { steps: "Serve the API over HTTPS (a free Let's Encrypt certificate works) and redirect or refuse plain HTTP.", effort: "hours" },
+  "api:hsts-missing": { steps: "Add the HSTS header to every HTTPS answer.", code: header("Strict-Transport-Security", "max-age=31536000; includeSubDomains"), effort: "minutes" },
+  "api:nosniff-missing": { steps: "Add the header to every answer.", code: header("X-Content-Type-Options", "nosniff"), effort: "minutes" },
+  "api:version-disclosure": { steps: "Hide the server software version.", code: [{ label: "Nginx", snippet: "server_tokens off;" }, { label: "Express", snippet: "app.disable('x-powered-by');" }, { label: "PHP (php.ini)", snippet: "expose_php = Off" }], effort: "minutes" },
+  "api:cors-reflect": { steps: "Allow only your own front-end addresses instead of copying back any Origin.", code: [{ label: "Express (cors)", snippet: "app.use(cors({ origin: ['https://app.example.com'], credentials: true }));" }], effort: "minutes" },
+  "api:cors-invalid": { steps: "List your front-end addresses in Access-Control-Allow-Origin instead of *, when credentials are allowed.", effort: "minutes" },
+  "api:spec-no-servers": { steps: "Add the API's address to the file.", code: [{ label: "OpenAPI", snippet: "servers:\n  - url: https://api.example.com/v1" }], effort: "minutes" },
+  "api:spec-duplicate-id": { steps: "Give every operation its own operationId, such as listUsers and getUser.", effort: "minutes" },
+  "api:spec-no-responses": { steps: "Document at least the success answer of each operation, with its schema.", effort: "hours" },
+  "api:spec-no-get": { steps: "Nothing to fix. Logged-in testing of write operations comes with the credentials vault.", effort: "minutes" },
+  // Source code
+  "code:env-committed": {
+    steps: "1. git rm --cached .env 2. Add .env to .gitignore and commit an .env.example with empty values. 3. Change every password and key that was in the file: it stays in Git history.",
+    code: [{ label: "Terminal", snippet: "git rm --cached .env\necho '.env' >> .gitignore\ngit commit -m 'Stop tracking .env'" }],
+    effort: "hours",
+  },
+  "code:db-dump": { steps: "Delete the dump from the repository and its history (git filter-repo). Keep only a schema file or seed data with made-up people. If it held real customer data, follow your data-breach process.", effort: "hours" },
+  "code:key-file": { steps: "Remove the key file from the code, store it in a secure vault or CI secret, and make a new one if the code was ever shared. For Android upload keys, use Play App Signing so a leak can be recovered.", effort: "hours" },
+  "code:vulnerable-package": { steps: "Upgrade the package to the fixed version and run the tests. For npm: npm install name@version. For Composer: composer require vendor/name:^version. If it comes in through another package, upgrade that one, or use npm overrides.", code: [{ label: "npm", snippet: "npm audit fix" }, { label: "Composer", snippet: "composer update vendor/package --with-dependencies" }], effort: "hours" },
+  "code:no-lockfile": { steps: "Run npm install (or composer install) once and commit the lockfile it creates. Install with npm ci in CI and on servers.", effort: "minutes" },
+  "code:sql-injection": { steps: "Never put values into SQL text. Use placeholders and pass the values separately.", code: [{ label: "PHP (PDO)", snippet: "$stmt = $pdo->prepare('SELECT * FROM users WHERE email = ?');\n$stmt->execute([$email]);" }, { label: "Node (mysql2)", snippet: "await db.execute('SELECT * FROM users WHERE id = ?', [id]);" }, { label: "Python", snippet: "cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))" }], effort: "hours" },
+  "code:command-injection": { steps: "Do not build shell commands from input. Call the program directly with a list of arguments.", code: [{ label: "Node", snippet: "execFile('convert', [input, output]);" }, { label: "PHP", snippet: "exec('convert ' . escapeshellarg($input));" }], effort: "hours" },
+  "code:eval": { steps: "Remove eval. Parse data with JSON.parse (or json_decode), and use a map of allowed functions for dynamic calls.", effort: "hours" },
+  "code:file-include": { steps: "Map request values to a fixed list of files and never pass input to include or require.", code: [{ label: "PHP", snippet: "$pages = ['home' => 'home.php', 'about' => 'about.php'];\ninclude $pages[$_GET['page'] ?? 'home'] ?? 'home.php';" }], effort: "minutes" },
+  "code:unsafe-deserialize": { steps: "Use JSON for data that comes from outside (json_decode, json.loads, yaml.safe_load).", effort: "hours" },
+  "code:xss": { steps: "Escape everything you print. In PHP use htmlspecialchars; in JavaScript set textContent, or clean HTML with DOMPurify first.", code: [{ label: "PHP", snippet: "echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8');" }, { label: "JavaScript", snippet: "el.textContent = value;" }], effort: "hours" },
+  "code:weak-password-hash": { steps: "Hash passwords with bcrypt or Argon2. Keep the old check for one login, then re-hash with the new method.", code: [{ label: "PHP", snippet: "$hash = password_hash($password, PASSWORD_DEFAULT);\nif (password_verify($password, $hash)) { /* ok */ }" }, { label: "Node", snippet: "const hash = await bcrypt.hash(password, 12);" }], effort: "hours" },
+  "code:tls-verify-off": { steps: "Turn certificate checks back on. If the server uses a private certificate authority, give its certificate to the client instead.", effort: "minutes" },
+  "code:debug-on": { steps: "Read the debug setting from the environment and keep it off in production.", code: [{ label: "Django", snippet: "DEBUG = os.environ.get('DJANGO_DEBUG') == '1'" }, { label: "PHP", snippet: "ini_set('display_errors', '0');\nini_set('log_errors', '1');" }], effort: "minutes" },
+  "code:debugger": { steps: "Remove the debugger statement. Add the no-debugger ESLint rule so it cannot come back.", effort: "minutes" },
+  "code:merge-conflict": { steps: "Open the file, keep the right code between the <<<<<<< and >>>>>>> markers, delete the markers and run the tests.", effort: "minutes" },
+  "code:broken-json": { steps: "Open the file in an editor that highlights JSON errors (VS Code) and fix the line shown. Usually a trailing comma or a missing quote.", effort: "minutes" },
+  "code:no-readme": { steps: "Add README.md with: what the project is, how to install and run it, the environment variables it needs, and how to deploy.", effort: "hours" },
+  "code:no-gitignore": { steps: "Add a .gitignore for your stack from github.com/github/gitignore.", code: [{ label: ".gitignore", snippet: "node_modules/\nvendor/\n.env\ndist/\n*.log" }], effort: "minutes" },
+  "code:node-modules-committed": { steps: "Stop tracking installed packages.", code: [{ label: "Terminal", snippet: "git rm -r --cached node_modules\necho 'node_modules/' >> .gitignore\ngit commit -m 'Stop tracking node_modules'" }], effort: "minutes" },
+  "code:no-tests": { steps: "Add a test runner (Vitest or Jest for JavaScript, PHPUnit for PHP, pytest for Python) and start with tests for login, sign-up and payments. Run them in CI on every push.", effort: "days" },
+  "code:debug-output": { steps: "Remove console.log, var_dump and print_r from app code, or switch to a logger with levels. The no-console ESLint rule finds them.", effort: "hours" },
+  // Android
+  "android:debuggable": { steps: "Build a release version: Build > Generate Signed Bundle / APK > release. Never set android:debuggable in the manifest; Gradle sets it for debug builds only.", effort: "minutes" },
+  "android:test-only": { steps: "Build with the release build type from Android Studio or ./gradlew bundleRelease, not from the Run button.", effort: "minutes" },
+  "android:backup": { steps: "Turn off backups, or leave out tokens and databases.", code: [{ label: "AndroidManifest.xml", snippet: '<application android:allowBackup="false" ...>' }], effort: "minutes" },
+  "android:cleartext": { steps: "Use https:// for every server and block plain HTTP.", code: [{ label: "AndroidManifest.xml", snippet: '<application android:usesCleartextTraffic="false" ...>' }, { label: "res/xml/network_security_config.xml", snippet: '<network-security-config>\n  <base-config cleartextTrafficPermitted="false" />\n</network-security-config>' }], effort: "hours" },
+  "android:cleartext-domains": { steps: "Move the listed servers to HTTPS and remove their domain-config exceptions.", effort: "hours" },
+  "android:user-certs": { steps: "Trust user-installed certificates only in debug builds.", code: [{ label: "res/xml/network_security_config.xml", snippet: '<debug-overrides>\n  <trust-anchors><certificates src="user" /></trust-anchors>\n</debug-overrides>' }], effort: "minutes" },
+  "android:old-target": { steps: "Raise targetSdkVersion in build.gradle to the level Google Play currently requires, then test the behaviour changes listed on developer.android.com for each version in between.", code: [{ label: "app/build.gradle", snippet: "android {\n  defaultConfig { targetSdk 35 }\n}" }], effort: "days" },
+  "android:old-min-sdk": { steps: "Raise minSdk to 24 or newer if your users allow it (check Play Console > Statistics > Android version).", effort: "hours" },
+  "android:restricted-permissions": { steps: "Remove the SMS and call log permissions. For OTP auto-fill use the SMS Retriever API, which needs no permission.", code: [{ label: "Kotlin", snippet: "SmsRetriever.getClient(context).startSmsRetriever()" }], effort: "hours" },
+  "android:declared-permissions": { steps: "Remove the permissions you do not need (the photo picker needs no media permission). For the rest, fill in the declaration in Play Console > App content.", effort: "hours" },
+  "android:sensitive-permissions": { steps: "Remove permissions the app does not use, and explain the rest in the privacy policy and the Data safety form.", effort: "hours" },
+  "android:open-provider": { steps: "Stop exporting the provider, or protect it with a signature-level permission.", code: [{ label: "AndroidManifest.xml", snippet: '<provider android:name=".DataProvider" android:exported="false" ... />' }], effort: "minutes" },
+  "android:open-service": { steps: "Set android:exported=\"false\" unless other apps must call the component; if they must, protect it with a signature-level permission and check every input.", effort: "minutes" },
+  "android:open-activity": { steps: "Set android:exported=\"false\" on screens that are not entry points, and check the login state in onCreate of screens that are.", effort: "minutes" },
+  "android:http-backend": { steps: "Move the app's servers to HTTPS and update the addresses in the app.", effort: "hours" },
+  "android:firebase-open": { steps: "Lock the database rules in Firebase console > Realtime Database > Rules, then check what was exposed.", code: [{ label: "database.rules.json", snippet: '{\n  "rules": { ".read": "auth != null", ".write": "auth != null" }\n}' }], effort: "hours" },
+  "android:unsigned": { steps: "Sign the APK with your release key: Build > Generate Signed Bundle / APK, or apksigner sign.", effort: "minutes" },
+  "android:debug-signed": { steps: "Make a release key once (keytool), keep it safe, and sign release builds with it; or upload an app bundle and let Play App Signing manage the key.", code: [{ label: "Terminal", snippet: "keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias release" }], effort: "hours" },
+  "android:v1-only": { steps: "Sign with apksigner (Android build tools), which adds the v2 and v3 signatures.", code: [{ label: "Terminal", snippet: "apksigner sign --ks release.jks app.apk" }], effort: "minutes" },
+  "android:no-64bit": { steps: "Build native code for arm64-v8a too.", code: [{ label: "app/build.gradle", snippet: "ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }" }], effort: "hours" },
+  "android:16kb-pages": { steps: "Update the libraries that ship these .so files to versions built for 16 KB pages, or rebuild your own native code with NDK r28 or newer and Android Gradle Plugin 8.5.1 or newer. Test on the Android 15 16 KB emulator image.", effort: "hours" },
+};
+
 /** The fix for a finding, or a general one built from the finding's own text. */
 export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
-  const known = FIXES[f.rule];
+  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule];
   if (known) return known;
+  if (/^(code|android):secret-/.test(f.rule)) return ROTATE_SECRET;
   if (f.rule.startsWith("axe:")) {
     const link = f.detail.match(/https:\/\/dequeuniversity\.com\S+/)?.[0];
     return {
@@ -440,4 +540,4 @@ export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
 }
 
 /** Rules that have a written fix (used by tests to keep the list complete). */
-export const FIX_RULES = Object.keys(FIXES);
+export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES)];

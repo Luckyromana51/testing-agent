@@ -82,10 +82,19 @@ export interface ScanResult {
   finishedAt: string;
   pages: PageResult[];
   findings: Finding[];
-  scores: Record<Category, number>;
+  /** Only the categories that apply to the product (an API has no phone layout). */
+  scores: Partial<Record<Category, number>>;
   overallScore: number;
   /** What each specialist agent did. */
   agentStats?: AgentStat[];
+  /** What was tested, for engines without pages ("Scanned 1,203 files"). */
+  notes?: string[];
+  /** What to call the "pages" of this result: "Endpoints" for an API, "Files" for code. */
+  label?: { pages: string };
+  /** Other addresses this run looked at (the API file, the base address), for the regression check. */
+  scanned?: string[];
+  /** True when the run re-checked the whole target (code and app tests), so anything not found again is fixed. */
+  complete?: boolean;
 }
 
 export type RunStatus = "queued" | "running" | "done" | "failed";
@@ -127,10 +136,19 @@ export interface Run {
 export type Schedule = "off" | "daily" | "weekly";
 
 export interface ProjectTarget {
-  /** Website, web app or API base address. */
+  /** Website or web app address, or the API's base address. */
   url?: string;
   maxPages?: number;
   checkLinks?: boolean;
+  /** API: address of the OpenAPI (Swagger) file, JSON or YAML. */
+  specUrl?: string;
+  /** Source code: Git repository to clone (https). */
+  repoUrl?: string;
+  branch?: string;
+  /** An uploaded file (APK, IPA, a zip of source code, or the API file), stored under data/uploads. */
+  file?: string;
+  /** The uploaded file's original name, for display. */
+  fileName?: string;
 }
 
 export interface Project {

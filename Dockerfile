@@ -7,6 +7,8 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 FROM mcr.microsoft.com/playwright:v1.63.0-noble
+# git clones repositories for the source code engine.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production PORT=4000 DATA_DIR=/data
 COPY --from=build /app/package.json ./

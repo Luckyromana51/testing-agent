@@ -82,6 +82,7 @@ export function certFindings(host: string, cert: CertFacts, now = new Date()): F
 
 function readCertificate(host: string): Promise<CertFacts | null> {
   return new Promise((resolve) => {
+    // Accepting any certificate is the point here: we read it to report what is wrong with it. glvtest-ignore
     const socket = tls.connect({ host, port: 443, servername: host, rejectUnauthorized: false, timeout: 10_000 }, () => {
       const cert = socket.getPeerCertificate();
       const facts: CertFacts = {

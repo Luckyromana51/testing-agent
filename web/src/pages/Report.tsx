@@ -6,6 +6,27 @@ import { api } from "../api.ts";
 import { CATEGORY_LABEL, go, isMajor, pathOf, plural, scoreTone, SEVERITIES, usePoll } from "../lib.ts";
 import { FixBox, Sev } from "../ui.tsx";
 
+/** True for web addresses; code and app findings point at files instead. */
+const isUrl = (s: string) => /^https?:\/\//.test(s);
+
+/** What a result's "pages" are: web pages, API endpoints, or files. */
+function unitOf(run: Run): { one: string; many: string; tab: string } {
+  const label = run.result?.label?.pages;
+  if (label === "Endpoints") return { one: "endpoint", many: "endpoints", tab: "Endpoints" };
+  if (label === "Files") return { one: "file", many: "files", tab: "Files" };
+  return { one: "page", many: "pages", tab: "Pages" };
+}
+
+function Place({ at }: { at: string }) {
+  return isUrl(at) ? (
+    <a href={at} target="_blank" rel="noreferrer">
+      {at}
+    </a>
+  ) : (
+    <code>{at}</code>
+  );
+}
+
 /** Rules whose evidence is a link target, so each item is listed as "link (status) on page". */
 const LINK_RULES = new Set(["broken-link", "broken-external-link", "unverified-external-link"]);
 
@@ -33,13 +54,17 @@ export function Report({ id }: { id: string }) {
         )}
         <div className="eyebrow">Test report</div>
         <h1 className="run-title">
-          <a href={run.url} target="_blank" rel="noreferrer">
-            {run.url}
-          </a>
+          {isUrl(run.url) ? (
+            <a href={run.url} target="_blank" rel="noreferrer">
+              {run.url}
+            </a>
+          ) : (
+            run.url
+          )}
         </h1>
         <div className="run-sub">
           {new Date(run.createdAt).toLocaleString()}
-          {run.result && ` · ${plural(run.result.pages.length, "page")} tested`}
+          {run.result && unitOf(run).one !== "file" && ` · ${plural(run.result.pages.length, unitOf(run).one)} tested`}
           {run.agents && ` · ${run.agents.length} agents`}
         </div>
       </div>
@@ -101,6 +126,8 @@ export function Report({ id }: { id: string }) {
   const { result } = run;
   const groups = groupFindings(result.findings);
   const major = groups.filter((g) => isMajor(g.severity));
+  const unit = unitOf(run);
+  const categories = (Object.keys(CATEGORY_LABEL) as Category[]).filter((c) => result.scores[c] !== undefined);
   return (
     <div className="page run">
       {header}
@@ -121,16 +148,17 @@ export function Report({ id }: { id: string }) {
           <div className="overall-label">Overall score</div>
         </div>
         <div className="score-grid">
-          {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => {
+          {categories.map((c) => {
             const n = groups.filter((g) => g.first.category === c && g.severity !== "info").length;
+            const score = result.scores[c] ?? 100;
             return (
               <div className="score-card" key={c}>
                 <div className="score-card-top">
                   <span>{CATEGORY_LABEL[c]}</span>
-                  <span className={`score-num ${scoreTone(result.scores[c])}`}>{result.scores[c]}</span>
+                  <span className={`score-num ${scoreTone(score)}`}>{score}</span>
                 </div>
                 <div className="bar">
-                  <div className={`bar-fill ${scoreTone(result.scores[c])}`} style={{ width: `${result.scores[c]}%` }} />
+                  <div className={`bar-fill ${scoreTone(score)}`} style={{ width: `${score}%` }} />
                 </div>
                 <div className="score-card-sub">{n === 0 ? "No issues" : plural(n, "issue")}</div>
               </div>
@@ -138,6 +166,17 @@ export function Report({ id }: { id: string }) {
           })}
         </div>
       </section>
+
+      {result.notes && result.notes.length > 0 && (
+        <section className="card notes-card">
+          <div className="notes-head">What was tested</div>
+          <ul>
+            {result.notes.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="major">
         <h2 className="section-title">
@@ -147,7 +186,7 @@ export function Report({ id }: { id: string }) {
           <div className="card good-card">Nothing critical or high was found. The rest of the list below is polish.</div>
         )}
         {major.map((g) => (
-          <MajorCard key={g.key} g={g} />
+          <MajorCard key={g.key} g={g} unit={unit.many} />
         ))}
       </section>
 
@@ -157,23 +196,25 @@ export function Report({ id }: { id: string }) {
         <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
           All issues ({groups.length})
         </button>
-        <button className={tab === "pages" ? "active" : ""} onClick={() => setTab("pages")}>
-          Pages ({result.pages.length})
-        </button>
+        {result.pages.length > 0 && (
+          <button className={tab === "pages" ? "active" : ""} onClick={() => setTab("pages")}>
+            {unit.tab} ({result.pages.length})
+          </button>
+        )}
         {result.agentStats && (
           <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>
             Agents ({result.agentStats.length})
           </button>
         )}
       </div>
-      {tab === "issues" && <IssueList groups={groups} />}
+      {tab === "issues" && <IssueList groups={groups} categories={categories} unit={unit.many} />}
       {tab === "pages" && <Pages run={run} />}
       {tab === "agents" && <Agents run={run} />}
     </div>
   );
 }
 
-function MajorCard({ g }: { g: IssueGroup }) {
+function MajorCard({ g, unit }: { g: IssueGroup; unit: string }) {
   const [open, setOpen] = useState(false);
   const f = g.first;
   return (
@@ -183,7 +224,7 @@ function MajorCard({ g }: { g: IssueGroup }) {
         <div className="grow">
           <div className="major-title">{LINK_RULES.has(f.rule) && g.items.length > 1 ? `${f.title} (${g.items.length})` : f.title}</div>
           <div className="muted small">
-            {CATEGORY_LABEL[f.category]} · {g.pages.length > 1 ? `on ${g.pages.length} pages` : pathOf(f.pageUrl)}
+            {CATEGORY_LABEL[f.category]} · {g.pages.length > 1 ? `${unit === "files" ? "in" : "on"} ${g.pages.length} ${unit}` : pathOf(f.pageUrl)}
           </div>
         </div>
         <button className="btn small" onClick={() => setOpen(!open)}>
@@ -192,12 +233,12 @@ function MajorCard({ g }: { g: IssueGroup }) {
       </div>
       <p>{f.detail}</p>
       <FixBox fix={fixFor(f)} />
-      {open && <Occurrences g={g} />}
+      {open && <Occurrences g={g} unit={unit} />}
     </div>
   );
 }
 
-function Occurrences({ g }: { g: IssueGroup }) {
+function Occurrences({ g, unit = "pages" }: { g: IssueGroup; unit?: string }) {
   const f = g.first;
   if (LINK_RULES.has(f.rule)) {
     return (
@@ -228,17 +269,18 @@ function Occurrences({ g }: { g: IssueGroup }) {
             · agent <code>{f.agent}</code>
           </>
         )}{" "}
-        · {g.pages.length > 1 ? `found on ${g.pages.length} pages:` : "page:"}
+        · {g.pages.length > 1 ? `found in ${g.pages.length} ${unit}:` : `${unit.replace(/s$/, "")}:`}
       </div>
       <ul className="finding-pages">
         {g.pages.map((p) => {
-          const other = g.items.find((i) => i.pageUrl === p && i.title !== f.title);
+          const items = g.items.filter((i) => i.pageUrl === p);
+          const other = items.find((i) => i.title !== f.title);
+          const ev = g.pages.length > 1 && !isUrl(p) ? items[0]?.evidence : undefined;
           return (
             <li key={p}>
-              <a href={p} target="_blank" rel="noreferrer">
-                {p}
-              </a>
+              <Place at={p} />
               {other && <span className="muted"> · {other.title}</span>}
+              {ev && <span className="muted"> · {ev}</span>}
             </li>
           );
         })}
@@ -275,7 +317,7 @@ function AiPanel({ run }: { run: Run }) {
   );
 }
 
-function IssueList({ groups }: { groups: IssueGroup[] }) {
+function IssueList({ groups, categories, unit }: { groups: IssueGroup[]; categories: Category[]; unit: string }) {
   const [cat, setCat] = useState<Category | "all">("all");
   const [minSev, setMinSev] = useState<Severity>("low");
   const [open, setOpen] = useState<string | null>(null);
@@ -295,7 +337,7 @@ function IssueList({ groups }: { groups: IssueGroup[] }) {
     <section>
       <div className="filters">
         <div className="pills">
-          {(["all", ...Object.keys(CATEGORY_LABEL)] as (Category | "all")[]).map((c) => (
+          {(["all", ...categories] as (Category | "all")[]).map((c) => (
             <button key={c} className={`pill ${cat === c ? "active" : ""}`} onClick={() => setCat(c)}>
               {c === "all" ? "All" : CATEGORY_LABEL[c]}
             </button>
@@ -330,13 +372,13 @@ function IssueList({ groups }: { groups: IssueGroup[] }) {
                   {LINK_RULES.has(f.rule) && g.items.length > 1 ? `${f.title} (${g.items.length})` : f.title}
                 </span>
                 <span className="finding-cat">{CATEGORY_LABEL[f.category]}</span>
-                <span className="finding-page">{g.pages.length > 1 ? `${g.pages.length} pages` : pathOf(f.pageUrl)}</span>
+                <span className="finding-page">{g.pages.length > 1 ? `${g.pages.length} ${unit}` : pathOf(f.pageUrl)}</span>
               </button>
               {open === key && (
                 <div className="finding-body">
                   <p>{f.detail}</p>
                   <FixBox fix={fixFor(f)} />
-                  <Occurrences g={g} />
+                  <Occurrences g={g} unit={unit} />
                 </div>
               )}
             </li>
@@ -363,11 +405,15 @@ function Pages({ run }: { run: Run }) {
             </div>
             <div className="page-info">
               <div className="page-title">{p.title || "(no title)"}</div>
-              <a className="page-url" href={p.url} target="_blank" rel="noreferrer">
-                {p.url}
-              </a>
+              {isUrl(p.url) && p.url !== p.title && (
+                <a className="page-url" href={p.url} target="_blank" rel="noreferrer">
+                  {p.url}
+                </a>
+              )}
               <div className="page-stats">
-                <span className={p.status && p.status < 400 ? "ok" : "bad"}>HTTP {p.status ?? "error"}</span>
+                {(isUrl(p.url) || p.status !== null) && (
+                  <span className={p.status && p.status < 400 ? "ok" : "bad"}>{p.status ? `HTTP ${p.status}` : (p.error ?? "No answer")}</span>
+                )}
                 {p.metrics?.lcpMs ? (
                   <span title="Largest Contentful Paint: when the main content appears">
                     LCP {(p.metrics.lcpMs / 1000).toFixed(1)} s

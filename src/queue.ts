@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { agentsFor } from "./agents/registry.js";
 import { aiEnabled, summariseWithClaude } from "./ai/triage.js";
 import { syncIssues } from "./issues.js";
-import { scanSite } from "./runner/scan.js";
+import { runEngine } from "./engines/index.js";
 import type { Stores } from "./store.js";
 import type { Project, Run } from "./types.js";
 
@@ -27,6 +27,10 @@ export class ScanQueue {
     return path.join(this.dataDir, "artifacts", runId);
   }
 
+  uploadsDir(): string {
+    return path.join(this.dataDir, "uploads");
+  }
+
   async removeArtifacts(runId: string): Promise<void> {
     await rm(this.artifactsDir(runId), { recursive: true, force: true });
   }
@@ -45,7 +49,7 @@ export class ScanQueue {
     const settings = this.stores.settings.get();
     const run: Run = {
       id: randomUUID(),
-      url: project.target.url ?? "",
+      url: project.target.url ?? project.target.specUrl ?? project.target.repoUrl ?? project.target.fileName ?? "",
       projectId: project.id,
       product: project.type,
       trigger,
@@ -88,14 +92,23 @@ export class ScanQueue {
     const project = run.projectId ? projects.get(run.projectId) : undefined;
     try {
       if (!project) throw new Error("The project for this run was deleted.");
-      const result = await scanSite({
-        url: run.url,
-        maxPages: project.target.maxPages ?? settings.get().defaultMaxPages,
-        product: project.type,
-        agents: run.agents,
-        artifactsDir: this.artifactsDir(run.id),
-        onProgress: log,
-      });
+      const workDir = path.join(this.dataDir, "work", run.id);
+      await mkdir(workDir, { recursive: true });
+      let result;
+      try {
+        result = await runEngine({
+          product: project.type,
+          target: project.target,
+          agents: run.agents,
+          maxPages: project.target.maxPages ?? settings.get().defaultMaxPages,
+          artifactsDir: this.artifactsDir(run.id),
+          uploadsDir: this.uploadsDir(),
+          workDir,
+          onProgress: log,
+        });
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
       update({ result });
 
       // Regression check: compare with the project's issue list.

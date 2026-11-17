@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
+import { mkdir, open, rm } from "node:fs/promises";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
@@ -13,7 +16,11 @@ import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
 import { startScheduler } from "./scheduler.js";
 import { openStores, type Settings, type Stores } from "./store.js";
-import type { Issue, IssueStatus, ProductType, Project, Run, Schedule, Severity, User } from "./types.js";
+import { buildTarget, defaultName, type TargetInput } from "./targets.js";
+import type { Issue, IssueStatus, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
+import { validateTarget } from "./runner/urls.js";
+
+export { validateTarget } from "./runner/urls.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -23,30 +30,8 @@ declare module "fastify" {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/** Only public http(s) URLs. Blocks localhost and private ranges unless ALLOW_PRIVATE_TARGETS=1. */
-export function validateTarget(raw: string): string {
-  let u: URL;
-  try {
-    u = new URL(raw.includes("://") ? raw : `https://${raw}`);
-  } catch {
-    throw new Error("That does not look like a website address.");
-  }
-  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("Only http and https are supported.");
-  const host = u.hostname;
-  const isPrivate =
-    host === "localhost" ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    host === "0.0.0.0" ||
-    host === "[::1]";
-  if (isPrivate && process.env.ALLOW_PRIVATE_TARGETS !== "1") {
-    throw new Error("Private and local addresses are blocked. Set ALLOW_PRIVATE_TARGETS=1 to test them.");
-  }
-  return u.toString();
-}
+/** Largest file that can be uploaded (APKs with native code can be big). */
+const MAX_UPLOAD = 300_000_000;
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 const STATUSES: IssueStatus[] = ["open", "in_progress", "fixed", "verified", "reopened", "wont_fix"];
@@ -241,28 +226,24 @@ export async function createApp(opts: AppOptions) {
   app.get("/api/projects", async () => stores.projects.list().map(projectSummary));
 
   app.post("/api/projects", async (req, reply) => {
-    const b = body<{ name: string; type: ProductType; url: string; maxPages: number; schedule: Schedule; checkLinks: boolean }>(req);
+    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule }>(req);
     const type = (b.type ?? "website") as ProductType;
     const info = PRODUCTS.find((p) => p.type === type);
     if (!info) throw new HttpError(400, "Unknown product type.");
-    if (!info.available) throw new HttpError(400, `${info.name} testing is coming in the next update.`);
-    let url: string;
+    if (!info.available) throw new HttpError(400, `${info.name} testing is coming in a later update.`);
+    let target: ProjectTarget;
     try {
-      url = validateTarget(String(b.url ?? ""));
+      target = buildTarget(type, b, queue.uploadsDir(), stores.settings.get().defaultMaxPages);
     } catch (err) {
       throw new HttpError(400, (err as Error).message);
     }
-    const name = (b.name ?? "").trim() || new URL(url).hostname.replace(/^www\./, "");
+    const name = (b.name ?? "").trim() || defaultName(type, target);
     const project: Project = {
       id: randomUUID(),
       key: projectKey(name, stores.projects.list().map((p) => p.key)),
       name: name.slice(0, 80),
       type,
-      target: {
-        url,
-        maxPages: Math.min(Math.max(Number(b.maxPages) || stores.settings.get().defaultMaxPages, 1), 200),
-        checkLinks: b.checkLinks !== false,
-      },
+      target,
       schedule: SCHEDULES.includes(b.schedule as Schedule) ? (b.schedule as Schedule) : "off",
       createdAt: new Date().toISOString(),
       issueSeq: 0,
@@ -270,6 +251,44 @@ export async function createApp(opts: AppOptions) {
     stores.projects.save(project);
     const run = queue.enqueue(project);
     return reply.code(201).send({ project, run });
+  });
+
+  // Uploads: the raw file in the body (APK, IPA, a zip of code, or an OpenAPI file).
+  app.addContentTypeParser("application/octet-stream", (_req, payload, done) => done(null, payload));
+  app.post("/api/uploads", { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
+    const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? "")).replace(/[^\w. ()-]/g, "_").slice(0, 200);
+    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml)$/i)?.[0]?.toLowerCase();
+    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, or an OpenAPI file (.json or .yaml).");
+    if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
+    await mkdir(queue.uploadsDir(), { recursive: true });
+    const file = `${randomUUID()}${ext}`;
+    const full = path.join(queue.uploadsDir(), file);
+    let size = 0;
+    try {
+      await pipeline(
+        req.body,
+        new Transform({
+          transform(chunk: Buffer, _enc, cb) {
+            size += chunk.length;
+            cb(size > MAX_UPLOAD ? new Error("too big") : null, chunk);
+          },
+        }),
+        createWriteStream(full),
+      );
+    } catch {
+      await rm(full, { force: true });
+      throw new HttpError(413, `The file is too big. The limit is ${MAX_UPLOAD / 1e6} MB.`);
+    }
+    const head = Buffer.alloc(4);
+    const fd = await open(full, "r");
+    await fd.read(head, 0, 4, 0);
+    await fd.close();
+    const isZip = head.readUInt32LE(0) === 0x04034b50;
+    if ([".apk", ".ipa", ".zip"].includes(ext) !== isZip || size === 0) {
+      await rm(full, { force: true });
+      throw new HttpError(400, size === 0 ? "The file is empty." : `That does not look like a real ${ext} file.`);
+    }
+    return reply.code(201).send({ file, fileName, size });
   });
 
   app.get<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
@@ -288,22 +307,22 @@ export async function createApp(opts: AppOptions) {
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<{ name: string; url: string; maxPages: number; schedule: Schedule; checkLinks: boolean }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    if (b.url !== undefined) {
+    const { name: _n, schedule: _s, ...targetInput } = b;
+    if (Object.keys(targetInput).length) {
       try {
-        next.target.url = validateTarget(String(b.url));
+        next.target = buildTarget(p.type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages, p.target);
       } catch (err) {
         throw new HttpError(400, (err as Error).message);
       }
     }
-    if (b.maxPages !== undefined) next.target.maxPages = Math.min(Math.max(Number(b.maxPages) || 1, 1), 200);
-    if (b.checkLinks !== undefined) next.target.checkLinks = Boolean(b.checkLinks);
     if (b.schedule !== undefined) {
       if (!SCHEDULES.includes(b.schedule)) throw new HttpError(400, "Schedule must be off, daily or weekly.");
       next.schedule = b.schedule;
     }
+    if (p.target.file && p.target.file !== next.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     stores.projects.save(next);
     return projectSummary(next);
   });
@@ -314,6 +333,7 @@ export async function createApp(opts: AppOptions) {
     if (queue.busy(p.id)) throw new HttpError(409, "Wait for the running test to finish before deleting the project.");
     for (const runId of stores.runs.deleteForProject(p.id)) await queue.removeArtifacts(runId);
     stores.issues.deleteForProject(p.id);
+    if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     stores.projects.delete(p.id);
     return reply.code(204).send();
   });

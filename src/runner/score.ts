@@ -17,19 +17,21 @@ const PENALTY: Record<Severity, number> = {
 export function scoreFindings(
   findings: Finding[],
   pageCount: number,
+  categories: Category[] = CATEGORIES,
 ): {
-  scores: Record<Category, number>;
+  scores: Partial<Record<Category, number>>;
   overallScore: number;
 } {
   const pages = Math.max(1, pageCount);
-  const penalty = Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Record<Category, number>;
+  const penalty = Object.fromEntries(categories.map((c) => [c, 0])) as Record<Category, number>;
   for (const g of groupFindings(findings)) {
+    if (!(g.first.category in penalty)) continue;
     const spread = Math.min(1, g.pages.length / pages);
     penalty[g.first.category] += PENALTY[g.severity] * (0.5 + 0.5 * spread);
   }
-  const scores = {} as Record<Category, number>;
-  for (const cat of CATEGORIES) scores[cat] = Math.max(0, Math.round(100 - penalty[cat]));
-  let overallScore = Math.round(CATEGORIES.reduce((s, c) => s + scores[c], 0) / CATEGORIES.length);
+  const scores: Partial<Record<Category, number>> = {};
+  for (const cat of categories) scores[cat] = Math.max(0, Math.round(100 - penalty[cat]));
+  let overallScore = Math.round(categories.reduce((s, c) => s + (scores[c] ?? 100), 0) / categories.length);
   // A single critical issue (site down, no HTTPS, unusable for screen readers) caps the grade.
   if (findings.some((f) => f.severity === "critical")) overallScore = Math.min(overallScore, 69);
   return { scores, overallScore };

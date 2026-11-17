@@ -49,6 +49,17 @@ export const hostOf = (url?: string) => {
   }
 };
 
+/** One line naming what a project tests: the site, the API file, the repository or the uploaded file. */
+export function targetLabel(t: { url?: string; specUrl?: string; repoUrl?: string; fileName?: string; branch?: string }): string {
+  if (t.repoUrl) return `${t.repoUrl.replace(/^https:\/\//, "")}${t.branch ? ` (${t.branch})` : ""}`;
+  if (t.specUrl) return t.specUrl.replace(/^https?:\/\//, "");
+  if (t.url) return hostOf(t.url);
+  return t.fileName ?? "";
+}
+
+/** A link for the target, when it has a web address. */
+export const targetHref = (t: { url?: string; specUrl?: string; repoUrl?: string }) => t.repoUrl ?? t.specUrl ?? t.url;
+
 export const pathOf = (url: string) => {
   try {
     const u = new URL(url);

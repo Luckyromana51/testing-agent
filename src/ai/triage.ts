@@ -20,12 +20,12 @@ const SummarySchema = z.object({
 });
 
 /** Keeps the prompt small: one line per distinct issue, worst first, with how many pages it hit. */
-export function compactFindings(findings: Finding[], limit = 60): string {
+export function compactFindings(findings: Finding[], limit = 60, unit = "page"): string {
   return groupFindings(findings)
     .slice(0, limit)
     .map(
       ({ first: f, severity, pages }) =>
-        `- [${severity}] [${f.category}] ${f.title} (${pages.length} page(s), e.g. ${f.pageUrl})${
+        `- [${severity}] [${f.category}] ${f.title} (${pages.length} ${unit}(s), e.g. ${f.pageUrl})${
           f.evidence ? ` evidence: ${f.evidence.split("\n").slice(0, 2).join(" | ").slice(0, 200)}` : ""
         }`,
     )
@@ -41,16 +41,24 @@ export async function summariseWithClaude(result: ScanResult): Promise<AiSummary
   const client = new Anthropic();
   const model = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 
-  const prompt = `You are a senior QA and security engineer at a web agency. A automated scan of ${result.startUrl} tested ${result.pages.length} page(s).
-
+  const kind = result.label?.pages === "Endpoints" ? "api" : result.label?.pages === "Files" ? "files" : "web";
+  const unit = kind === "api" ? "endpoint" : kind === "files" ? "file" : "page";
+  const what =
+    kind === "api"
+      ? `An automated test of the REST API ${result.startUrl} called ${result.pages.length} endpoint(s) without logging in`
+      : kind === "files"
+        ? `An automated offline test checked ${result.startUrl} (source code or a mobile app)`
+        : `An automated scan of ${result.startUrl} tested ${result.pages.length} page(s)`;
+  const prompt = `You are a senior QA and security engineer at a software agency. ${what}.
+${result.notes?.length ? `\nWhat was tested:\n${result.notes.map((n) => `- ${n}`).join("\n")}\n` : ""}
 Scores out of 100: ${Object.entries(result.scores)
     .map(([k, v]) => `${k} ${v}`)
     .join(", ")}. Overall ${result.overallScore}.
 
 Findings (grouped by rule):
-${compactFindings(result.findings) || "- none"}
+${compactFindings(result.findings, 60, unit) || "- none"}
 
-Write a summary for the site owner and pick the fixes with the biggest impact on users, security and search ranking. Ignore info-level items unless nothing else exists. Base everything only on the findings above; do not invent issues.`;
+Write a summary for the product owner and pick the fixes with the biggest impact on users, security${kind === "web" ? " and search ranking" : " and release readiness"}. Ignore info-level items unless nothing else exists. Base everything only on the findings above; do not invent issues.`;
 
   const response = await client.beta.messages.parse({
     model,

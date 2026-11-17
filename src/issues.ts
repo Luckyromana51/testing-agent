@@ -40,7 +40,10 @@ export function syncIssues(
   if (!result) throw new Error("The run has no result to compare.");
   const groups = groupFindings(result.findings.filter((f) => f.severity !== "info" && f.rule !== "check-error"));
   const byFingerprint = new Map(existing.map((i) => [i.fingerprint, i]));
-  const scanned = new Set(result.pages.flatMap((p) => [p.url, p.redirectedFrom].filter(Boolean) as string[]));
+  // Pages that failed, crashed or refused us were not really looked at, so their issues stay as they are.
+  const looked = result.pages.filter((p) => !p.error && p.status !== null && ![401, 403, 429].includes(p.status) && p.status < 500);
+  const scanned = new Set(looked.flatMap((p) => [p.url, p.redirectedFrom].filter(Boolean) as string[]));
+  if (looked.length) for (const u of result.scanned ?? []) scanned.add(u);
   const ranAgents = run.agents ? new Set(run.agents) : null;
   const diff: RunDiff = { new: 0, fixed: 0, reopened: 0, open: 0 };
   const changed: Issue[] = [];
@@ -108,7 +111,9 @@ export function syncIssues(
     // Only call it fixed when this run actually looked again: the agent ran and the pages were re-tested.
     const agentRan = !prev.agent || !ranAgents || ranAgents.has(prev.agent);
     const lookedAgain =
-      (prev.agent && SITE_AGENTS.has(prev.agent)) || prev.occurrences.some((o) => scanned.has(o.pageUrl));
+      result.complete ||
+      (prev.agent && SITE_AGENTS.has(prev.agent) && looked.length > 0) ||
+      prev.occurrences.some((o) => scanned.has(o.pageUrl));
     if (!agentRan || !lookedAgain) continue;
     changed.push({
       ...prev,

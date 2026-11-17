@@ -1,4 +1,7 @@
 import type { ProductType } from "../types.js";
+import { API_AGENTS } from "./api/index.js";
+import { CODE_AGENTS } from "./code/index.js";
+import { ANDROID_AGENTS } from "./mobile/android.js";
 import type { AgentInfo, WebAgent } from "./types.js";
 import { linksAgent } from "./web/links.js";
 import {
@@ -45,8 +48,8 @@ export const WEB_AGENTS: WebAgent[] = [
   mobileAgent,
 ];
 
-/** All agents of every engine (API, code and mobile engines add theirs here). */
-export const ALL_AGENTS: AgentInfo[] = [...WEB_AGENTS];
+/** All agents of every engine. */
+export const ALL_AGENTS: AgentInfo[] = [...WEB_AGENTS, ...API_AGENTS, ...CODE_AGENTS, ...ANDROID_AGENTS];
 
 /** Plain description of an agent, without its code, for the dashboard. */
 export function describeAgent(a: AgentInfo): AgentInfo {
