@@ -121,7 +121,10 @@ export async function createApp(opts: AppOptions) {
     trustProxy: process.env.TRUST_PROXY === "1",
     bodyLimit: 1_000_000,
   });
-  app.addHook("onClose", async () => stopScheduler());
+  app.addHook("onClose", async () => {
+    stopScheduler();
+    await queue.shutdown();
+  });
 
   app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
     const status = err instanceof HttpError ? err.status : (err.statusCode ?? 500);
@@ -243,6 +246,7 @@ export async function createApp(opts: AppOptions) {
       counts: issueCounts(stores.issues.list(p.id)),
       lastRun: runs[0] ? runSummary(runs[0]) : null,
       busy: queue.busy(p.id),
+      waiting: queue.waitingFor(p.id),
       // Never the secrets themselves: only whether they are saved.
       login: stores.vault.summary(p.id) ?? null,
     };
@@ -363,7 +367,8 @@ export async function createApp(opts: AppOptions) {
   app.delete<{ Params: { id: string } }>("/api/projects/:id", async (req, reply) => {
     ownerOnly(req);
     const p = getProject(req.params.id);
-    if (queue.busy(p.id)) throw new HttpError(409, "Wait for the running test to finish before deleting the project.");
+    // A queued or running test is stopped first, so nothing writes to the project after it is gone.
+    await queue.cancelProject(p.id, "The project was deleted");
     for (const runId of stores.runs.deleteForProject(p.id)) await queue.removeArtifacts(runId);
     stores.issues.deleteForProject(p.id);
     stores.vault.delete(p.id);
@@ -425,6 +430,17 @@ export async function createApp(opts: AppOptions) {
   app.get<{ Params: { id: string } }>("/api/runs/:id", async (req, reply) => {
     const run = stores.runs.get(req.params.id);
     return run ?? reply.code(404).send({ error: "Run not found" });
+  });
+
+  app.post<{ Params: { id: string } }>("/api/runs/:id/cancel", async (req) => {
+    const run = stores.runs.get(req.params.id);
+    if (!run) throw new HttpError(404, "Run not found");
+    if (run.status !== "queued" && run.status !== "running") throw new HttpError(409, "This test has already finished.");
+    const who = req.user && req.user.id !== "local-owner" ? req.user.name || req.user.email : "";
+    if (!(await queue.cancel(run.id, who ? `Cancelled by ${who}` : "Cancelled"))) {
+      throw new HttpError(409, "This test has already finished.");
+    }
+    return stores.runs.get(run.id);
   });
 
   app.delete<{ Params: { id: string } }>("/api/runs/:id", async (req, reply) => {
@@ -575,4 +591,20 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     scheduler: true,
   });
   await app.listen({ port: Number(process.env.PORT ?? 4000), host: process.env.HOST ?? "0.0.0.0" });
+  // Ctrl-C and docker stop: stop the tests (closing their browsers), then exit. In Docker the app
+  // is process 1, which ignores these signals unless it handles them. A second signal exits at once.
+  let closing = false;
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => {
+      if (closing) process.exit(1);
+      closing = true;
+      app.log.info(`${sig}: stopping running tests and closing`);
+      const force = setTimeout(() => process.exit(1), 15_000);
+      force.unref();
+      app.close().then(
+        () => process.exit(0),
+        () => process.exit(1),
+      );
+    });
+  }
 }

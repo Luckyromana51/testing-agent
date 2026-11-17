@@ -11,6 +11,13 @@ interface SecretPattern {
   /** Which capture group holds the secret itself (0 = whole match). */
   group?: number;
   fix: string;
+  /** Only in files that contain this too (a bare `secret:` line counts only next to express-session). */
+  fileHas?: RegExp;
+  /**
+   * Report even known placeholders ("keyboard cat", "change-me"): a signing secret that is public
+   * because it is in the code is a hole whatever its value. Only template and env lookups are skipped.
+   */
+  placeholdersCount?: boolean;
 }
 
 const ROTATE = "Treat it as leaked: revoke it and make a new one now, then load it from an environment variable or a secrets store.";
@@ -71,6 +78,27 @@ export const SECRET_PATTERNS: SecretPattern[] = [
     fix: "Change the database password, then read the address from an environment variable (DATABASE_URL).",
   },
   {
+    id: "session-secret",
+    // NodeGoat's config: cookieSecret: "session_cookie_secret_key_here"; Rails: secret_key_base.
+    re: /(?<![-\w])(?:cookie_?secret|session_?secret|jwt_?secret|jwt_?key|secret_?key_?base|app_?secret|token_?secret|signing_?(?:key|secret)|crypto_?key|encryption_?key|aes_?key|cipher_?key)["']?\s*(?:=>|[:=])\s*["']([^"'\n]{6,})["']/i,
+    group: 1,
+    severity: "high",
+    what: "a hard-coded session or signing secret",
+    placeholdersCount: true,
+    fix: "Anyone who reads the code can forge session cookies or login tokens and sign in as any user. Make a long random secret, load it from an environment variable (SESSION_SECRET), and change it (everyone is signed out once).",
+  },
+  {
+    id: "session-secret",
+    // app.use(session({ secret: "keyboard cat" })) and cookieParser("secret")
+    re: /^\s*secret\s*:\s*["']([^"'\n]{3,})["']|\bcookieParser\s*\(\s*["']([^"'\n]{3,})["']/,
+    fileHas: /express-session|cookie-session|\bsession\s*\(\s*\{|cookieParser\s*\(/,
+    group: 1,
+    severity: "high",
+    what: "a hard-coded session or signing secret",
+    placeholdersCount: true,
+    fix: "Anyone who reads the code can forge session cookies and sign in as any user. Make a long random secret, load it from an environment variable (SESSION_SECRET), and change it (everyone is signed out once).",
+  },
+  {
     id: "generic",
     // The key must start a word (not "new-password"), so text values like autocomplete names do not count.
     re: /(?<![-\w])(?:password|passwd|pwd|secret|api_?key|apikey|auth_?token|access_?token|client_?secret|private_?key|secret_?key)["']?\s*(?:=>|[:=])\s*["']([^"'\s]{8,})["']/i,
@@ -81,12 +109,16 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   },
 ];
 
+/** Values read from somewhere else at run time: never a secret in the code. */
+const LOOKED_UP = /^(\$|\{\{|<%|%\(|process\.env|env\(|getenv|os\.environ|config\(|\$_ENV|import\.meta)/i;
 /** Values that are clearly not real secrets: templates, placeholders, variable names. */
 const PLACEHOLDER =
   /^(\$|\{\{|<|%|process\.env|env\(|getenv|os\.environ|config\(|\$_ENV|import\.meta)|change.?me|your[_-]|example|placeholder|xxxx|\*\*\*|dummy|sample|^test|^password|^secret|^null$|^none$|^undefined$|^true$|^false$|redacted|^\.\.\.|\.\.\.$/i;
 /** Files that are lists of packages or generated, where long random strings are normal. */
 const SKIP_FILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Gemfile\.lock|poetry\.lock|Pipfile\.lock|go\.sum|Cargo\.lock)$|\.(min\.js|min\.css|map|svg|lock)$/i;
 const ENV_FILE = /(^|\/)\.env(\.[\w-]+)?$/;
+/** Guides and tutorials: a session secret there is an example to copy, not the app's own. */
+const DOC_FILE = /\.(md|markdown|rst|txt|adoc|html?)$/i;
 const ENV_TEMPLATE = /\.(example|sample|template|dist|defaults?)$/i;
 
 const mask = (s: string) => (s.length <= 8 ? `${s.slice(0, 2)}***` : `${s.slice(0, 4)}***${s.slice(-2)} (${s.length} characters)`);
@@ -96,21 +128,29 @@ function scanFile(file: SourceFile): Finding[] {
   const out: Finding[] = [];
   const isTest = TEST_PATH.test(file.path) || ENV_TEMPLATE.test(file.path);
   const lines = file.text.split("\n");
+  // A line reported by a specific pattern is not reported again by the general one.
+  const taken = new Set<number>();
+  const reported = new Set<string>();
   for (const p of SECRET_PATTERNS) {
     if (p.id === "generic" && isTest) continue;
+    if (reported.has(p.id) || (p.fileHas && !p.fileHas.test(file.text))) continue;
+    if (p.placeholdersCount && DOC_FILE.test(file.path)) continue;
     let first: { line: number; value: string } | null = null;
     let count = 0;
     lines.forEach((line, i) => {
       if (line.length > 2000) return;
+      if (p.id === "generic" && taken.has(i)) return;
       const m = p.re.exec(line);
       if (!m) return;
-      const value = m[p.group ?? 0] ?? m[0];
-      if (p.group && PLACEHOLDER.test(value)) return;
+      const value = (p.group ? m.slice(p.group).find((v) => v !== undefined) : undefined) ?? m[0];
+      if (p.group && (p.placeholdersCount ? LOOKED_UP.test(value) : PLACEHOLDER.test(value))) return;
       if (p.id === "generic" && /^[a-z_.]+$/i.test(value) && !/\d/.test(value)) return; // a variable name, not a value
+      taken.add(i);
       count++;
       first ??= { line: i + 1, value };
     });
     if (!first) continue;
+    reported.add(p.id);
     const hit = first as { line: number; value: string };
     out.push(
       finding({

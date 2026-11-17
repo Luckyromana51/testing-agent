@@ -2,7 +2,7 @@ import { accessibilityFindings, tapTargetFindings } from "../../runner/checks/ac
 import { collectSeoFacts, seoFindings } from "../../runner/checks/seo.js";
 import { cookieFindings, headerFindings } from "../../runner/checks/security.js";
 import { finding } from "../../runner/finding.js";
-import { WEB_PRODUCTS } from "../../products.js";
+import { PUBLIC_WEB_PRODUCTS, WEB_PRODUCTS } from "../../products.js";
 import type { Finding } from "../../types.js";
 import type { PageAgent } from "../types.js";
 
@@ -12,12 +12,12 @@ export const seoAgent: PageAgent = {
   description: "Title, meta description, headings, image alt text, canonical, language, viewport, noindex and social sharing tags.",
   category: "seo",
   engine: "web",
-  products: WEB_PRODUCTS,
+  products: PUBLIC_WEB_PRODUCTS,
   stage: "page",
   skipErrorPages: true,
   async run({ page, url, site }) {
     const facts = await collectSeoFacts(page);
-    site.seo.set(url, { title: facts.title, description: facts.description });
+    site.seo.set(url, { title: facts.title, description: facts.description, canonical: facts.canonical });
     return seoFindings(url, facts);
   },
 };
@@ -124,20 +124,26 @@ export const contentAgent: PageAgent = {
   stage: "page",
   skipErrorPages: true,
   async run({ page, url }) {
+    // Only visible prose counts: code examples (pre, code), form fields and scripts often show
+    // {{ tags }} or "undefined" on purpose, as on a developer blog or a template guide.
     const facts = (await page.evaluate(`(function () {
-      var text = document.body ? document.body.innerText : "";
+      var parts = [];
+      var size = 0;
       var bad = [];
+      var skip = "script,style,noscript,template,pre,code,kbd,samp,var,textarea,[contenteditable],[translate=no]";
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       var node;
-      while ((node = walker.nextNode()) && bad.length < 10) {
+      while ((node = walker.nextNode()) && size < 200000) {
         var t = (node.textContent || "").trim();
         var parent = node.parentElement;
-        if (!t || !parent || /^(SCRIPT|STYLE|NOSCRIPT|CODE|PRE|TEXTAREA)$/.test(parent.tagName)) continue;
+        if (!t || !parent || parent.closest(skip)) continue;
         if (!parent.getClientRects().length) continue;
-        if (/^(undefined|null|NaN)$/.test(t) || /\\[object Object\\]/.test(t) || /(^|[\\s$₹€£])NaN(\\s|%|$)/.test(t) || /(^|\\s)undefined(\\s|$)/.test(t) && t.length < 40)
+        parts.push(t);
+        size += t.length + 1;
+        if (bad.length < 10 && (/^(undefined|null|NaN)$/.test(t) || /\\[object Object\\]/.test(t) || /(^|[\\s$₹€£])NaN(\\s|%|$)/.test(t) || /(^|\\s)undefined(\\s|$)/.test(t) && t.length < 40))
           bad.push(t.slice(0, 80));
       }
-      return { text: text.slice(0, 200000), bad: bad };
+      return { text: parts.join("\\n"), bad: bad };
     })()`)) as { text: string; bad: string[] };
 
     const out: Finding[] = [];
@@ -308,7 +314,7 @@ export const structuredDataAgent: PageAgent = {
   description: "Checks schema.org JSON-LD for syntax errors, and that store product pages describe their product for Google rich results.",
   category: "seo",
   engine: "web",
-  products: WEB_PRODUCTS,
+  products: PUBLIC_WEB_PRODUCTS,
   stage: "page",
   skipErrorPages: true,
   async run({ page, url, product }) {

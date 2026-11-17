@@ -166,7 +166,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
         <span className={`product-icon big pi-${type}`}>
           <Icon name={type} size={26} />
         </span>
-        <div>
+        <div className="grow">
           <div className="eyebrow">New {product.name.toLowerCase()} test</div>
           <h1>{product.name}</h1>
           <p className="muted">{product.description}</p>

@@ -30,6 +30,8 @@ export type ProjectSummary = Project & {
   counts: IssueCounts;
   lastRun: RunSummary | null;
   busy: boolean;
+  /** Queued behind other tests, not yet running. */
+  waiting: boolean;
   /** The saved login, without its secrets. */
   login: LoginSummary | null;
 };
@@ -155,6 +157,7 @@ export const api = {
 
   run: (id: string) => call<Run>("GET", `/api/runs/${id}`),
   deleteRun: (id: string) => call("DELETE", `/api/runs/${id}`),
+  cancelRun: (id: string) => call<Run>("POST", `/api/runs/${id}/cancel`),
   artifact: (id: string, file: string) => `/api/runs/${id}/artifacts/${file}`,
 
   issues: (projectId?: string) => call<IssueSummary[]>("GET", `/api/issues${projectId ? `?projectId=${projectId}` : ""}`),

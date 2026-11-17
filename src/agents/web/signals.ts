@@ -30,6 +30,7 @@ export function listen(page: Page): PageSignals {
   page.on("requestfailed", (req) => {
     const reason = req.failure()?.errorText ?? "failed";
     if (reason.includes("ERR_ABORTED")) return; // navigation away, not a real failure
+    if (isMainDocument(req)) return; // the page itself failing is reported once, by the crawler
     s.failedRequests.push(`${req.url()} (${reason})`);
   });
   page.on("response", (res) => {

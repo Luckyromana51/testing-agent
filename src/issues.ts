@@ -9,6 +9,13 @@ const CLOSED: IssueStatus[] = ["verified"];
 
 const SITE_AGENTS = new Set(WEB_AGENTS.filter((a) => a.stage === "site").map((a) => a.id));
 
+/**
+ * Timing results (load speed, server response, layout jumps, slow API endpoints) change from run
+ * to run on the same site, so these issues are verified or reopened only when two runs in a row agree.
+ */
+export const TIMING_RULES = new Set(["perf:lcp", "perf:ttfb", "perf:cls", "slow-page", "api:slow"]);
+const SETTLE_RUNS = 2;
+
 /** Short uppercase key prefix for a project name, like Jira: "GLV Infotech" -> "GLV". */
 export function projectKey(name: string, taken: string[] = []): string {
   const words = name
@@ -45,6 +52,8 @@ export function syncIssues(
   const scanned = new Set(looked.flatMap((p) => [p.url, p.redirectedFrom].filter(Boolean) as string[]));
   if (looked.length) for (const u of result.scanned ?? []) scanned.add(u);
   const ranAgents = run.agents ? new Set(run.agents) : null;
+  // Agents that could not do their check, or were left out on purpose, did not look again.
+  const notRun = new Set((result.agentStats ?? []).filter((s) => s.untested || s.skipped).map((s) => s.id));
   const diff: RunDiff = { new: 0, fixed: 0, reopened: 0, open: 0 };
   const changed: Issue[] = [];
   const created: Issue[] = [];
@@ -93,7 +102,18 @@ export function syncIssues(
       updatedAt: now,
       history: [...prev.history],
     };
-    if (prev.status === "fixed" || CLOSED.includes(prev.status)) {
+    const timing = TIMING_RULES.has(prev.rule);
+    if (timing && prev.missedRuns) issue.missedRuns = 0;
+    if ((prev.status === "fixed" || CLOSED.includes(prev.status)) && timing && (prev.backRuns ?? 0) + 1 < SETTLE_RUNS) {
+      issue.backRuns = (prev.backRuns ?? 0) + 1;
+      issue.history.push({
+        at: now,
+        type: "seen",
+        text: "Slow again in this run. Speed changes from run to run, so it reopens only if the next test finds it too.",
+        runId: run.id,
+      });
+    } else if (prev.status === "fixed" || CLOSED.includes(prev.status)) {
+      issue.backRuns = 0;
       issue.status = "reopened";
       issue.history.push({
         at: now,
@@ -107,16 +127,35 @@ export function syncIssues(
   }
 
   for (const prev of existing) {
-    if (seen.has(prev.fingerprint) || !ACTIVE.includes(prev.status)) continue;
+    if (seen.has(prev.fingerprint)) continue;
     // Only call it fixed when this run actually looked again: the agent ran and the pages were re-tested.
-    const agentRan = !prev.agent || !ranAgents || ranAgents.has(prev.agent);
+    const agentRan = !prev.agent || ((!ranAgents || ranAgents.has(prev.agent)) && !notRun.has(prev.agent));
     const lookedAgain =
       result.complete ||
       (prev.agent && SITE_AGENTS.has(prev.agent) && looked.length > 0) ||
       prev.occurrences.some((o) => scanned.has(o.pageUrl));
     if (!agentRan || !lookedAgain) continue;
+    const timing = TIMING_RULES.has(prev.rule);
+    if (!ACTIVE.includes(prev.status)) {
+      // A closed speed issue that was slow once but not this time: the count starts again.
+      if (timing && prev.backRuns) changed.push({ ...prev, backRuns: 0, updatedAt: now });
+      continue;
+    }
+    if (timing && (prev.missedRuns ?? 0) + 1 < SETTLE_RUNS) {
+      changed.push({
+        ...prev,
+        missedRuns: (prev.missedRuns ?? 0) + 1,
+        updatedAt: now,
+        history: [
+          ...prev.history,
+          { at: now, type: "seen", text: "Not slow in this run. Speed changes from run to run, so it is verified once the next test agrees.", runId: run.id },
+        ],
+      });
+      continue;
+    }
     changed.push({
       ...prev,
+      ...(timing ? { missedRuns: 0 } : {}),
       status: "verified",
       updatedAt: now,
       history: [...prev.history, { at: now, type: "verified", text: "Not found in the re-test: fixed and verified", runId: run.id }],

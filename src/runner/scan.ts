@@ -5,8 +5,10 @@ import { agentsFor, WEB_AGENTS } from "../agents/registry.js";
 import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../agents/types.js";
 import { listen } from "../agents/web/signals.js";
 import type { AgentStat, Finding, PageResult, ScanOptions, ScanResult } from "../types.js";
+import { CouldNotTestError, explainLoadError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
+import { categoriesFor } from "../products.js";
 import { isCrawlable, normaliseUrl } from "./urls.js";
 import { scoreFindings } from "./score.js";
 
@@ -24,15 +26,39 @@ export function selectAgents(opts: ScanOptions): WebAgent[] {
   const ids = new Set(opts.agents ?? agentsFor(product).map((a) => a.id));
   if (opts.checkLinks === false) ids.delete("web.links");
   if (opts.accessibility === false) ids.delete("web.accessibility");
-  return WEB_AGENTS.filter((a) => ids.has(a.id));
+  // Only agents meant for this product, even when a list of ids is given (store checks never run on a CRM).
+  return WEB_AGENTS.filter((a) => ids.has(a.id) && a.products.includes(product));
 }
 
 /** Runs agents and keeps per-agent numbers. One agent failing never stops the others. */
 class AgentRunner {
   stats = new Map<string, AgentStat>();
+  private lastError = new Map<string, string>();
+  private agents: WebAgent[];
+  /** Agents left out on purpose, with the reason shown in the report. */
+  skipped: AgentStat[];
 
-  constructor(private agents: WebAgent[]) {
-    for (const a of agents) this.stats.set(a.id, { id: a.id, name: a.name, findings: 0, ms: 0, errors: 0 });
+  constructor(agents: WebAgent[], loggedIn: boolean) {
+    const skip = (a: WebAgent): string | undefined => {
+      if (loggedIn && a.category === "seo") return "Left out while signed in: private pages are not meant for search engines.";
+      if (!loggedIn && a.needsLogin) return "Needs a saved login: add one on the project page to test the pages behind it.";
+      return undefined;
+    };
+    this.agents = agents.filter((a) => !skip(a));
+    this.skipped = agents
+      .filter((a) => skip(a))
+      .map((a) => ({ id: a.id, name: a.name, findings: 0, ms: 0, errors: 0, category: a.category, runs: 0, skipped: skip(a) }));
+    for (const a of this.agents) this.stats.set(a.id, { id: a.id, name: a.name, findings: 0, ms: 0, errors: 0, category: a.category, runs: 0 });
+  }
+
+  /** Every agent's numbers. An agent that failed everywhere it ran, or never got to run, is "not tested". */
+  finalStats(): AgentStat[] {
+    const out = [...this.stats.values()].map((s) => {
+      if (!s.runs) return { ...s, untested: "No page it could check loaded." };
+      if (s.errors >= s.runs) return { ...s, untested: `Stopped with an error every time: ${this.lastError.get(s.id) ?? "unknown error"}` };
+      return s;
+    });
+    return [...out, ...this.skipped];
   }
 
   pageAgents(stage: PageAgent["stage"]): PageAgent[] {
@@ -46,6 +72,7 @@ class AgentRunner {
   async run(agent: WebAgent, pageUrl: string, fn: () => Promise<Finding[]> | Finding[]): Promise<Finding[]> {
     const stat = this.stats.get(agent.id)!;
     const started = Date.now();
+    stat.runs = (stat.runs ?? 0) + 1;
     try {
       const out = await fn();
       for (const f of out) f.agent ??= agent.id;
@@ -53,6 +80,7 @@ class AgentRunner {
       return out;
     } catch (err) {
       stat.errors++;
+      this.lastError.set(agent.id, (err as Error).message.split("\n")[0]);
       return [
         finding({
           category: "functional",
@@ -209,14 +237,22 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const log = (m: string) => opts.onProgress?.(m);
   await mkdir(opts.artifactsDir, { recursive: true });
 
-  const runner = new AgentRunner(selectAgents(opts));
+  const runner = new AgentRunner(selectAgents(opts), Boolean(opts.login));
   log(`${runner.stats.size} specialist agents assigned`);
+  if (opts.login && runner.skipped.some((s) => s.category === "seo")) {
+    log("Search engine checks are left out: the test runs signed in, and private pages are not for search engines");
+  }
 
   // Behind a company proxy, route both the browser and the agents' requests through it.
   const proxyServer = process.env.HTTPS_PROXY || process.env.https_proxy;
-  const browser: Browser = await chromium.launch(
-    proxyServer ? { proxy: { server: proxyServer, bypass: process.env.NO_PROXY || process.env.no_proxy } } : {},
-  );
+  const browser: Browser = await chromium.launch({
+    ...(proxyServer ? { proxy: { server: proxyServer, bypass: process.env.NO_PROXY || process.env.no_proxy } } : {}),
+    // The server handles Ctrl-C and docker stop itself: it cancels the run, which closes this browser.
+    ...(opts.signal ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false } : {}),
+  });
+  // Cancelling closes the browser, which ends whatever page the agents are on.
+  const stop = () => void browser.close().catch(() => {});
+  opts.signal?.addEventListener("abort", stop, { once: true });
   const context = await browser.newContext({
     viewport: DESKTOP,
     userAgent:
@@ -229,7 +265,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const pages: PageResult[] = [];
   const findings: Finding[] = [];
   const notes: string[] = [];
-  const site: SiteState = { seo: new Map(), loggedIn: Boolean(opts.login) };
+  const site: SiteState = { seo: new Map(), loggedIn: Boolean(opts.login), loginUser: opts.login?.username };
   let signedIn: SignedIn | undefined;
   let signOuts = 0;
   const loginOrigin = opts.login?.loginUrl ? new URL(opts.login.loginUrl).origin : "";
@@ -245,6 +281,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       notes.push("While signed in, links that look like actions (log out, delete, cancel, archive and similar) were not opened, to keep the account and its data unchanged.");
     }
     while (queue.length && pages.length < maxPages) {
+      opts.signal?.throwIfAborted();
       const url = queue.shift()!;
       log(`Testing page ${pages.length + 1}: ${url}`);
       const isFirst = pages.length === 0;
@@ -263,6 +300,11 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
           queue.unshift(url);
           continue;
         }
+      }
+      if (isFirst) {
+        // Nothing on the site can be tested when the first page cannot be opened: say why, never score it.
+        const why = r.result.error ? explainLoadError(r.result.error, url) : refusedStatus(r.result.status, url);
+        if (why) throw new CouldNotTestError(`Could not test the site: ${why}`);
       }
       if (isFirst && r.result.redirectedFrom) {
         // Follow the site to where it really lives, e.g. http://example.com -> https://www.example.com.
@@ -313,14 +355,25 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       );
     }
   } finally {
-    await browser.close();
+    opts.signal?.removeEventListener("abort", stop);
+    await browser.close().catch(() => {});
   }
 
   if (signOuts) {
     notes.push(`The site signed the agent out ${signOuts === 1 ? "once" : `${signOuts} times`} during the test, so it signed in again.`);
   }
+  if (opts.login && runner.skipped.some((s) => s.category === "seo")) {
+    notes.push("Search engine checks were left out because the test ran signed in: private pages are not meant to be found on Google.");
+  }
   dropDuplicates(findings);
-  const { scores, overallScore } = scoreFindings(findings, pages.length);
+  // Signed in, the pages are private: search engine advice does not apply, from any agent, and
+  // the search category is left out of the score instead of shown as untested.
+  const categories = categoriesFor(opts.product ?? "website").filter((c) => !(opts.login && c === "seo"));
+  for (let i = findings.length - 1; i >= 0; i--) {
+    if (!categories.includes(findings[i].category)) findings.splice(i, 1);
+  }
+  const agentStats = runner.finalStats();
+  const score = scoreFindings(findings, pages.length, categories, agentStats);
   log(`Done: ${pages.length} pages, ${findings.length} findings`);
   return {
     startUrl,
@@ -328,9 +381,8 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     finishedAt: new Date().toISOString(),
     pages,
     findings,
-    scores,
-    overallScore,
-    agentStats: [...runner.stats.values()],
+    ...score,
+    agentStats,
     ...(notes.length ? { notes } : {}),
   };
 }

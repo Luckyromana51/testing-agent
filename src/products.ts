@@ -29,7 +29,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Shopify, WooCommerce and custom stores",
     input: "url",
     available: true,
-    tests: ["Everything in Website", "Product structured data", "Privacy and tracking", "Forms"],
+    tests: ["Everything in Website", "Refund, shipping and other store policies", "Product pages: price, buy button, product data", "Checkout scripts (card skimming risk)", "Privacy and tracking"],
   },
   {
     type: "webapp",
@@ -37,7 +37,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Portals, dashboards and booking systems",
     input: "url",
     available: true,
-    tests: ["Everything in Website", "Forms", "Exposed files", "Client errors"],
+    tests: ["Everything in Website", "Private pages that open without a login", "Signed-in pages kept in caches", "Personal data in page addresses", "Exposed files"],
   },
   {
     type: "saas",
@@ -45,7 +45,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Multi-tenant products with sign-up and billing",
     input: "url",
     available: true,
-    tests: ["Everything in Web app", "Opens in a real cloud browser", "Logged-in testing"],
+    tests: ["Everything in Web app", "Pricing, terms, privacy and refund pages", "Logged-in testing"],
   },
   {
     type: "crm",
@@ -53,7 +53,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Customer, lead and WhatsApp CRMs",
     input: "url",
     available: true,
-    tests: ["Everything in Web app", "Opens in a real cloud browser", "Logged-in testing"],
+    tests: ["Everything in Web app", "Logged-in testing", "No search engine (SEO) checks: a CRM is private"],
   },
   {
     type: "api",
@@ -93,6 +93,7 @@ export const PRODUCTS: ProductInfo[] = [
 export function categoriesFor(type: ProductType): Category[] {
   if (type === "api") return ["functional", "security", "performance"];
   if (type === "code" || type === "android" || type === "ios") return ["security", "functional"];
+  if (type === "crm") return CATEGORIES.filter((c) => c !== "seo");
   return CATEGORIES;
 }
 
@@ -100,3 +101,9 @@ export const productInfo = (type: ProductType): ProductInfo => PRODUCTS.find((p)
 
 /** Products that the browser engine tests. */
 export const WEB_PRODUCTS: ProductType[] = ["website", "ecommerce", "webapp", "saas", "crm"];
+
+/**
+ * Web products meant to be found on Google, so they get the search engine (SEO) checks. A CRM is a
+ * private tool: only its sign-in page is public, and search advice on it is noise.
+ */
+export const PUBLIC_WEB_PRODUCTS: ProductType[] = ["website", "ecommerce", "webapp", "saas"];

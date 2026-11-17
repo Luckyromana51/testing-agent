@@ -51,12 +51,12 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
             {productName} · {targetLabel(p.target)}
           </div>
         </div>
-        <ScoreChip score={p.lastScore} status={p.busy ? "running" : p.lastRun?.status} />
+        <ScoreChip score={p.lastScore} status={p.busy ? (p.waiting ? "queued" : "running") : p.lastRun?.status} />
       </div>
       <OpenCounts open={p.counts.open} />
       <div className="project-card-foot">
         <span className="muted small">
-          {p.busy ? "Testing now…" : `Tested ${timeAgo(p.lastRunAt)}`} · {SCHEDULE_LABEL[p.schedule]}
+          {p.busy ? (p.waiting ? "Waiting to start…" : "Testing now…") : `Tested ${timeAgo(p.lastRunAt)}`} · {SCHEDULE_LABEL[p.schedule]}
         </span>
         <button
           className="btn small"
@@ -135,7 +135,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             }
           }}
         >
-          {p.busy ? "Testing now…" : "Re-test now"}
+          {p.busy ? (p.waiting ? "Waiting to start…" : "Testing now…") : "Re-test now"}
         </button>
       </div>
       {actionError && <div className="error">{actionError}</div>}
@@ -222,12 +222,12 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
           <tbody>
             {runs.map((r) => (
               <tr key={r.id} onClick={() => go(`#/run/${r.id}`)} className="clickable">
-                <td>{new Date(r.createdAt).toLocaleString()}</td>
+                <td>{new Date(r.startedAt ?? r.createdAt).toLocaleString()}</td>
                 <td className="muted">{r.trigger === "schedule" ? "Schedule" : r.trigger === "retest" ? "Re-test" : "Manual"}</td>
                 <td>
                   <ScoreChip score={r.overallScore} status={r.status} />
                 </td>
-                <td>{r.pageCount ?? (r.status === "failed" ? "Failed" : r.lastProgress)}</td>
+                <td>{r.pageCount ?? (r.status === "failed" ? "Failed" : r.status === "cancelled" ? "Cancelled" : r.lastProgress)}</td>
                 <td>
                   {r.diff ? (
                     <span className="diff">

@@ -310,6 +310,7 @@ describe("Android engine", () => {
       "android:secret-aws-key",
       "android:http-backend",
       "android:no-64bit",
+      "android:hardcoded-crypto-key",
     ]) {
       assert.ok(found.has(rule), `expected ${rule}`);
     }
