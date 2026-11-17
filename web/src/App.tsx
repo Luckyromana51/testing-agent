@@ -86,11 +86,11 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
                     className={`run-item ${route.name === "project" && route.id === p.id ? "active" : ""}`}
                     onClick={() => go(`#/project/${p.id}`)}
                   >
-                    <ScoreChip score={p.lastScore} status={p.busy ? "running" : p.lastRun?.status} />
+                    <ScoreChip score={p.lastScore} status={p.busy ? (p.waiting ? "queued" : "running") : p.lastRun?.status} />
                     <span className="run-meta">
                       <span className="run-url">{p.name}</span>
                       <span className="run-sub">
-                        {p.busy ? "Testing now…" : hostOf(p.target.url)}
+                        {p.busy ? (p.waiting ? "Waiting to start…" : "Testing now…") : hostOf(p.target.url)}
                         {p.counts.open.critical + p.counts.open.high > 0 &&
                           ` · ${p.counts.open.critical + p.counts.open.high} major`}
                       </span>

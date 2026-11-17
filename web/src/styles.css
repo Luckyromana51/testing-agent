@@ -1821,3 +1821,31 @@ a.brand {
 .error-text {
   color: var(--bad);
 }
+
+/* Not tested and incomplete */
+.incomplete-card {
+  border-left: 4px solid #d97706;
+  margin-bottom: 20px;
+}
+.incomplete-title,
+.not-tested-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.incomplete-card ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 14px;
+}
+.not-tested-card {
+  border-left: 4px solid #d97706;
+}
+.score-card.not-tested {
+  opacity: 0.75;
+}
+.score-card.not-tested .score-num {
+  color: var(--muted);
+}
+.partial {
+  color: #b45309;
+}

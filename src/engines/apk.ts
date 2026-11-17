@@ -153,7 +153,7 @@ export async function scanApk(opts: ApkScanOptions): Promise<ScanResult> {
     const { findings, stats } = await runEngineAgents(selected, ctx, "AndroidManifest.xml", log);
     const files = [...new Set(findings.map((f) => f.pageUrl))];
     const pages: PageResult[] = files.map((f) => ({ url: f, status: null, title: f, loadMs: null }));
-    const { scores, overallScore } = scoreFindings(findings, 1, APK_CATEGORIES);
+    const score = scoreFindings(findings, 1, APK_CATEGORIES, stats);
     log(`Done: ${findings.length} findings`);
     return {
       startUrl: `${facts.packageName}${facts.versionName ? ` ${facts.versionName}` : ""}`,
@@ -161,8 +161,7 @@ export async function scanApk(opts: ApkScanOptions): Promise<ScanResult> {
       finishedAt: new Date().toISOString(),
       pages,
       findings,
-      scores,
-      overallScore,
+      ...score,
       agentStats: stats,
       notes,
       label: { pages: "Files" },

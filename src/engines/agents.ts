@@ -1,4 +1,5 @@
 import type { EngineAgent } from "../agents/types.js";
+import { NotTestedError } from "../runner/coverage.js";
 import { finding } from "../runner/finding.js";
 import type { AgentStat, Finding } from "../types.js";
 
@@ -15,7 +16,7 @@ export async function runEngineAgents<Ctx>(
   const findings: Finding[] = [];
   const stats: AgentStat[] = [];
   for (const agent of agents) {
-    const stat: AgentStat = { id: agent.id, name: agent.name, findings: 0, ms: 0, errors: 0 };
+    const stat: AgentStat = { id: agent.id, name: agent.name, findings: 0, ms: 0, errors: 0, category: agent.category, runs: 1 };
     stats.push(stat);
     log(`Agent: ${agent.name}`);
     const started = Date.now();
@@ -25,7 +26,17 @@ export async function runEngineAgents<Ctx>(
       stat.findings = out.length;
       findings.push(...out);
     } catch (err) {
+      if (err instanceof NotTestedError) {
+        // The check could not be done: report it as not tested, keeping what it did find.
+        for (const f of err.partial) f.agent ??= agent.id;
+        stat.findings = err.partial.length;
+        stat.untested = err.message;
+        findings.push(...err.partial);
+        log(`${agent.name}: not tested (${err.message})`);
+        continue;
+      }
       stat.errors++;
+      stat.untested = `Stopped with an error: ${(err as Error).message.split("\n")[0]}`;
       findings.push(
         finding({
           category: "functional",

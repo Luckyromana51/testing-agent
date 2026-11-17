@@ -27,6 +27,12 @@ function Place({ at }: { at: string }) {
   );
 }
 
+/** "45 s" or "3 min" between two times. */
+function duration(from: string, to: string): string {
+  const s = Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 1000));
+  return s < 90 ? `${s} s` : `${Math.round(s / 60)} min`;
+}
+
 /** Rules whose evidence is a link target, so each item is listed as "link (status) on page". */
 const LINK_RULES = new Set(["broken-link", "broken-external-link", "unverified-external-link"]);
 
@@ -63,12 +69,29 @@ export function Report({ id }: { id: string }) {
           )}
         </h1>
         <div className="run-sub">
-          {new Date(run.createdAt).toLocaleString()}
+          {run.startedAt ? (
+            <>
+              Tested {new Date(run.startedAt).toLocaleString()}
+              {run.finishedAt && ` · took ${duration(run.startedAt, run.finishedAt)}`}
+            </>
+          ) : (
+            `Queued ${new Date(run.createdAt).toLocaleString()}`
+          )}
           {run.result && unitOf(run).one !== "file" && ` · ${plural(run.result.pages.length, unitOf(run).one)} tested`}
           {run.agents && ` · ${run.agents.length} agents`}
         </div>
       </div>
       <div className="header-actions">
+        {(run.status === "running" || run.status === "queued") && (
+          <button
+            className="btn ghost danger"
+            onClick={async () => {
+              await api.cancelRun(run.id).catch((e: Error) => setError(e.message));
+            }}
+          >
+            Cancel test
+          </button>
+        )}
         {run.projectId && run.status !== "running" && run.status !== "queued" && (
           <button
             className="btn"
@@ -102,7 +125,7 @@ export function Report({ id }: { id: string }) {
         <div className="progress-card">
           <div className="spinner" />
           <div>
-            <div className="progress-title">Testing in progress</div>
+            <div className="progress-title">{run.status === "queued" ? "Waiting to start: other tests are running" : "Testing in progress"}</div>
             <ul className="progress-log">
               {run.progress.slice(-8).map((p, i) => (
                 <li key={i}>{p}</li>
@@ -118,7 +141,23 @@ export function Report({ id }: { id: string }) {
     return (
       <div className="page run">
         {header}
-        <div className="error big">The test failed: {run.error}</div>
+        {run.status === "cancelled" ? (
+          <div className="card not-tested-card">
+            <div className="not-tested-title">Cancelled</div>
+            <p>{run.error}</p>
+          </div>
+        ) : run.error?.startsWith("Could not test") ? (
+          <div className="card not-tested-card">
+            <div className="not-tested-title">Not tested</div>
+            <p>{run.error}</p>
+            <p className="muted small">
+              Nothing was scored and no issues were changed, because the agents could not look at it. Fix what is
+              described above, then press Re-test.
+            </p>
+          </div>
+        ) : (
+          <div className="error big">The test failed: {run.error}</div>
+        )}
       </div>
     );
   }
@@ -127,7 +166,9 @@ export function Report({ id }: { id: string }) {
   const groups = groupFindings(result.findings);
   const major = groups.filter((g) => isMajor(g.severity));
   const unit = unitOf(run);
-  const categories = (Object.keys(CATEGORY_LABEL) as Category[]).filter((c) => result.scores[c] !== undefined);
+  const notTested = result.notTested ?? {};
+  const categories = (Object.keys(CATEGORY_LABEL) as Category[]).filter((c) => result.scores[c] !== undefined || c in notTested);
+  const untestedIn = (c: Category) => (result.agentStats ?? []).filter((s) => s.category === c && s.untested).length;
   return (
     <div className="page run">
       {header}
@@ -142,15 +183,42 @@ export function Report({ id }: { id: string }) {
         </div>
       )}
 
+      {result.incomplete && result.incomplete.length > 0 && (
+        <section className="card incomplete-card">
+          <div className="incomplete-title">Incomplete test: {plural(result.incomplete.length, "check")} could not run</div>
+          <ul>
+            {result.incomplete.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
+          <div className="muted small">
+            These are not counted as passed, and issues they found before stay open until a test can check them again.
+          </div>
+        </section>
+      )}
+
       <section className="scores">
         <div className={`overall ${scoreTone(result.overallScore)}`}>
           <div className="overall-num">{result.overallScore}</div>
-          <div className="overall-label">Overall score</div>
+          <div className="overall-label">{result.incomplete?.length ? "Overall score (incomplete)" : "Overall score"}</div>
         </div>
         <div className="score-grid">
           {categories.map((c) => {
             const n = groups.filter((g) => g.first.category === c && g.severity !== "info").length;
-            const score = result.scores[c] ?? 100;
+            const score = result.scores[c];
+            if (score === undefined) {
+              return (
+                <div className="score-card not-tested" key={c} title={notTested[c]}>
+                  <div className="score-card-top">
+                    <span>{CATEGORY_LABEL[c]}</span>
+                    <span className="score-num">–</span>
+                  </div>
+                  <div className="bar" />
+                  <div className="score-card-sub">Not tested</div>
+                </div>
+              );
+            }
+            const missing = untestedIn(c);
             return (
               <div className="score-card" key={c}>
                 <div className="score-card-top">
@@ -160,7 +228,10 @@ export function Report({ id }: { id: string }) {
                 <div className="bar">
                   <div className={`bar-fill ${scoreTone(score)}`} style={{ width: `${score}%` }} />
                 </div>
-                <div className="score-card-sub">{n === 0 ? "No issues" : plural(n, "issue")}</div>
+                <div className="score-card-sub">
+                  {n === 0 ? "No issues" : plural(n, "issue")}
+                  {missing > 0 && <span className="partial"> · {plural(missing, "check")} not tested</span>}
+                </div>
               </div>
             );
           })}
@@ -433,7 +504,8 @@ function Pages({ run }: { run: Run }) {
 }
 
 function Agents({ run }: { run: Run }) {
-  const stats = [...(run.result!.agentStats ?? [])].sort((a, b) => b.findings - a.findings);
+  const rank = (s: { untested?: string; skipped?: string }) => (s.untested ? 0 : s.skipped ? 2 : 1);
+  const stats = [...(run.result!.agentStats ?? [])].sort((a, b) => rank(a) - rank(b) || b.findings - a.findings);
   return (
     <div className="card table-card">
       <table className="table">
@@ -454,7 +526,19 @@ function Agents({ run }: { run: Run }) {
               </td>
               <td>{s.findings}</td>
               <td>{(s.ms / 1000).toFixed(1)} s</td>
-              <td>{s.errors ? <span className="bad">{plural(s.errors, "error")}</span> : <span className="ok">Done</span>}</td>
+              <td>
+                {s.untested ? (
+                  <span className="bad" title={s.untested}>
+                    Not tested: {s.untested}
+                  </span>
+                ) : s.skipped ? (
+                  <span className="muted">Skipped: {s.skipped}</span>
+                ) : s.errors ? (
+                  <span className="bad">{plural(s.errors, "error")}</span>
+                ) : (
+                  <span className="ok">Done</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

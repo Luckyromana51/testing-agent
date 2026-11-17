@@ -14,6 +14,8 @@ export interface AgentInfo {
   products: ProductType[];
   /** Off until the owner turns it on. */
   defaultOff?: boolean;
+  /** Only useful on a signed-in test (it checks the pages behind the login); skipped otherwise. */
+  needsLogin?: boolean;
 }
 
 /** Everything the browser saw while loading one page. */
@@ -29,9 +31,12 @@ export interface PageSignals {
 
 /** Shared notes that page agents leave for site agents. */
 export interface SiteState {
-  seo: Map<string, { title: string; description: string | null }>;
+  /** Each page's title and description, and the canonical address it names (if any). */
+  seo: Map<string, { title: string; description: string | null; canonical?: string | null }>;
   /** True when the crawl runs signed in: agents then stay away from anything that could change data. */
   loggedIn?: boolean;
+  /** The user name or email the test signed in with, to recognise private pages. */
+  loginUser?: string;
 }
 
 export interface PageContext {

@@ -67,6 +67,8 @@ export interface ScanOptions {
   agents?: string[];
   /** Sign in with this before testing, to test the pages behind the login. */
   login?: Login;
+  /** Stops the test (closes the browser) when the run is cancelled or the server stops. */
+  signal?: AbortSignal;
 }
 
 export interface AgentStat {
@@ -76,6 +78,14 @@ export interface AgentStat {
   /** Time spent, summed over every page. */
   ms: number;
   errors: number;
+  /** The category the agent's checks count towards. */
+  category?: Category;
+  /** How many times it ran (once per page for page agents). */
+  runs?: number;
+  /** Why the check could not be done (it is shown as "not tested", never as passed). */
+  untested?: string;
+  /** Why the agent was left out on purpose (for example search checks on signed-in pages). */
+  skipped?: string;
 }
 
 export interface ScanResult {
@@ -86,7 +96,12 @@ export interface ScanResult {
   findings: Finding[];
   /** Only the categories that apply to the product (an API has no phone layout). */
   scores: Partial<Record<Category, number>>;
+  /** Averages the categories that were tested; categories that could not be tested are left out. */
   overallScore: number;
+  /** Categories with no check that could run, and why. They have no score. */
+  notTested?: Partial<Record<Category, string>>;
+  /** Checks that could not run. When set, the run is incomplete and the report says so first. */
+  incomplete?: string[];
   /** What each specialist agent did. */
   agentStats?: AgentStat[];
   /** What was tested, for engines without pages ("Scanned 1,203 files"). */
@@ -99,7 +114,7 @@ export interface ScanResult {
   complete?: boolean;
 }
 
-export type RunStatus = "queued" | "running" | "done" | "failed";
+export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface AiSummary {
   model: string;
@@ -238,6 +253,13 @@ export interface Issue {
   lastSeenAt: string;
   updatedAt: string;
   history: IssueEvent[];
+  /**
+   * Speed results change from run to run, so a speed issue changes state only when two runs in a
+   * row agree: these count the runs in a row that did not find it (while open) or found it again
+   * (while fixed or verified).
+   */
+  missedRuns?: number;
+  backRuns?: number;
 }
 
 export type Role = "owner" | "member";

@@ -1,6 +1,7 @@
 import { request as playwrightRequest, type APIRequestContext } from "playwright";
 import type { ApiCall, ApiContext } from "../agents/api/context.js";
 import { API_AGENTS } from "../agents/api/index.js";
+import { CouldNotTestError, explainLoadError } from "../runner/coverage.js";
 import { scoreFindings } from "../runner/score.js";
 import { validateTarget } from "../runner/urls.js";
 import type { Category, Login, PageResult, ScanResult } from "../types.js";
@@ -59,6 +60,38 @@ function withQuery(url: string, query?: [string, string]): string {
   const u = new URL(url);
   u.searchParams.set(query[0], query[1]);
   return u.toString();
+}
+
+const REFUSALS = [401, 403, 407, 429, 451, 503];
+
+/**
+ * When (nearly) every call got no answer, or the very same refusal, the API itself was not tested:
+ * a firewall, proxy, rate limit or a dead server is in the way. Says why, or undefined when the
+ * calls are worth reporting on.
+ */
+export function blockedReason(calls: ApiCall[], authenticated: boolean): string | undefined {
+  const n = calls.length;
+  if (!n) return undefined;
+  const most = Math.max(n >= 3 ? 3 : n, Math.ceil(n * 0.8));
+  const silent = calls.filter((c) => c.status === null);
+  if (silent.length >= most) {
+    return `${silent.length} of ${n} endpoints gave no answer. ${explainLoadError(silent[0].error ?? "", silent[0].op.url)}`;
+  }
+  const same = new Map<string, ApiCall[]>();
+  for (const c of calls) {
+    if (c.status === null || !REFUSALS.includes(c.status)) continue;
+    // Anonymous calls to endpoints documented as needing a login are expected to be refused.
+    if ((c.status === 401 || c.status === 403) && c.op.secured && !authenticated) continue;
+    const key = `${c.status}|${c.text.slice(0, 500)}`;
+    same.set(key, [...(same.get(key) ?? []), c]);
+  }
+  const top = [...same.values()].sort((a, b) => b.length - a.length)[0];
+  if (!top || top.length < most) return undefined;
+  const status = top[0].status;
+  if (authenticated && (status === 401 || status === 403)) {
+    return `${top.length} of ${n} endpoints refused the saved login with the same HTTP ${status}. Check the key or token is right and still valid, then re-test.`;
+  }
+  return `${top.length} of ${n} endpoints gave the very same HTTP ${status} answer. That usually means a firewall, proxy, rate limit or maintenance page is in front of the API, not a problem in each endpoint. Allow the testing server to reach the API, then re-test.`;
 }
 
 /** One GET, never throwing: failures come back as status null with the reason. */
@@ -178,6 +211,8 @@ export async function scanApi(opts: ApiScanOptions): Promise<ScanResult> {
       log(`Calling ${i + 1}/${toCall.length}: GET ${op.path}`);
       return callOperation(request, op, auth.headers, auth.query);
     });
+    const blocked = blockedReason(calls, Boolean(opts.auth));
+    if (blocked) throw new CouldNotTestError(`Could not test the API: ${blocked}`);
     let anonymous = calls;
     if (opts.auth) {
       const secured = toCall.filter((o) => o.secured);
@@ -234,7 +269,7 @@ export async function scanApi(opts: ApiScanOptions): Promise<ScanResult> {
       notes.push(`${parsed.writeOperations} operations that change data (POST, PUT, PATCH, DELETE) were not called, to keep your data safe.`);
     }
 
-    const { scores, overallScore } = scoreFindings(findings, calls.length, API_CATEGORIES);
+    const score = scoreFindings(findings, calls.length, API_CATEGORIES, stats);
     log(`Done: ${calls.length} endpoints, ${findings.length} findings`);
     return {
       startUrl: opts.specUrl ?? parsed.baseUrl,
@@ -242,8 +277,7 @@ export async function scanApi(opts: ApiScanOptions): Promise<ScanResult> {
       finishedAt: new Date().toISOString(),
       pages,
       findings,
-      scores,
-      overallScore,
+      ...score,
       agentStats: stats,
       notes,
       label: { pages: "Endpoints" },

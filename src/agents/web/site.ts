@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import tls from "node:tls";
 import type { APIRequestContext, APIResponse } from "playwright";
 import { finding } from "../../runner/finding.js";
-import { WEB_PRODUCTS } from "../../products.js";
+import { PUBLIC_WEB_PRODUCTS, WEB_PRODUCTS } from "../../products.js";
 import type { Finding } from "../../types.js";
 import type { SiteAgent, SiteContext } from "../types.js";
 
@@ -274,7 +274,7 @@ export const crawlabilityAgent: SiteAgent = {
   description: "Reads robots.txt and the sitemap: is Google blocked, is the sitemap there, does it list pages that exist on the right address.",
   category: "seo",
   engine: "web",
-  products: WEB_PRODUCTS,
+  products: PUBLIC_WEB_PRODUCTS,
   stage: "site",
   run: crawlabilityFindings,
 };
@@ -285,7 +285,7 @@ export const soft404Agent: SiteAgent = {
   description: "Opens an address that cannot exist and checks the site answers 404, not a normal page.",
   category: "seo",
   engine: "web",
-  products: WEB_PRODUCTS,
+  products: PUBLIC_WEB_PRODUCTS,
   stage: "site",
   async run({ browser, origin }) {
     const url = `${origin}/glv-check-${randomBytes(6).toString("hex")}`;
@@ -507,24 +507,41 @@ export const wordpressAgent: SiteAgent = {
 // ---------------------------------------------------------------------------------------------
 // Duplicate titles and descriptions across pages
 
+/** The address a page stands for: its canonical when it names one, else its own address. */
+function canonicalKey(canonical: string | null | undefined, url: string): string {
+  try {
+    const u = new URL(canonical || url, url);
+    u.hash = "";
+    return u.href.replace(/\/$/, "");
+  } catch {
+    return url;
+  }
+}
+
 export const duplicatesAgent: SiteAgent = {
   id: "web.duplicates",
   name: "Duplicate titles",
   description: "Finds pages that share the same title or meta description, which makes them compete in Google.",
   category: "seo",
   engine: "web",
-  products: WEB_PRODUCTS,
+  products: PUBLIC_WEB_PRODUCTS,
   stage: "site",
   run({ site }) {
     const out: Finding[] = [];
     const check = (field: "title" | "description", rule: string, label: string) => {
-      const byValue = new Map<string, string[]>();
+      // Pages that name the same canonical address are one page to Google (/contact?tab=chat
+      // pointing at /contact), so they count once.
+      const byValue = new Map<string, Map<string, string>>();
       for (const [url, facts] of site.seo) {
         const v = facts[field]?.trim();
         if (!v) continue;
-        byValue.set(v, [...(byValue.get(v) ?? []), url]);
+        const key = canonicalKey(facts.canonical, url);
+        const pages = byValue.get(v) ?? new Map<string, string>();
+        if (!pages.has(key)) pages.set(key, url);
+        byValue.set(v, pages);
       }
-      for (const [value, urls] of byValue) {
+      for (const [value, pages] of byValue) {
+        const urls = [...pages.values()];
         if (urls.length < 2) continue;
         out.push(
           finding({

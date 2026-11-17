@@ -40,6 +40,7 @@ export const apiAvailabilityAgent: ApiAgent = {
         }),
       ];
     }
+    const undocumented: ApiCall[] = [];
     for (const c of calls) {
       const add = (rule: string, severity: Finding["severity"], title: string, detail: string, evidence?: string, category: Finding["category"] = "functional") =>
         out.push(finding({ category, rule, severity, title, detail, pageUrl: c.op.url, evidence }));
@@ -64,13 +65,7 @@ export const apiAvailabilityAgent: ApiAgent = {
           "HTTP 404",
         );
       } else if ((c.status === 401 || c.status === 403) && !c.op.secured) {
-        add(
-          "api:undocumented-auth",
-          "low",
-          "Endpoint needs a login the API file does not mention",
-          `${label(c)} answered ${c.status}, but the API file marks it as public. Add the security requirement to the file so client developers know.`,
-          `HTTP ${c.status}`,
-        );
+        undocumented.push(c);
       } else if (c.status === 429) {
         add("api:rate-limited", "info", "Rate limited during the test", `${label(c)} still answered 429 Too Many Requests after a pause.`, "HTTP 429");
       }
@@ -84,6 +79,27 @@ export const apiAvailabilityAgent: ApiAgent = {
           "performance",
         );
       }
+    }
+    // One missing security note in the API file is one problem, however many endpoints it covers.
+    if (undocumented.length) {
+      const c = undocumented[0];
+      const many = undocumented.length > 1;
+      out.push(
+        finding({
+          category: "functional",
+          rule: "api:undocumented-auth",
+          severity: "low",
+          title: many ? `${undocumented.length} endpoints need a login the API file does not mention` : "Endpoint needs a login the API file does not mention",
+          detail: many
+            ? `${undocumented.length} endpoints answered ${c.status}, but the API file marks them as public. Add a security requirement to the file (once at the top covers every endpoint) so client developers know.`
+            : `${label(c)} answered ${c.status}, but the API file marks it as public. Add the security requirement to the file so client developers know.`,
+          pageUrl: many ? parsed.baseUrl : c.op.url,
+          evidence: undocumented
+            .slice(0, 10)
+            .map((u) => `${label(u)}: HTTP ${u.status}`)
+            .join("\n"),
+        }),
+      );
     }
     return out;
   },

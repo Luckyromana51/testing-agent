@@ -22,12 +22,12 @@ With login on, the first time the dashboard opens it asks you to create the owne
 | JavaScript errors | Crashes, scripts blocked by a wrong integrity hash, CSP blocks, console errors (your own code apart from third-party widgets) |
 | Missing files | Images, scripts, styles and fonts that fail to load |
 | Link checker | Every link; only reported after a second look a few seconds later |
-| Content mistakes | Lorem ipsum, unfilled `{{tags}}`, "undefined" / "NaN" on the page, old copyright year |
+| Content mistakes | Lorem ipsum, unfilled `{{tags}}`, "undefined" / "NaN" on the page, old copyright year (text inside code examples is skipped) |
 | Forms | Passwords on pages without HTTPS, data sent over HTTP, fields that would not be submitted, email field type |
 | Accessibility (WCAG 2.2) | axe-core rules for WCAG 2.0 to 2.2, A and AA |
 | On-page SEO | Title, description, headings, canonical, viewport, noindex, Open Graph |
 | Structured data | JSON-LD syntax errors; Product data on store product pages |
-| Duplicate titles | Pages sharing a title or description |
+| Duplicate titles | Pages sharing a title or description (pages that name the same canonical address count as one) |
 | Search engine access | robots.txt blocking Google, missing sitemap, sitemap on the wrong address or listing missing pages |
 | Missing page handling | Unknown addresses must answer 404 (no soft 404) |
 | Security headers and cookies | HTTPS, HSTS, CSP, clickjacking, nosniff, referrer, version disclosure, cookie flags |
@@ -40,6 +40,20 @@ With login on, the first time the dashboard opens it asks you to create the owne
 | Phone layout | Sideways scrolling, tap targets (WCAG 2.2), text too small |
 
 The crawler and the link checker never open log-out or delete links.
+
+**Checks for one kind of product.** These run on top of the ones above, only for the product they are for:
+
+| Agent | Products | What it checks |
+| --- | --- | --- |
+| Store policies | Online store | Links to a refund and return policy (High if missing), shipping, terms, privacy and contact pages, which shoppers, payment gateways and India's e-commerce rules expect |
+| Product pages | Online store | A visible price, an Add to cart or Buy button, and price, currency and stock in the product data |
+| Checkout safety | Online store | Scripts from other websites on cart and checkout pages (card skimming risk, PCI DSS 6.4.3), and a Content Security Policy there |
+| Private pages need a login | Web app, SaaS, CRM | With a saved login: opens every signed-in page again with no login, and reports pages that still show the signed-in view (Critical when they show the user's own name or email) |
+| Private pages not cached | Web app, SaaS, CRM | With a saved login: signed-in pages must send `Cache-Control: no-store` or `private` |
+| Personal data in addresses | Web app, SaaS, CRM | E-mail addresses and phone numbers in page addresses (masked in the report) |
+| SaaS trust pages | SaaS | Links to pricing, terms, privacy and a refund or cancellation policy |
+
+A CRM gets no search engine (SEO) checks and no SEO score: only its sign-in page is public. Any test that runs signed in leaves the SEO checks out too, because private pages are not meant to be found on Google. The two login-only checks are listed as "Needs a saved login" when a project has none.
 
 ### API engine (OpenAPI 3 or Swagger 2)
 
@@ -61,12 +75,12 @@ Give it a Git repository (https; private ones need an access token in the projec
 
 | Agent | What it checks |
 | --- | --- |
-| Leaked secrets | AWS, GitHub, Stripe, Slack, SendGrid, Twilio, Google, Anthropic and OpenAI keys, private keys, database addresses with passwords, hard-coded passwords, committed .env files, database dumps, key stores. Values are masked in the report |
+| Leaked secrets | AWS, GitHub, Stripe, Slack, SendGrid, Twilio, Google, Anthropic and OpenAI keys, private keys, database addresses with passwords, hard-coded passwords, session and signing secrets (`cookieSecret`, `jwtSecret`, express-session's `secret: "keyboard cat"`), committed .env files, database dumps, key stores. Values are masked in the report |
 | Vulnerable packages | Reads npm, Yarn, pnpm, Composer, pip, Pipfile, Poetry, Bundler and Go lockfiles and looks up every package in the free [OSV database](https://osv.dev), with the version that fixes it |
-| Risky code | SQL and command injection, eval, file inclusion, unsafe unserialize, XSS, MD5/SHA-1 passwords, turned-off HTTPS checks, debug mode, merge conflict markers (PHP, JavaScript/TypeScript, Python, Java, Kotlin) |
+| Risky code | Request input that reaches eval, a shell, SQL, a MongoDB filter or `$where` (NoSQL injection), an outgoing request (SSRF), a redirect (open redirect) or a deep merge (prototype pollution); file inclusion, unsafe unserialize, XSS, hard-coded encryption keys, MD5/SHA-1 passwords, turned-off HTTPS checks, debug mode, merge conflict markers (PHP, JavaScript/TypeScript, Python, Java, Kotlin) |
 | Project health | Broken JSON, no README, no .gitignore, committed node_modules, no tests, leftover debug output |
 
-Risky-code rules read one line at a time, so treat them as leads to confirm. Text that only mentions a risky call (a string, a regex or a comment) is not counted. Mark a reviewed line safe with a `glvtest-ignore` comment on it or on the line above.
+The risky-code agent follows request input (`req.body`, `req.query`, `$_GET`, `request.args` and similar) through variables in the same file, so `const url = req.query.url; needle.get(url)` is reported and the same call on a fixed address is not. When input reaches eval, a shell or SQL, the issue is Critical. It does not follow values into other files, and the other rules read one line at a time, so treat findings as leads to confirm. Text that only mentions a risky call (a string, a regex or a comment) is not counted. Mark a reviewed line safe with a `glvtest-ignore` comment on it or on the line above.
 
 ### Android engine (APK)
 
@@ -115,13 +129,17 @@ Security checks only read what the server already sends. Nothing sends attack pa
 
 Each category gets a score out of 100. Any critical issue caps the overall score at 69.
 
+**Not tested is never a pass.** When a check cannot run (the package database cannot be reached, an agent crashes on every page), the report opens with an "Incomplete test" box, the category shows "Not tested" instead of a score, and the overall score averages only what was tested. Its earlier issues stay open, because nothing looked again. When nothing can be tested at all (the site cannot be reached, its certificate cannot be checked, or every API call is refused the same way), the run ends as "Not tested" with the reason, and no score.
+
 ### How it avoids false alarms
 
 - The same problem on many pages (for example in a shared header) is one issue, listed with every page it affects. Scores count each distinct issue once, weighted by how many pages it is on.
 - A page or link that answers 429, 502, 503 or 504 is tried again a few seconds later before anything is reported, because that is usually rate limiting, not a broken page. Internal links are checked a second time in a real browser.
 - Links to social networks (LinkedIn, Facebook, Instagram, X, WhatsApp and others) are skipped, because they block automated checks. Other sites that refuse the check are listed as info, not as broken.
 - "Failed to load resource" console lines are not counted again on top of the broken resource itself. Console errors from third-party scripts are kept apart and rated low.
-- Speed uses Google's Core Web Vitals thresholds. It is one lab measurement from the testing server, so real visitors' numbers can differ.
+- Speed uses Google's Core Web Vitals thresholds. It is one lab measurement from the testing server, so real visitors' numbers can differ. Because timing changes from run to run, speed issues (and slow API endpoints) are only verified as fixed, or reopened, when two tests in a row agree.
+- A missing alt text is High, not Critical: it does not cap the score.
+- A page that fails to load is reported once, not also as "1 request failed".
 
 ## Quick start
 
@@ -160,7 +178,7 @@ cp .env.example .env    # add ANTHROPIC_API_KEY
 docker compose up -d --build
 ```
 
-The dashboard runs on port 4000. Scan results and screenshots are kept in the `agent-data` volume. On a server, turn login on first (below), then put it behind your usual reverse proxy (Nginx or Caddy) with HTTPS and set `TRUST_PROXY=1`.
+The dashboard runs on port 4000. Scan results and screenshots are kept in the `agent-data` volume. `docker compose stop` (or Ctrl-C when it runs in the foreground) cancels the running tests, closes their browsers and exits within a few seconds; cancelled tests say so in their report. On a server, turn login on first (below), then put it behind your usual reverse proxy (Nginx or Caddy) with HTTPS and set `TRUST_PROXY=1`.
 
 ### Login switch (AUTH_DISABLED)
 
@@ -200,9 +218,10 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET` | `/api/meta` | Product types and agents, with on/off state |
 | `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android: `file`. Optional `login`: `{ "loginUrl", "username", "password" }` for web, `{ "authType": "bearer" \| "header" \| "query" \| "basic", "token", "paramName", "username", "password" }` for an API, `{ "token", "username" }` for code. Answers show only whether a secret is saved |
 | `POST` | `/api/uploads` | Upload an APK, a zip of code or an OpenAPI file as the raw body (`content-type: application/octet-stream`, file name in `x-file-name`, up to 300 MB). Returns the `file` to put in the project |
-| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner) |
+| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner; a queued or running test is cancelled first) |
 | `POST` | `/api/projects/:id/runs` | Re-test now |
 | `GET` | `/api/runs/:id` | Full report, with live progress while it runs |
+| `POST` | `/api/runs/:id/cancel` | Cancel a queued or running test (its browser or clone is stopped; issues are not changed) |
 | `POST` | `/api/runs` | Quick test by address (reuses the website project for that site) |
 | `GET` | `/api/issues?projectId=` | Tracked issues |
 | `GET`, `PATCH` | `/api/issues/:id` | One issue with history; change status, assignee, or add a note |

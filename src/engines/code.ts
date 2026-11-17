@@ -58,6 +58,8 @@ export interface CodeScanOptions {
   workDir: string;
   agents?: string[];
   onProgress?: (message: string) => void;
+  /** Stops the clone when the run is cancelled. */
+  signal?: AbortSignal;
 }
 
 const isBinary = (buf: Uint8Array) => buf.subarray(0, 8000).includes(0);
@@ -100,7 +102,7 @@ export function isolatedGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return { ...out, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 }
 
-async function clone(repoUrl: string, branch: string | undefined, dir: string, login?: Login): Promise<string> {
+async function clone(repoUrl: string, branch: string | undefined, dir: string, login?: Login, signal?: AbortSignal): Promise<string> {
   const args = [
     // Never use this server's own saved Git logins for a client's repository.
     "-c",
@@ -127,6 +129,7 @@ async function clone(repoUrl: string, branch: string | undefined, dir: string, l
       timeout: 180_000,
       env: { ...isolatedGitEnv(), ...gitAuthEnv(repoUrl, login, {}) },
       maxBuffer: 10_000_000,
+      signal,
     });
   } catch (err) {
     const msg = String((err as { stderr?: string }).stderr || (err as Error).message);
@@ -246,7 +249,7 @@ export async function scanCode(opts: CodeScanOptions): Promise<ScanResult> {
     log(`Cloning ${repoUrl}${opts.branch ? ` (branch ${opts.branch})` : ""}`);
     const dir = path.join(opts.workDir, "repo");
     if (opts.gitLogin?.token) log("Using the saved access token for this repository");
-    const commit = await clone(repoUrl, opts.branch, dir, opts.gitLogin);
+    const commit = await clone(repoUrl, opts.branch, dir, opts.gitLogin, opts.signal);
     tree = await readTree(dir);
     label = `${repoUrl}${opts.branch ? `, branch ${opts.branch}` : ""}${commit ? `, commit ${commit}` : ""}`;
   } else {
@@ -278,7 +281,7 @@ export async function scanCode(opts: CodeScanOptions): Promise<ScanResult> {
     const pages: PageResult[] = [...byFile.keys()].map((p) => ({ url: p, status: null, title: p, loadMs: null }));
 
     // One hole is as bad as many: each distinct code issue takes its full penalty, however few files it is in.
-    const { scores, overallScore } = scoreFindings(real, 1, CODE_CATEGORIES);
+    const score = scoreFindings(real, 1, CODE_CATEGORIES, stats);
     log(`Done: ${tree.files.length} files, ${real.length} findings`);
     return {
       startUrl: opts.repoUrl ?? opts.folder ?? "uploaded zip",
@@ -286,8 +289,7 @@ export async function scanCode(opts: CodeScanOptions): Promise<ScanResult> {
       finishedAt: new Date().toISOString(),
       pages,
       findings: real,
-      scores,
-      overallScore,
+      ...score,
       agentStats: stats,
       notes,
       label: { pages: "Files" },

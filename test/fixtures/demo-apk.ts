@@ -203,7 +203,9 @@ export function buildDemoApk(): Buffer {
     ],
   });
   const dex = Buffer.from(
-    `dex\n035\0 ... Lin/glv/demoshop/Api; aws=${FAKE_AWS_KEY} http://192.168.1.50:8080/api/orders http://schemas.android.com/apk/res/android https://maps.googleapis.com/`,
+    // Dex strings are a length byte, the text and a zero byte. The AES key is InsecureBank's.
+    `dex\n035\0 ... Lin/glv/demoshop/Api; aws=${FAKE_AWS_KEY} http://192.168.1.50:8080/api/orders http://schemas.android.com/apk/res/android https://maps.googleapis.com/` +
+      `\x00\x21Ljavax/crypto/spec/SecretKeySpec;\x00\x20This is the super secret key 123\x00\x10Invalid password\x00`,
     "latin1",
   );
   const cert = Buffer.concat([Buffer.from([0x30, 0x82]), Buffer.from("CN=Android Debug, O=Android, C=US", "latin1")]);

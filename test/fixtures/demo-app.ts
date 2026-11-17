@@ -31,8 +31,10 @@ export function startDemoApp(port = 4230): Promise<DemoApp> {
     requested.push(url.pathname + url.search);
     const sid = /(?:^|;\s*)sid=(\w+)/.exec(req.headers.cookie ?? "")?.[1];
     const signedIn = Boolean(sid && sessions.has(sid));
+    // Private pages ask not to be cached, except /leads (a planted bug).
+    const cache = signedIn && url.pathname !== "/leads" ? { "cache-control": "no-store" } : {};
     const html = (status: number, body: string, headers: Record<string, string> = {}) =>
-      res.writeHead(status, { "content-type": "text/html; charset=utf-8", ...headers }).end(body);
+      res.writeHead(status, { "content-type": "text/html; charset=utf-8", ...cache, ...headers }).end(body);
     const redirect = (to: string, headers: Record<string, string> = {}) => res.writeHead(302, { location: to, ...headers }).end();
 
     const form = (error = "") =>
@@ -61,6 +63,13 @@ export function startDemoApp(port = 4230): Promise<DemoApp> {
     }
     if (url.pathname === "/login") return html(200, form());
     if (url.pathname === "/") return redirect(signedIn ? "/dashboard" : "/login");
+    // A planted bug: the team page forgot its login check, so strangers see it too.
+    if (url.pathname === "/team") {
+      return html(
+        200,
+        page("Team", `<p>Signed in as ${DEMO_USER.email}.</p><a href="/leads?email=asha%40example.in">Asha's leads</a> <a href="/dashboard">Back</a> <a href="/logout">Sign out</a>`),
+      );
+    }
     if (!signedIn) return redirect("/login");
 
     // Must never be opened by the agent: they end the session or change data.
@@ -73,12 +82,14 @@ export function startDemoApp(port = 4230): Promise<DemoApp> {
         200,
         page(
           "Dashboard",
-          `<p>Welcome back, Tester.</p><nav><a href="/leads">Leads</a> <a href="/reports">Reports</a> <a href="/settings">Settings</a>
+          `<p>Welcome back, Tester.</p><nav><a href="/leads">Leads</a> <a href="/reports">Reports</a> <a href="/settings">Settings</a> <a href="/team">Team</a>
            <a href="/logout">Sign out</a> <a href="/orders/7/cancel">Cancel order 7</a> <a href="/leads?action=mark_all_read">Mark all read</a></nav>`,
         ),
       );
     }
-    if (url.pathname === "/leads") return html(200, page("Leads", `<p>3 new leads.</p><a href="/leads/1">Asha</a> <a href="/dashboard">Back</a>`));
+    if (url.pathname === "/leads") {
+      return html(200, page("Leads", `<p>3 new leads.</p><a href="/leads/1">Asha</a> <a href="/dashboard">Back</a> <a href="/logout">Sign out</a>`));
+    }
     if (url.pathname === "/leads/1") return html(200, page("Lead: Asha", `<p>Hot lead.</p><a href="/missing-page">Old link</a>`));
     // The session ends while on this page, as when a short session times out.
     if (url.pathname === "/reports") {

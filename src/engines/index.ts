@@ -20,6 +20,8 @@ export interface EngineInput {
   /** Scratch space for clones and unpacked files; removed after the run. */
   workDir: string;
   onProgress?: (message: string) => void;
+  /** Aborted when the run is cancelled or the server stops. */
+  signal?: AbortSignal;
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -65,6 +67,7 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         workDir: input.workDir,
         agents,
         onProgress,
+        signal: input.signal,
       });
     }
     case "android": {
@@ -83,6 +86,7 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         login: login?.kind === "web" ? login : undefined,
         artifactsDir: input.artifactsDir,
         onProgress,
+        signal: input.signal,
       });
   }
 }

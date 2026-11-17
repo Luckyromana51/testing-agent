@@ -7,6 +7,9 @@ services:
     # DOCKER_PLATFORM=linux/arm64 in .env to build the native ARM image instead.
     platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: unless-stopped
+    # A tiny init process forwards docker stop to the app and cleans up finished browser processes.
+    init: true
+    stop_grace_period: 20s
     ports:
       - "4000:4000"
     env_file: .env

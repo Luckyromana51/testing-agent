@@ -12,10 +12,22 @@ import type { Project, Run } from "./types.js";
  * In-process job queue with a concurrency limit.
  * Good for one server; replace with BullMQ + Redis when runners move to separate machines.
  */
+/** A short, readable error: the first line, without the browser's full log that Playwright appends. */
+export function shortError(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const first = text.split("\n")[0].replace(/\s*=+\s*logs\s*=+.*$/i, "").trim();
+  return first.length > 500 ? `${first.slice(0, 500)}…` : first || "Unknown error";
+}
+
+class Cancelled extends Error {}
+
 export class ScanQueue {
   private waiting: Run[] = [];
   /** Running run id -> project id. */
   private active = new Map<string, string | undefined>();
+  /** Running run id -> how to stop it, and the promise that settles once it has stopped. */
+  private running = new Map<string, { stop: AbortController; done: Promise<void> }>();
+  private stopping = false;
 
   constructor(
     private stores: Stores,
@@ -44,6 +56,49 @@ export class ScanQueue {
     return this.waiting.some((r) => r.projectId === projectId) || [...this.active.values()].includes(projectId);
   }
 
+  /** True when the project's test is waiting for a free slot, not yet running. */
+  waitingFor(projectId: string): boolean {
+    return this.waiting.some((r) => r.projectId === projectId) && ![...this.active.values()].includes(projectId);
+  }
+
+  /**
+   * Stops a run: a queued one never starts, a running one closes its browser or clone and ends as
+   * cancelled. Its issues are left as they were. Returns false when the run is not queued or running.
+   */
+  async cancel(runId: string, why = "Cancelled"): Promise<boolean> {
+    const i = this.waiting.findIndex((r) => r.id === runId);
+    if (i >= 0) {
+      const [run] = this.waiting.splice(i, 1);
+      this.stores.runs.save({
+        ...run,
+        status: "cancelled",
+        error: `${why} before it started.`,
+        finishedAt: new Date().toISOString(),
+        progress: [...run.progress, why],
+      });
+      return true;
+    }
+    const job = this.running.get(runId);
+    if (!job) return false;
+    job.stop.abort(new Cancelled(why));
+    await job.done;
+    return true;
+  }
+
+  /** Cancels every queued and running test of a project (before it is deleted). */
+  async cancelProject(projectId: string, why = "Cancelled"): Promise<void> {
+    const ids = [...this.waiting.filter((r) => r.projectId === projectId).map((r) => r.id)];
+    for (const [id, pid] of this.active) if (pid === projectId) ids.push(id);
+    for (const id of ids) await this.cancel(id, why);
+  }
+
+  /** Stops everything for a server shutdown: queued tests are cancelled, running ones are stopped. */
+  async shutdown(): Promise<void> {
+    this.stopping = true;
+    const ids = [...this.waiting.map((r) => r.id), ...this.running.keys()];
+    await Promise.all(ids.map((id) => this.cancel(id, "The server was stopped")));
+  }
+
   /** Queues a test run of a project with the agents the owner has turned on. */
   enqueue(project: Project, trigger: Run["trigger"] = "manual"): Run {
     const settings = this.stores.settings.get();
@@ -67,17 +122,20 @@ export class ScanQueue {
   }
 
   private pump(): void {
-    while (this.active.size < this.concurrency && this.waiting.length) {
+    while (!this.stopping && this.active.size < this.concurrency && this.waiting.length) {
       const run = this.waiting.shift()!;
       this.active.set(run.id, run.projectId);
-      this.execute(run).finally(() => {
+      const stop = new AbortController();
+      const done = this.execute(run, stop.signal).finally(() => {
         this.active.delete(run.id);
+        this.running.delete(run.id);
         this.pump();
       });
+      this.running.set(run.id, { stop, done });
     }
   }
 
-  private async execute(run: Run): Promise<void> {
+  private async execute(run: Run, signal: AbortSignal): Promise<void> {
     const { runs, projects, issues, settings } = this.stores;
     const update = (patch: Partial<Run>) => {
       Object.assign(run, patch);
@@ -99,7 +157,7 @@ export class ScanQueue {
         // Decrypted only for this run, kept in memory, and hidden from the report and the log.
         const login = this.stores.vault.get(project.id);
         if (login) log("Using the saved login (kept encrypted on this server)");
-        result = await runEngine({
+        const engine = runEngine({
           product: project.type,
           target: project.target,
           login,
@@ -108,8 +166,20 @@ export class ScanQueue {
           artifactsDir: this.artifactsDir(run.id),
           uploadsDir: this.uploadsDir(),
           workDir,
-          onProgress: log,
+          signal,
+          onProgress: (m) => {
+            if (!signal.aborted) log(m);
+          },
         });
+        // The engine stops its browser or clone on the signal; the run ends at once either way.
+        engine.catch(() => {});
+        result = await Promise.race([
+          engine,
+          new Promise<never>((_, reject) => {
+            if (signal.aborted) reject(signal.reason);
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+        ]);
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
@@ -146,7 +216,16 @@ export class ScanQueue {
       }
       update({ status: "done", finishedAt: new Date().toISOString() });
     } catch (err) {
-      update({ status: "failed", error: (err as Error).message, finishedAt: new Date().toISOString() });
+      if (signal.aborted) {
+        const why = signal.reason instanceof Error ? signal.reason.message : "Cancelled";
+        // A deleted project's runs are already gone: do not bring the row back.
+        if (!run.projectId || projects.get(run.projectId)) {
+          update({ status: "cancelled", error: `${why} while it was running. Nothing was scored and no issues were changed.`, finishedAt: new Date().toISOString() });
+          log(why);
+        }
+        return;
+      }
+      update({ status: "failed", error: shortError(err), finishedAt: new Date().toISOString() });
     }
   }
 }

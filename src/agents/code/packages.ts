@@ -1,5 +1,6 @@
 import YAML from "yaml";
 import { pool } from "../../engines/agents.js";
+import { NotTestedError } from "../../runner/coverage.js";
 import { finding } from "../../runner/finding.js";
 import type { Finding, Severity } from "../../types.js";
 import type { EngineAgent } from "../types.js";
@@ -212,6 +213,8 @@ export const codePackagesAgent: EngineAgent<CodeContext> = {
     log(`Looking up ${deps.length} packages in the OSV vulnerability database`);
     const capped = deps.slice(0, 3000);
     const hits: { dep: Dependency; ids: string[] }[] = [];
+    let checked = 0;
+    let failure = "";
     try {
       for (let i = 0; i < capped.length; i += 500) {
         const batch = capped.slice(i, i + 500);
@@ -224,10 +227,10 @@ export const codePackagesAgent: EngineAgent<CodeContext> = {
         body.results.forEach((r, j) => {
           if (r.vulns?.length) hits.push({ dep: batch[j], ids: r.vulns.map((v) => v.id) });
         });
+        checked += batch.length;
       }
     } catch (err) {
-      note(`Could not reach the OSV vulnerability database (${(err as Error).message.split("\n")[0]}), so ${deps.length} packages were not checked.`);
-      return out;
+      failure = (err as Error).message.split("\n")[0];
     }
 
     const ids = [...new Set(hits.flatMap((h) => h.ids))].slice(0, 150);
@@ -266,7 +269,15 @@ export const codePackagesAgent: EngineAgent<CodeContext> = {
         }),
       );
     }
-    note(`Looked up ${deps.length.toLocaleString("en-IN")} packages in the OSV database: ${hits.length} have known holes.`);
+    if (failure) {
+      // Never a pass: packages that were not looked up are reported as not tested.
+      throw new NotTestedError(
+        `Could not reach the OSV vulnerability database (${failure}), so ${(capped.length - checked).toLocaleString("en-IN")} of ${deps.length.toLocaleString("en-IN")} packages were not checked for known security holes.`,
+        out,
+      );
+    }
+    if (deps.length > capped.length) note(`Only the first ${capped.length.toLocaleString("en-IN")} of ${deps.length.toLocaleString("en-IN")} packages were looked up.`);
+    note(`Looked up ${capped.length.toLocaleString("en-IN")} packages in the OSV database: ${hits.length} have known holes.`);
     return out;
   },
 };

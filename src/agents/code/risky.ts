@@ -2,6 +2,7 @@ import { finding } from "../../runner/finding.js";
 import type { Category, Finding, Severity } from "../../types.js";
 import type { EngineAgent } from "../types.js";
 import { TEST_PATH, type CodeContext } from "./context.js";
+import { callArgs, filterFromInput, hasInput, startsWithInput, taintAt, taintOf, type Lang, type Taint } from "./taint.js";
 
 interface CodeRule {
   id: string;
@@ -16,6 +17,8 @@ interface CodeRule {
   inTests?: boolean;
   /** The risky part is code, so a match inside a string, regex or comment does not count. */
   codeOnly?: boolean;
+  /** Only in files that also contain this (the line alone is not enough, as with a key that feeds a cipher). */
+  fileHas?: RegExp;
 }
 
 /**
@@ -95,6 +98,14 @@ export const CODE_RULES: CodeRule[] = [
     severity: "high",
     title: "SQL query built by joining text (SQL injection risk)",
     fix: "Use a PreparedStatement with ? placeholders, or query parameters in JPA.",
+  },
+  {
+    id: "nosql-injection",
+    files: JS,
+    re: /["']?\$where["']?\s*:\s*(`[^`]*\$\{|["'][^"']*["']\s*\+|[A-Za-z_$][\w$.]*\s*\+)|\.\$where\s*\(\s*(`[^`]*\$\{|["'][^"']*["']\s*\+)/,
+    severity: "high",
+    title: "MongoDB $where query built by joining text (NoSQL injection)",
+    fix: "$where runs JavaScript inside the database, so a value joined into it can read or change any record. Replace $where with normal query operators ($gt, $eq) and convert values with Number() or String().",
   },
   // ---- Command injection and code execution
   {
@@ -250,6 +261,24 @@ export const CODE_RULES: CodeRule[] = [
     title: "HTTPS certificate checks are turned off",
     fix: "Remove the trust-all TrustManager or HostnameVerifier. Use certificate pinning through Android's network security config if needed.",
   },
+  {
+    id: "hardcoded-crypto-key",
+    files: JVM,
+    codeOnly: true,
+    re: /new\s+SecretKeySpec\s*\(\s*"|\bString\s+(?!\w*(?:alias|name|algo|transform|provider|header|type|mode|pref|file|path|url))\w*(?:key|secret|pass)\w*\s*=\s*"[^"]{8,}"/i,
+    fileHas: /SecretKeySpec|Cipher\.getInstance/,
+    severity: "high",
+    title: "Encryption key is written in the code",
+    fix: "Anyone with the code or the app can read the key and decrypt the data. On Android, create the key in the Android Keystore; on a server, load it from a secrets store or an environment variable.",
+  },
+  {
+    id: "hardcoded-crypto-key",
+    files: JS,
+    re: /createCipheriv\s*\(\s*["'][\w-]+["']\s*,\s*["'][^"']{8,}["']|CryptoJS\.(?:AES|DES|TripleDES|Rabbit|RC4)\.(?:en|de)crypt\s*\([^,]+,\s*["'][^"']{4,}["']/,
+    severity: "high",
+    title: "Encryption key is written in the code",
+    fix: "Anyone with the code can read the key and decrypt the data. Load the key from a secrets store or an environment variable, and never ship it in front-end code.",
+  },
   // ---- Debug left on
   {
     id: "debug-on",
@@ -290,6 +319,263 @@ export const CODE_RULES: CodeRule[] = [
   },
 ];
 
+
+/**
+ * Calls that are dangerous when request input reaches them. Unlike CODE_RULES, these follow the
+ * input through variables in the same file (see taint.ts), so `eval(req.body.preTax)` and
+ * `const url = req.query.url; needle.get(url)` are caught, while the same calls on fixed values are not.
+ */
+interface FlowRule {
+  id: string;
+  lang: Lang;
+  /** The call, up to and including its "(" (or where its value starts). */
+  sink: RegExp;
+  /**
+   * Where the input must be: "start" (it is the whole URL or address, or its server), "first" (anywhere
+   * in the first argument), "any" (anywhere in the call), or "filter" (it shapes a database filter).
+   */
+  needs: "start" | "first" | "any" | "filter";
+  /** The first argument must also match this (SQL text with joined values, for example). */
+  argTest?: RegExp;
+  /** The whole call must also match this (shell=True, for example). */
+  callTest?: RegExp;
+  /** Only for projects that use MongoDB, and do not clean input with mongo-sanitize. */
+  mongo?: boolean;
+  severity: Severity;
+  title: string;
+  fix: string;
+}
+
+const JOINED = /\$\{|["'`]\s*\+|\+\s*["'`]|["']\s*%\s*[\w(]|\.format\s*\(|^\s*f["']/;
+const SQL_TEXT = new RegExp(SQL, "i");
+const SSRF_FIX =
+  "Anyone can make your server fetch any address, including internal ones (cloud metadata at 169.254.169.254, admin panels, databases). Only allow a fixed list of hosts, or map a short name from the request to a URL you choose.";
+const REDIRECT_FIX =
+  "Attackers send links that open your site and land on their look-alike page (phishing). Only redirect to your own paths: accept values that start with a single \"/\" (not \"//\"), or pick from a list of allowed addresses.";
+
+export const FLOW_RULES: FlowRule[] = [
+  // ---- JavaScript and TypeScript
+  {
+    id: "eval",
+    lang: "js",
+    sink: /(?<![\w$.])eval\s*\(|\bnew\s+Function\s*\(|\bvm\.run\w*\s*\(|(?<![\w$.])setTimeout\s*\(\s*(?=["'`]|req\b)/,
+    needs: "any",
+    severity: "critical",
+    title: "Request input is run as code (eval)",
+    fix: "Anyone can run any code on the server, read its files and take it over. Never eval input: use Number() or parseInt() for numbers (eval(req.body.preTax) becomes Number(req.body.preTax)) and JSON.parse for data.",
+  },
+  {
+    id: "command-injection",
+    lang: "js",
+    sink: /(?<![\w$])(?:child_process\.|cp\.)?(?:exec|execSync)\s*\(/,
+    needs: "first",
+    severity: "critical",
+    title: "Request input is put into a shell command (command injection)",
+    fix: "Anyone can run commands on the server by adding ; or && to the value. Use execFile or spawn with an array of arguments, and check the value against a list of allowed values.",
+  },
+  {
+    id: "sql-injection",
+    lang: "js",
+    sink: /(?<![\w$])(?:[\w$]+\.)?(?:query|execute|raw|\$queryRawUnsafe|\$executeRawUnsafe)\s*\(/,
+    needs: "first",
+    argTest: JOINED,
+    severity: "critical",
+    title: "Request input is joined into SQL (SQL injection)",
+    fix: "Anyone can read or change the whole database with a crafted value. Pass values as parameters (?, $1 or :name) instead of joining them into the SQL text.",
+  },
+  {
+    id: "nosql-injection",
+    lang: "js",
+    sink: /["']?\$where["']?\s*:\s*/,
+    needs: "first",
+    severity: "critical",
+    title: "Request input is run in a MongoDB $where query (NoSQL injection)",
+    fix: "$where runs JavaScript inside the database, so input there can read or change any record. Replace $where with normal query operators ($gt, $eq) and convert the values with Number() or String().",
+  },
+  {
+    id: "nosql-injection",
+    lang: "js",
+    sink: /\.(?:find|findOne|findOneAndUpdate|findOneAndDelete|findOneAndRemove|findOneAndReplace|updateOne|updateMany|deleteOne|deleteMany|remove|count|countDocuments|exists)\s*\(/,
+    needs: "filter",
+    mongo: true,
+    severity: "high",
+    title: "Database filter is built straight from request data (NoSQL injection)",
+    fix: 'A visitor can send {"$ne": ""} instead of a value and match any record, for example to log in without the password. Convert each value with String() (or validate it), or clean all input with express-mongo-sanitize, or turn on mongoose.set("sanitizeFilter", true).',
+  },
+  {
+    id: "ssrf",
+    lang: "js",
+    sink: /(?<![\w$.])(?:axios(?:\.(?:get|post|put|patch|delete|head|request))?|got(?:\.(?:get|post|stream))?|needle(?:\.(?:get|post|put|request|head))?|superagent\.(?:get|post)|request(?:\.(?:get|post))?|fetch|https?\.(?:get|request)|phin|undici\.request)\s*\(/,
+    needs: "start",
+    severity: "high",
+    title: "Server fetches an address from the request (SSRF)",
+    fix: SSRF_FIX,
+  },
+  {
+    id: "open-redirect",
+    lang: "js",
+    sink: /\b(?:res|response|reply|ctx|h)\.(?:redirect|location)\s*\(/,
+    needs: "start",
+    severity: "medium",
+    title: "Redirects to an address from the request (open redirect)",
+    fix: REDIRECT_FIX,
+  },
+  {
+    id: "prototype-pollution",
+    lang: "js",
+    sink: /(?<![\w$])(?:_|lodash|Hoek|hoek)\.(?:merge|mergeWith|defaultsDeep|set|setWith|zipObjectDeep|applyToDefaults)\s*\(|(?<![\w$])(?:\$|jQuery)\.extend\s*\(\s*true\s*,|(?<![\w$.])(?:deepmerge|deepExtend|mergeDeep|defaultsDeep)\s*\(/,
+    needs: "any",
+    severity: "high",
+    title: "Request data is deep-merged into an object (prototype pollution)",
+    fix: 'A body like {"__proto__": {"isAdmin": true}} changes every object in the app, which can skip login checks or crash it. Copy only the fields you expect, or drop the keys __proto__, constructor and prototype first, and keep lodash at 4.17.21 or later.',
+  },
+  // ---- Python
+  {
+    id: "eval",
+    lang: "py",
+    sink: /(?<![\w.])(?:eval|exec)\s*\(/,
+    needs: "any",
+    severity: "critical",
+    title: "Request input is run as code (eval)",
+    fix: "Anyone can run any code on the server. Use int(), float() or json.loads for data, or a dictionary of allowed functions.",
+  },
+  {
+    id: "command-injection",
+    lang: "py",
+    sink: /\bos\.(?:system|popen)\s*\(/,
+    needs: "any",
+    severity: "critical",
+    title: "Request input is put into a shell command (command injection)",
+    fix: 'Call subprocess.run(["cmd", value]) with a list and without shell=True, and check the value against a list of allowed values.',
+  },
+  {
+    id: "command-injection",
+    lang: "py",
+    // Without shell=True, a list of arguments never reaches a shell.
+    sink: /\bsubprocess\.\w+\s*\(/,
+    needs: "any",
+    callTest: /shell\s*=\s*True/,
+    severity: "critical",
+    title: "Request input is put into a shell command (command injection)",
+    fix: 'Call subprocess.run(["cmd", value]) with a list and without shell=True, and check the value against a list of allowed values.',
+  },
+  {
+    id: "sql-injection",
+    lang: "py",
+    sink: /\.execute(?:many)?\s*\(/,
+    needs: "first",
+    argTest: JOINED,
+    severity: "critical",
+    title: "Request input is joined into SQL (SQL injection)",
+    fix: 'Pass values separately: cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))',
+  },
+  {
+    id: "ssrf",
+    lang: "py",
+    sink: /(?<![\w.])(?:requests\.(?:get|post|put|patch|delete|head)|urllib\.request\.urlopen|urlopen|httpx\.(?:get|post|stream))\s*\(/,
+    needs: "start",
+    severity: "high",
+    title: "Server fetches an address from the request (SSRF)",
+    fix: SSRF_FIX,
+  },
+  {
+    id: "open-redirect",
+    lang: "py",
+    sink: /(?<![\w.])(?:redirect|HttpResponseRedirect)\s*\(/,
+    needs: "start",
+    severity: "medium",
+    title: "Redirects to an address from the request (open redirect)",
+    fix: `${REDIRECT_FIX} In Django, url_has_allowed_host_and_scheme() does this check.`,
+  },
+  // ---- PHP
+  {
+    id: "eval",
+    lang: "php",
+    sink: /(?<![\w>$])(?:eval|assert|create_function)\s*\(/,
+    needs: "any",
+    severity: "critical",
+    title: "Request input is run as code (eval)",
+    fix: "Anyone can run any code on the server. Remove eval; use a switch or an array of allowed functions instead.",
+  },
+  {
+    id: "command-injection",
+    lang: "php",
+    sink: /(?<![\w>$])(?:system|exec|shell_exec|passthru|popen|proc_open)\s*\(/,
+    needs: "first",
+    severity: "critical",
+    title: "Request input is put into a shell command (command injection)",
+    fix: "Never pass request input to a shell. If you must, wrap each argument in escapeshellarg() and check it against a list of allowed values.",
+  },
+  {
+    id: "sql-injection",
+    lang: "php",
+    sink: /(?:mysqli?_query|->query|->exec|pg_query|->prepare)\s*\(/,
+    needs: "any",
+    callTest: SQL_TEXT,
+    severity: "critical",
+    title: "Request input is joined into SQL (SQL injection)",
+    fix: "Use prepared statements: $stmt = $pdo->prepare('SELECT * FROM users WHERE id = ?'); $stmt->execute([$id]);",
+  },
+  {
+    id: "ssrf",
+    lang: "php",
+    sink: /(?<![\w>$])(?:file_get_contents|fopen|curl_init|readfile|get_headers|simplexml_load_file)\s*\(|\bcurl_setopt\s*\(\s*[^,]+,\s*CURLOPT_URL\s*,/,
+    needs: "start",
+    severity: "high",
+    title: "Server fetches an address or file named in the request (SSRF)",
+    fix: `${SSRF_FIX} For files, map the value to a fixed list of file names.`,
+  },
+  {
+    id: "open-redirect",
+    lang: "php",
+    sink: /\bheader\s*\(\s*["']Location:\s*["']\s*\.\s*|\bheader\s*\(\s*"Location:\s*(?=\$)|(?<![\w>$])(?:wp_redirect|redirect)\s*\(|->(?:away|to)\s*\(/,
+    needs: "start",
+    severity: "medium",
+    title: "Redirects to an address from the request (open redirect)",
+    fix: `${REDIRECT_FIX} In WordPress, wp_safe_redirect() does this check.`,
+  },
+];
+
+const LANG_OF = (path: string): Lang | undefined => (JS.test(path) ? "js" : PY.test(path) ? "py" : PHP.test(path) ? "php" : undefined);
+
+/** True when request input reaches the call that starts at `rest` (just after the sink). */
+export function flowHits(rule: FlowRule, scope: Taint, rest: string): boolean {
+  const args = callArgs(rest);
+  const first = args[0] ?? "";
+  if (rule.callTest && !rule.callTest.test(args.join(","))) return false;
+  if (rule.argTest && !rule.argTest.test(first)) return false;
+  switch (rule.needs) {
+    case "any":
+      return hasInput(scope, args.join(","));
+    case "first":
+      return hasInput(scope, first);
+    case "filter":
+      return filterFromInput(scope, first);
+    case "start": {
+      // redirect(302, url): the address is the second argument.
+      const target = /^\s*\d{3}\s*$/.test(first) && args[1] !== undefined ? args[1] : first;
+      // axios({ url }) and similar: the address is a field.
+      if (target.trim().startsWith("{")) {
+        const m = /\b(?:url|uri|baseURL|host|hostname)\s*:\s*([^,}]+)/.exec(target);
+        return Boolean(m && startsWithInput(scope, m[1]));
+      }
+      return startsWithInput(scope, target);
+    }
+  }
+}
+
+/** Projects that use MongoDB, and whether they clean input of $ operators everywhere. */
+function mongoUse(files: CodeContext["files"]): { mongo: boolean; sanitized: boolean } {
+  let mongo = false;
+  let sanitized = false;
+  for (const f of files) {
+    if (/(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(f.path)) continue;
+    if (/require\(\s*["'](?:mongoose|mongodb|monk|mongojs)["']\s*\)|from\s+["'](?:mongoose|mongodb)["']|"(?:mongoose|mongodb)"\s*:/.test(f.text)) mongo = true;
+    if (/mongo-sanitize|sanitizeFilter["']?\s*,\s*true/.test(f.text)) sanitized = true;
+  }
+  return { mongo, sanitized };
+}
+
 export const codeRiskyAgent: EngineAgent<CodeContext> = {
   id: "code.risky",
   name: "Risky code",
@@ -299,13 +585,50 @@ export const codeRiskyAgent: EngineAgent<CodeContext> = {
   products: ["code"],
   run({ files }) {
     const out: Finding[] = [];
+    const db = mongoUse(files);
     for (const file of files) {
       if (/\.min\.js$|\.bundle\.js$/i.test(file.path)) continue;
       const isTest = TEST_PATH.test(file.path);
-      const rules = CODE_RULES.filter((r) => r.files.test(file.path) && (r.inTests || !isTest));
-      if (!rules.length) continue;
+      const rules = CODE_RULES.filter((r) => r.files.test(file.path) && (r.inTests || !isTest) && (!r.fileHas || r.fileHas.test(file.text)));
       const lines = file.text.split("\n");
       const done = new Set<string>();
+      // First the calls that request input reaches: they are the surest and the most severe, so a
+      // file gets that finding instead of the weaker pattern-only one below.
+      const lang = LANG_OF(file.path);
+      if (lang && !isTest) {
+        const taint = taintOf(lines, lang);
+        for (const rule of FLOW_RULES) {
+          if (rule.lang !== lang || done.has(rule.id) || (rule.mongo && (!db.mongo || db.sanitized))) continue;
+          let first = -1;
+          let count = 0;
+          lines.forEach((line, i) => {
+            if (line.length > 400 || /^\s*(\/\/|#(?!include)|\*|\/\*)/.test(line)) return;
+            if (/glvtest-ignore/.test(line) || /glvtest-ignore/.test(lines[i - 1] ?? "")) return;
+            for (const m of line.matchAll(new RegExp(rule.sink.source, `${rule.sink.flags.replace("g", "")}g`))) {
+              if (inLiteral(line, m.index)) continue;
+              const rest = `${line.slice(m.index + m[0].length)}\n${lines.slice(i + 1, i + 4).join("\n")}`;
+              if (!flowHits(rule, taintAt(taint, i), rest)) continue;
+              count++;
+              if (first < 0) first = i;
+              break;
+            }
+          });
+          if (first < 0) continue;
+          done.add(rule.id);
+          out.push(
+            finding({
+              category: "security",
+              rule: `code:${rule.id}`,
+              severity: rule.severity,
+              title: rule.title,
+              detail: `${file.path} line ${first + 1}${count > 1 ? ` (and ${count - 1} more in this file)` : ""}. The value comes from the request. ${rule.fix}`,
+              pageUrl: file.path,
+              evidence: `line ${first + 1}: ${lines[first].trim().slice(0, 160)}`,
+              count,
+            }),
+          );
+        }
+      }
       for (const rule of rules) {
         if (done.has(rule.id)) continue;
         let first = -1;

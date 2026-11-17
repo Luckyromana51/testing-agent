@@ -14,6 +14,7 @@ import {
   seoAgent,
   structuredDataAgent,
 } from "./web/page.js";
+import { PRODUCT_AGENTS } from "./web/products.js";
 import { jsErrorsAgent, mixedContentAgent, resourcesAgent } from "./web/signals.js";
 import {
   crawlabilityAgent,
@@ -46,6 +47,8 @@ export const WEB_AGENTS: WebAgent[] = [
   privacyAgent,
   speedAgent,
   mobileAgent,
+  // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
+  ...PRODUCT_AGENTS,
 ];
 
 /** All agents of every engine. */
@@ -53,8 +56,8 @@ export const ALL_AGENTS: AgentInfo[] = [...WEB_AGENTS, ...API_AGENTS, ...CODE_AG
 
 /** Plain description of an agent, without its code, for the dashboard. */
 export function describeAgent(a: AgentInfo): AgentInfo {
-  const { id, name, description, category, engine, products, defaultOff } = a;
-  return { id, name, description, category, engine, products, defaultOff };
+  const { id, name, description, category, engine, products, defaultOff, needsLogin } = a;
+  return { id, name, description, category, engine, products, defaultOff, needsLogin };
 }
 
 /**

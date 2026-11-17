@@ -311,6 +311,26 @@ export const androidComponentsAgent: ApkAgent = {
 /* ---------------------------------------------------------------------------------------------- */
 
 const IP = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * Text constants in Java/Kotlin code (dex) that look like an AES or DES key: exactly 16, 24 or 32
+ * characters (the key sizes), naming a key or secret, with a digit or symbol, in an app that builds
+ * keys with SecretKeySpec. InsecureBank's "This is the super secret key 123" is the classic case.
+ */
+export function dexCryptoKeys(dex: string): string[] {
+  if (!dex.includes("javax/crypto/spec/SecretKeySpec")) return [];
+  const keys: string[] = [];
+  // A dex string is its length (one byte under 128), the characters, then a zero byte.
+  for (const m of dex.matchAll(/([\x10\x18\x20])([\x20-\x7e]{16,32})\x00/g)) {
+    const text = m[2];
+    if (m[1].charCodeAt(0) !== text.length) continue;
+    if (!/key|secret|pass|crypt|aes/i.test(text) || !/[\d\W]/.test(text.replace(/ /g, ""))) continue;
+    if (/[/;<>]|^[\w$]+(\.[\w$]+)+$|\s{2}|%[sd]/.test(text)) continue; // class names, formats
+    keys.push(text);
+    if (keys.length >= 5) break;
+  }
+  return keys;
+}
 const COMMON_WORDS = new Set(["com", "org", "net", "in", "co", "io", "app", "apps", "android", "mobile", "www", "api", "test"]);
 
 export const androidSecretsAgent: ApkAgent = {
@@ -321,7 +341,7 @@ export const androidSecretsAgent: ApkAgent = {
   category: "security",
   run({ strings, facts, note }) {
     const out: Finding[] = [];
-    const patterns = SECRET_PATTERNS.filter((p) => p.id !== "generic");
+    const patterns = SECRET_PATTERNS.filter((p) => p.id !== "generic" && !p.fileHas);
     for (const p of patterns) {
       for (const s of strings) {
         const m = p.re.exec(s.text);
@@ -341,6 +361,22 @@ export const androidSecretsAgent: ApkAgent = {
         );
         break;
       }
+    }
+
+    for (const s of strings) {
+      if (!/\.dex$/.test(s.file)) continue;
+      const keys = dexCryptoKeys(s.text);
+      if (!keys.length) continue;
+      add(
+        out,
+        "android:hardcoded-crypto-key",
+        "high",
+        "The app has its encryption key written in the code",
+        `The app encrypts with SecretKeySpec and carries ${keys.length === 1 ? "a key" : `${keys.length} likely keys`} as plain text. Anyone can unpack the APK, read the key and decrypt what the app saved or sent with it. Create the key in the Android Keystore (KeyGenerator with AndroidKeyStore), or get it from your server after login.`,
+        s.file,
+        keys.map((k) => `"${k.slice(0, 4)}…${k.slice(-3)}" (${k.length} characters)`).join("\n"),
+      );
+      break;
     }
 
     // Plain-HTTP servers the app itself talks to: IP addresses, or hosts named after the app.

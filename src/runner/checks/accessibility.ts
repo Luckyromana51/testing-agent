@@ -17,6 +17,12 @@ const IMPACT: Record<string, Severity> = {
  */
 const SEVERITY_OVERRIDE: Record<string, Severity> = {
   "label-content-name-mismatch": "medium",
+  // axe calls a missing alt text "critical", but the page still works: a screen reader user misses
+  // what the picture shows. High keeps it near the top without capping the whole score at 69.
+  "image-alt": "high",
+  "area-alt": "high",
+  "object-alt": "high",
+  "svg-img-alt": "high",
 };
 
 // @axe-core/playwright pins its own playwright-core types; the runtime Page is compatible.
