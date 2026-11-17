@@ -371,11 +371,23 @@ function Findings({ findings }: { findings: Finding[] }) {
   const [minSev, setMinSev] = useState<Severity>("low");
   const [open, setOpen] = useState<string | null>(null);
 
+  // The same issue often appears on every page (a shared header, a site-wide header).
+  // Group it into one row so the list shows distinct problems, not repeats.
   const shown = useMemo(() => {
     const limit = SEVERITIES.indexOf(minSev);
-    return findings
-      .filter((f) => (cat === "all" || f.category === cat) && SEVERITIES.indexOf(f.severity) <= limit)
-      .sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
+    const groups = new Map<string, { key: string; first: Finding; items: Finding[] }>();
+    for (const f of findings) {
+      if (!(cat === "all" || f.category === cat) || SEVERITIES.indexOf(f.severity) > limit) continue;
+      const key = `${f.rule}|${f.title.replace(/\d+(\.\d+)?/g, "#")}`;
+      const g = groups.get(key) ?? { key, first: f, items: [] };
+      g.items.push(f);
+      groups.set(key, g);
+    }
+    return [...groups.values()].sort(
+      (a, b) =>
+        SEVERITIES.indexOf(a.first.severity) - SEVERITIES.indexOf(b.first.severity) ||
+        b.items.length - a.items.length,
+    );
   }, [findings, cat, minSev]);
 
   const counts = useMemo(() => {
@@ -415,24 +427,33 @@ function Findings({ findings }: { findings: Finding[] }) {
       </div>
       <ul className="findings">
         {shown.length === 0 && <li className="empty">Nothing to show with these filters.</li>}
-        {shown.map((f) => (
-          <li key={f.id + f.pageUrl} className={`finding ${open === f.id ? "open" : ""}`}>
-            <button className="finding-row" onClick={() => setOpen(open === f.id ? null : f.id)}>
+        {shown.map(({ key, first: f, items }) => (
+          <li key={key} className={`finding ${open === key ? "open" : ""}`}>
+            <button className="finding-row" onClick={() => setOpen(open === key ? null : key)}>
               <span className={`sev sev-${f.severity}`}>{f.severity}</span>
               <span className="finding-title">{f.title}</span>
               <span className="finding-cat">{CATEGORY_LABEL[f.category]}</span>
-              <span className="finding-page">{new URL(f.pageUrl).pathname}</span>
+              <span className="finding-page">
+                {items.length > 1 ? `${items.length} pages` : new URL(f.pageUrl).pathname}
+              </span>
             </button>
-            {open === f.id && (
+            {open === key && (
               <div className="finding-body">
                 <p>{f.detail}</p>
                 {f.evidence && <pre className="evidence">{f.evidence}</pre>}
                 <div className="finding-foot">
-                  Rule <code>{f.rule}</code> · Page{" "}
-                  <a href={f.pageUrl} target="_blank" rel="noreferrer">
-                    {f.pageUrl}
-                  </a>
+                  Rule <code>{f.rule}</code> · {items.length > 1 ? `Found on ${items.length} pages:` : "Page"}
                 </div>
+                <ul className="finding-pages">
+                  {items.map((i) => (
+                    <li key={i.id}>
+                      <a href={i.pageUrl} target="_blank" rel="noreferrer">
+                        {i.pageUrl}
+                      </a>
+                      {items.length > 1 && i.title !== f.title && <span className="muted"> · {i.title}</span>}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </li>

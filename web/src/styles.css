@@ -733,3 +733,10 @@ button {
   background: none;
   padding: 0;
 }
+.finding-pages {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-all;
+}
