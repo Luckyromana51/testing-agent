@@ -14,6 +14,8 @@ const SITE_AGENTS = new Set(WEB_AGENTS.filter((a) => a.stage === "site").map((a)
  * to run on the same site, so these issues are verified or reopened only when two runs in a row agree.
  */
 export const TIMING_RULES = new Set(["perf:lcp", "perf:ttfb", "perf:cls", "slow-page", "api:slow"]);
+/** Speed results that change from run to run, including Lighthouse's speed findings. */
+export const isTimingRule = (rule: string) => TIMING_RULES.has(rule) || rule.startsWith("lighthouse:perf-");
 const SETTLE_RUNS = 2;
 
 /** Short uppercase key prefix for a project name, like Jira: "GLV Infotech" -> "GLV". */
@@ -51,7 +53,8 @@ export function syncIssues(
   const looked = result.pages.filter((p) => !p.error && p.status !== null && ![401, 403, 429].includes(p.status) && p.status < 500);
   const scanned = new Set(looked.flatMap((p) => [p.url, p.redirectedFrom].filter(Boolean) as string[]));
   if (looked.length) for (const u of result.scanned ?? []) scanned.add(u);
-  const ranAgents = run.agents ? new Set(run.agents) : null;
+  // Outside tools count as agents named tool.<id> (tool.zap, tool.lighthouse...).
+  const ranAgents = run.agents ? new Set([...run.agents, ...(run.tools ?? []).map((t) => `tool.${t.id}`)]) : null;
   // Agents that could not do their check, or were left out on purpose, did not look again.
   const notRun = new Set((result.agentStats ?? []).filter((s) => s.untested || s.skipped).map((s) => s.id));
   const diff: RunDiff = { new: 0, fixed: 0, reopened: 0, open: 0 };
@@ -102,7 +105,7 @@ export function syncIssues(
       updatedAt: now,
       history: [...prev.history],
     };
-    const timing = TIMING_RULES.has(prev.rule);
+    const timing = isTimingRule(prev.rule);
     if (timing && prev.missedRuns) issue.missedRuns = 0;
     if ((prev.status === "fixed" || CLOSED.includes(prev.status)) && timing && (prev.backRuns ?? 0) + 1 < SETTLE_RUNS) {
       issue.backRuns = (prev.backRuns ?? 0) + 1;
@@ -132,10 +135,11 @@ export function syncIssues(
     const agentRan = !prev.agent || ((!ranAgents || ranAgents.has(prev.agent)) && !notRun.has(prev.agent));
     const lookedAgain =
       result.complete ||
-      (prev.agent && SITE_AGENTS.has(prev.agent) && looked.length > 0) ||
+      // Site-wide agents and the outside tools check the whole site again on every run.
+      (prev.agent && (SITE_AGENTS.has(prev.agent) || prev.agent.startsWith("tool.")) && looked.length > 0) ||
       prev.occurrences.some((o) => scanned.has(o.pageUrl));
     if (!agentRan || !lookedAgain) continue;
-    const timing = TIMING_RULES.has(prev.rule);
+    const timing = isTimingRule(prev.rule);
     if (!ACTIVE.includes(prev.status)) {
       // A closed speed issue that was slow once but not this time: the count starts again.
       if (timing && prev.backRuns) changed.push({ ...prev, backRuns: 0, updatedAt: now });

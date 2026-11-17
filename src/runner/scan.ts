@@ -354,6 +354,11 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
         )),
       );
     }
+    if (signedIn && opts.onSession) {
+      // The outside tools (Lighthouse, ZAP...) test the signed-in pages with the same session.
+      const cookies = await context.cookies(pages[0]?.url ?? startUrl);
+      if (cookies.length) opts.onSession(cookies.map((c) => `${c.name}=${c.value}`).join("; "));
+    }
   } finally {
     opts.signal?.removeEventListener("abort", stop);
     await browser.close().catch(() => {});

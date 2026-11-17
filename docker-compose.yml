@@ -22,10 +22,28 @@ services:
       # no owner account and no sign-in. Before putting it on a server, add AUTH_DISABLED=0
       # to .env and restart (docker compose up -d). See "Login switch" in README.md.
       AUTH_DISABLED: ${AUTH_DISABLED:-1}
+      # OWASP ZAP runs in its own container (below); only this app can reach it.
+      ZAP_URL: http://zap:8080
+      ZAP_API_KEY: ${ZAP_API_KEY:-glv-local-zap}
+    depends_on:
+      zap:
+        condition: service_healthy
     volumes:
       - agent-data:/data
     # Chromium needs more shared memory than Docker's 64 MB default.
     shm_size: "1gb"
+
+  # OWASP ZAP for the "ZAP (passive)" tool tab. The app only asks it to look at pages the test
+  # already opened (GET requests); it never starts a spider or an active (attack) scan.
+  # No ports are published, so nothing outside this compose network can use it.
+  zap:
+    image: zaproxy/zap-stable:2.17.0
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    restart: unless-stopped
+    command: >-
+      zap.sh -daemon -host 0.0.0.0 -port 8080 -silent
+      -config api.key=${ZAP_API_KEY:-glv-local-zap}
+      -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
 
 volumes:
   agent-data:

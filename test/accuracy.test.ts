@@ -23,6 +23,8 @@ import { DEMO_USER, startDemoApp, type DemoApp } from "./fixtures/demo-app.js";
 import { startDemoStore } from "./fixtures/demo-store.js";
 
 process.env.ALLOW_PRIVATE_TARGETS = "1";
+// The outside tools have their own tests (tools.test.ts); here tests run only the platform's checks.
+process.env.DEFAULT_TOOLS = "none";
 const rules = (r: ScanResult) => new Set(r.findings.map((f) => f.rule));
 const stat = (id: string, category: AgentStat["category"], extra: Partial<AgentStat> = {}): AgentStat => ({
   id,

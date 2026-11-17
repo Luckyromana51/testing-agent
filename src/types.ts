@@ -1,3 +1,5 @@
+import type { ToolChoice, ToolStat } from "./tools/types.js";
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export type Category = "functional" | "accessibility" | "seo" | "security" | "performance" | "mobile";
@@ -69,6 +71,8 @@ export interface ScanOptions {
   login?: Login;
   /** Stops the test (closes the browser) when the run is cancelled or the server stops. */
   signal?: AbortSignal;
+  /** Called with the signed-in session's Cookie header at the end, for the outside tools. */
+  onSession?: (cookie: string) => void;
 }
 
 export interface AgentStat {
@@ -112,6 +116,8 @@ export interface ScanResult {
   scanned?: string[];
   /** True when the run re-checked the whole target (code and app tests), so anything not found again is fixed. */
   complete?: boolean;
+  /** What each outside tool (Lighthouse, ZAP...) did in this run. */
+  tools?: ToolStat[];
 }
 
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -138,6 +144,8 @@ export interface Run {
   trigger?: "manual" | "schedule" | "retest";
   /** Agent ids that ran. */
   agents?: string[];
+  /** Outside tools this run uses, with their options. */
+  tools?: ToolChoice[];
   diff?: RunDiff;
   status: RunStatus;
   createdAt: string;
@@ -219,6 +227,8 @@ export interface Project {
   lastScore?: number;
   /** Last issue number used. */
   issueSeq: number;
+  /** Outside tools turned on for this project's tests. Unset: every safe tool installed on the server. */
+  tools?: ToolChoice[];
 }
 
 export type IssueStatus = "open" | "in_progress" | "fixed" | "verified" | "reopened" | "wont_fix";

@@ -44,7 +44,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"issues" | "pages" | "agents">("issues");
+  const [tab, setTab] = useState<"issues" | "pages" | "agents" | "tools">("issues");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -79,6 +79,7 @@ export function Report({ id }: { id: string }) {
           )}
           {run.result && unitOf(run).one !== "file" && ` · ${plural(run.result.pages.length, unitOf(run).one)} tested`}
           {run.agents && ` · ${run.agents.length} agents`}
+          {run.tools && run.tools.length > 0 && ` · ${plural(run.tools.length, "tool")}`}
         </div>
       </div>
       <div className="header-actions">
@@ -274,13 +275,19 @@ export function Report({ id }: { id: string }) {
         )}
         {result.agentStats && (
           <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>
-            Agents ({result.agentStats.length})
+            Agents ({result.agentStats.filter((s) => !s.id.startsWith("tool.")).length})
+          </button>
+        )}
+        {result.tools && result.tools.length > 0 && (
+          <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>
+            Tools ({result.tools.length})
           </button>
         )}
       </div>
       {tab === "issues" && <IssueList groups={groups} categories={categories} unit={unit.many} />}
       {tab === "pages" && <Pages run={run} />}
       {tab === "agents" && <Agents run={run} />}
+      {tab === "tools" && <Tools run={run} />}
     </div>
   );
 }
@@ -337,7 +344,8 @@ function Occurrences({ g, unit = "pages" }: { g: IssueGroup; unit?: string }) {
         {f.agent && (
           <>
             {" "}
-            · agent <code>{f.agent}</code>
+            · {f.agent.startsWith("tool.") ? "found by " : "agent "}
+            <code>{f.agent.startsWith("tool.") ? f.agent.slice(5) : f.agent}</code>
           </>
         )}{" "}
         · {g.pages.length > 1 ? `found in ${g.pages.length} ${unit}:` : `${unit.replace(/s$/, "")}:`}
@@ -505,7 +513,7 @@ function Pages({ run }: { run: Run }) {
 
 function Agents({ run }: { run: Run }) {
   const rank = (s: { untested?: string; skipped?: string }) => (s.untested ? 0 : s.skipped ? 2 : 1);
-  const stats = [...(run.result!.agentStats ?? [])].sort((a, b) => rank(a) - rank(b) || b.findings - a.findings);
+  const stats = [...(run.result!.agentStats ?? [])].filter((s) => !s.id.startsWith("tool.")).sort((a, b) => rank(a) - rank(b) || b.findings - a.findings);
   return (
     <div className="card table-card">
       <table className="table">
@@ -543,6 +551,56 @@ function Agents({ run }: { run: Run }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** What each outside tool did: its scores or summary, findings, and its own report to open. */
+function Tools({ run }: { run: Run }) {
+  const tools = run.result!.tools ?? [];
+  return (
+    <div className="tool-results">
+      {tools.map((t) => (
+        <div className={`card tool-result ${t.status}`} key={t.id}>
+          <div className="tool-head">
+            <div className="grow">
+              <div className="tool-name">{t.name}</div>
+              <div className="muted small">
+                {t.tested ?? (t.status === "untested" ? "Could not run" : "")} · {(t.ms / 1000).toFixed(1)} s
+              </div>
+            </div>
+            {t.status === "done" ? (
+              <span className={t.findings === 0 && !t.merged ? "ok" : "muted"}>
+                {t.findings ? plural(t.findings, "new finding") : t.merged ? "Nothing new" : "No problems"}
+              </span>
+            ) : (
+              <span className="bad">Not tested</span>
+            )}
+          </div>
+          {t.untested && <div className="tool-missing">{t.untested}</div>}
+          {t.summary && t.summary.length > 0 && (
+            <ul className="tool-summary">
+              {t.summary.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
+          {t.merged ? (
+            <div className="muted small">
+              {plural(t.merged, "problem")} {t.merged === 1 ? "was" : "were"} already found by the platform's own checks, so {t.merged === 1 ? "it is" : "they are"} shown once.
+            </div>
+          ) : null}
+          {t.reports && t.reports.length > 0 && (
+            <div className="tool-reports">
+              {t.reports.map((r) => (
+                <a key={r.file} href={`/api/runs/${run.id}/artifacts/${r.file}`} target="_blank" rel="noreferrer" className="btn ghost small">
+                  {r.label} ↗
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

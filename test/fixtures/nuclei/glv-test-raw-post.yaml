@@ -1,0 +1,18 @@
+id: glv-test-raw-post
+info:
+  name: Raw POST probe (GLV test template)
+  author: glv
+  severity: high
+  tags: glv-test
+http:
+  - raw:
+      - |
+        POST /api/reset HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"all":true}
+    matchers:
+      - type: status
+        status:
+          - 200

@@ -20,6 +20,9 @@ import { redact, secretsOf, Vault } from "../src/vault.js";
 import { DEMO_TOKEN, startDemoApi, type DemoApi } from "./fixtures/demo-api.js";
 import { DEMO_USER, startDemoApp, type DemoApp } from "./fixtures/demo-app.js";
 
+// The outside tools have their own tests (tools.test.ts); here tests run only the platform's checks.
+process.env.DEFAULT_TOOLS = "none";
+
 const run = promisify(execFile);
 const WEB_LOGIN: Login = { kind: "web", loginUrl: "http://localhost:4231/login", username: DEMO_USER.email, password: DEMO_USER.password };
 

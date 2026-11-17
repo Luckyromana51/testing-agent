@@ -1849,3 +1849,141 @@ a.brand {
 .partial {
   color: #b45309;
 }
+
+/* Tool tabs: the platform's own checks first, then one tab per outside tool. */
+.tool-tabs-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  min-width: 0;
+}
+.tool-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  padding: 0 6px;
+}
+/* On a phone the tabs stay on one line and scroll sideways inside their box. */
+@media (max-width: 640px) {
+  .tool-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+}
+.tool-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  padding: 10px 12px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.tool-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.tab-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+.tool-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  border: 1.5px solid var(--muted);
+}
+.tool-dot.on {
+  background: var(--good);
+  border-color: var(--good);
+}
+.tool-dot.missing {
+  border-style: dashed;
+  opacity: 0.6;
+}
+.tool-panel {
+  padding: 14px 16px 16px;
+  display: grid;
+  gap: 10px;
+}
+.tool-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.tool-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+.tool-desc {
+  margin: 0;
+  line-height: 1.5;
+}
+.tool-checks,
+.tool-summary {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.safety {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.safety.safe {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+.safety.permission {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.tool-options {
+  max-width: 520px;
+}
+.tool-missing {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.tool-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.tool-results {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.tool-result {
+  display: grid;
+  gap: 8px;
+}
+.tool-result.untested {
+  border-left: 3px solid var(--warn);
+}
+.tool-reports {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

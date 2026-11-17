@@ -13,6 +13,9 @@ import { createApp } from "../src/server.js";
 import type { Finding, Issue, Project, Run } from "../src/types.js";
 import { startDemoSite } from "./fixtures/demo-site.js";
 
+// The outside tools have their own tests (tools.test.ts); here tests run only the platform's checks.
+process.env.DEFAULT_TOOLS = "none";
+
 const project: Project = {
   id: "p1",
   key: "DEMO",
