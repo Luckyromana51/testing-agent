@@ -1,6 +1,6 @@
 import type { BrowserContext } from "playwright";
 import { finding } from "../../runner/finding.js";
-import { SKIP_EXT, UNSAFE_LINK } from "../../runner/urls.js";
+import { isUnsafeLink, SKIP_EXT } from "../../runner/urls.js";
 import { WEB_PRODUCTS } from "../../products.js";
 import type { Finding } from "../../types.js";
 import type { SiteAgent } from "../types.js";
@@ -63,15 +63,17 @@ export async function checkLinks(
   origin: string,
   linkSources: Map<string, string>,
   onProgress?: (m: string) => void,
+  loggedIn = false,
 ): Promise<Finding[]> {
   const out: Finding[] = [];
   const all = [...linkSources.keys()];
   // Never open log-out or delete links, even to check them: that would end a logged-in session.
-  const unsafe = all.filter((l) => UNSAFE_LINK.test(new URL(l).pathname + new URL(l).search));
+  // Signed in, also links that look like actions (cancel, archive, mark all read...).
+  const unsafe = all.filter((l) => isUnsafeLink(l, loggedIn));
   const skipped = all.filter((l) => BOT_BLOCKING_HOSTS.test(new URL(l).hostname) || unsafe.includes(l));
   const links = all.filter((l) => !skipped.includes(l)).slice(0, 200);
   onProgress?.(
-    `Checking ${links.length} links${skipped.length ? ` (skipping ${skipped.length - unsafe.length} social media links, which block automated checks, and ${unsafe.length} log-out or delete links)` : ""}`,
+    `Checking ${links.length} links${skipped.length ? ` (skipping ${skipped.length - unsafe.length} social media links, which block automated checks, and ${unsafe.length} log-out, delete or action links)` : ""}`,
   );
 
   const perHost = new Map<string, number>();
@@ -158,13 +160,13 @@ export const linksAgent: SiteAgent = {
   engine: "web",
   products: WEB_PRODUCTS,
   stage: "site",
-  run({ browser, origin, linkSources, pages, log }) {
+  run({ browser, origin, linkSources, pages, site, log }) {
     const toCheck = new Map(linkSources);
     // Pages we already visited were checked by loading them.
     for (const p of pages) {
       toCheck.delete(p.url);
       if (p.redirectedFrom) toCheck.delete(p.redirectedFrom);
     }
-    return checkLinks(browser, origin, toCheck, log);
+    return checkLinks(browser, origin, toCheck, log, site.loggedIn);
   },
 };

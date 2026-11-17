@@ -30,6 +30,8 @@ export interface PageSignals {
 /** Shared notes that page agents leave for site agents. */
 export interface SiteState {
   seo: Map<string, { title: string; description: string | null }>;
+  /** True when the crawl runs signed in: agents then stay away from anything that could change data. */
+  loggedIn?: boolean;
 }
 
 export interface PageContext {

@@ -65,6 +65,8 @@ export interface ScanOptions {
   product?: ProductType;
   /** Ids of the agents to run. Defaults to every agent for the product that is on by default. */
   agents?: string[];
+  /** Sign in with this before testing, to test the pages behind the login. */
+  login?: Login;
 }
 
 export interface AgentStat {
@@ -149,6 +151,43 @@ export interface ProjectTarget {
   file?: string;
   /** The uploaded file's original name, for display. */
   fileName?: string;
+}
+
+export type LoginKind = "web" | "api" | "git";
+export type ApiAuthType = "bearer" | "header" | "basic" | "query";
+
+/**
+ * A saved login for logged-in testing, kept encrypted in the vault on GLV's server.
+ * password and token are secret: they are only decrypted for a test run and never sent to the dashboard.
+ */
+export interface Login {
+  kind: LoginKind;
+  /** web: the sign-in page. */
+  loginUrl?: string;
+  /** web and basic auth: the user name or email. git: optional user name to go with the token. */
+  username?: string;
+  password?: string;
+  /** web: CSS selectors, only needed when the sign-in form is unusual. */
+  usernameSelector?: string;
+  passwordSelector?: string;
+  submitSelector?: string;
+  /** web: text that only shows once signed in, like "Sign out" or the user's name. */
+  successText?: string;
+  /** api: how the key or token is sent. */
+  authType?: ApiAuthType;
+  /** api: the header or query parameter name, for header and query keys. */
+  paramName?: string;
+  /** api and git: the token or key. */
+  token?: string;
+}
+
+/** What the dashboard sees of a saved login: no secrets, only whether each one is saved. */
+export interface LoginSummary extends Omit<Login, "password" | "token"> {
+  hasPassword: boolean;
+  hasToken: boolean;
+  /** Saved with a key this server no longer has, so it must be entered again. */
+  unreadable?: boolean;
+  updatedAt: string;
 }
 
 export interface Project {

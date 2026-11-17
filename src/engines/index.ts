@@ -1,12 +1,15 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { scanSite } from "../runner/scan.js";
-import type { ProductType, ProjectTarget, ScanResult } from "../types.js";
+import type { Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
+import { redact, secretsOf } from "../vault.js";
 import { scanApi } from "./api.js";
 
 export interface EngineInput {
   product: ProductType;
   target: ProjectTarget;
+  /** The project's saved login, decrypted for this run only. */
+  login?: Login;
   /** Agent ids to run. */
   agents?: string[];
   maxPages: number;
@@ -26,15 +29,29 @@ export function uploadedPath(uploadsDir: string, file: string): string {
   return path.join(uploadsDir, name);
 }
 
-/** Picks the test engine for the product and runs it. */
+/**
+ * Picks the test engine for the product and runs it. Any secret from the login that shows up in
+ * the result or in an error (a page that prints a token, for example) is replaced with [hidden].
+ */
 export async function runEngine(input: EngineInput): Promise<ScanResult> {
-  const { product, target, agents, onProgress } = input;
+  const secrets = secretsOf(input.login, input.target.repoUrl);
+  const onProgress = input.onProgress && ((m: string) => input.onProgress!(redact(m, secrets)));
+  try {
+    return redact(await pickEngine({ ...input, onProgress }), secrets);
+  } catch (err) {
+    throw new Error(redact((err as Error).message, secrets));
+  }
+}
+
+async function pickEngine(input: EngineInput): Promise<ScanResult> {
+  const { product, target, agents, login, onProgress } = input;
   switch (product) {
     case "api":
       return scanApi({
         specUrl: target.specUrl,
         specText: target.file ? await readFile(uploadedPath(input.uploadsDir, target.file), "utf8") : undefined,
         baseUrl: target.url,
+        auth: login?.kind === "api" ? login : undefined,
         agents,
         onProgress,
       });
@@ -43,6 +60,7 @@ export async function runEngine(input: EngineInput): Promise<ScanResult> {
       return scanCode({
         repoUrl: target.repoUrl,
         branch: target.branch,
+        gitLogin: login?.kind === "git" ? login : undefined,
         zipFile: target.file ? uploadedPath(input.uploadsDir, target.file) : undefined,
         workDir: input.workDir,
         agents,
@@ -62,6 +80,7 @@ export async function runEngine(input: EngineInput): Promise<ScanResult> {
         maxPages: input.maxPages,
         product,
         agents,
+        login: login?.kind === "web" ? login : undefined,
         artifactsDir: input.artifactsDir,
         onProgress,
       });

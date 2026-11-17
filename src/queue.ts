@@ -96,9 +96,13 @@ export class ScanQueue {
       await mkdir(workDir, { recursive: true });
       let result;
       try {
+        // Decrypted only for this run, kept in memory, and hidden from the report and the log.
+        const login = this.stores.vault.get(project.id);
+        if (login) log("Using the saved login (kept encrypted on this server)");
         result = await runEngine({
           product: project.type,
           target: project.target,
+          login,
           agents: run.agents,
           maxPages: project.target.maxPages ?? settings.get().defaultMaxPages,
           artifactsDir: this.artifactsDir(run.id),

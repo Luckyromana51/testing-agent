@@ -16,8 +16,8 @@ import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
 import { startScheduler } from "./scheduler.js";
 import { openStores, type Settings, type Stores } from "./store.js";
-import { buildTarget, defaultName, type TargetInput } from "./targets.js";
-import type { Issue, IssueStatus, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
+import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
+import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
 import { validateTarget } from "./runner/urls.js";
 
 export { validateTarget } from "./runner/urls.js";
@@ -231,6 +231,7 @@ export async function createApp(opts: AppOptions) {
       ai: aiEnabled(),
       aiSummary: settings.aiSummary,
       defaultMaxPages: settings.defaultMaxPages,
+      vault: stores.vault.status(),
     };
   });
 
@@ -242,20 +243,25 @@ export async function createApp(opts: AppOptions) {
       counts: issueCounts(stores.issues.list(p.id)),
       lastRun: runs[0] ? runSummary(runs[0]) : null,
       busy: queue.busy(p.id),
+      // Never the secrets themselves: only whether they are saved.
+      login: stores.vault.summary(p.id) ?? null,
     };
   };
 
   app.get("/api/projects", async () => stores.projects.list().map(projectSummary));
 
   app.post("/api/projects", async (req, reply) => {
-    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule }>(req);
+    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule; login: Partial<Login> | null }>(req);
     const type = (b.type ?? "website") as ProductType;
     const info = PRODUCTS.find((p) => p.type === type);
     if (!info) throw new HttpError(400, "Unknown product type.");
     if (!info.available) throw new HttpError(400, `${info.name} testing is coming in a later update.`);
     let target: ProjectTarget;
+    let login: Login | undefined;
     try {
-      target = buildTarget(type, b, queue.uploadsDir(), stores.settings.get().defaultMaxPages);
+      const { login: loginInput, ...targetInput } = b;
+      target = buildTarget(type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages);
+      if (loginInput) login = buildLogin(type, loginInput);
     } catch (err) {
       throw new HttpError(400, (err as Error).message);
     }
@@ -271,8 +277,9 @@ export async function createApp(opts: AppOptions) {
       issueSeq: 0,
     };
     stores.projects.save(project);
+    if (login) stores.vault.save(project.id, login);
     const run = queue.enqueue(project);
-    return reply.code(201).send({ project, run });
+    return reply.code(201).send({ project: projectSummary(project), run });
   });
 
   // Uploads: the raw file in the body (APK, IPA, a zip of code, or an OpenAPI file).
@@ -329,17 +336,21 @@ export async function createApp(opts: AppOptions) {
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, ...targetInput } = b;
-    if (Object.keys(targetInput).length) {
-      try {
+    const { name: _n, schedule: _s, login: loginInput, ...targetInput } = b;
+    let login: Login | undefined;
+    try {
+      if (Object.keys(targetInput).length) {
         next.target = buildTarget(p.type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages, p.target);
-      } catch (err) {
-        throw new HttpError(400, (err as Error).message);
       }
+      if (loginInput) login = buildLogin(p.type, loginInput, stores.vault.summary(p.id));
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
     }
+    if (loginInput === null) stores.vault.delete(p.id);
+    else if (login) stores.vault.save(p.id, login);
     if (b.schedule !== undefined) {
       if (!SCHEDULES.includes(b.schedule)) throw new HttpError(400, "Schedule must be off, daily or weekly.");
       next.schedule = b.schedule;
@@ -355,6 +366,7 @@ export async function createApp(opts: AppOptions) {
     if (queue.busy(p.id)) throw new HttpError(409, "Wait for the running test to finish before deleting the project.");
     for (const runId of stores.runs.deleteForProject(p.id)) await queue.removeArtifacts(runId);
     stores.issues.deleteForProject(p.id);
+    stores.vault.delete(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     stores.projects.delete(p.id);
     return reply.code(204).send();

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Category, User } from "../../../src/types.ts";
 import { api, type Meta } from "../api.ts";
 import { CATEGORY_LABEL, go, plural, usePoll } from "../lib.ts";
@@ -284,6 +284,8 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [pw, setPw] = useState({ current: "", password: "" });
+  // The vault count changes as projects get logins: refresh it whenever this tab opens.
+  useEffect(reloadMeta, [reloadMeta]);
   const save = async (patch: Parameters<typeof api.updateSettings>[0]) => {
     setErr("");
     try {
@@ -376,6 +378,27 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
           <button className="btn">Change password</button>
         </form>
       )}
+      <div className="card form">
+        <div className="stat-label">Login vault</div>
+        <p className="muted small">
+          {meta.vault.saved === 1 ? "1 project has a saved login" : `${meta.vault.saved} projects have a saved login`} (website
+          sign-ins, API keys and Git tokens), encrypted with AES-256-GCM. Secrets are never shown again or put in reports.
+        </p>
+        {meta.vault.source === "env" ? (
+          <p className="muted small">The key comes from SECRET_KEY in the server's .env file.</p>
+        ) : (
+          <p className="muted small">
+            The key is kept in the data folder, which is fine on your own computer. On a server, set SECRET_KEY in .env
+            (make one with <code>openssl rand -base64 32</code>) and restart: saved logins move to it on their own.
+          </p>
+        )}
+        {meta.vault.unreadable > 0 && (
+          <div className="error">
+            {meta.vault.unreadable} saved login(s) were encrypted with a different SECRET_KEY. Enter them again on their
+            project pages.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

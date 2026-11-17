@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Issue, Project, Role, Run, User } from "./types.js";
+import { Vault } from "./vault.js";
 
 /**
  * SQLite storage (built into Node 22, no native build step). Each row keeps its object as JSON,
@@ -244,6 +245,8 @@ export interface Stores {
   issues: IssueStore;
   settings: SettingsStore;
   users: UserStore;
+  /** Encrypted client logins for logged-in testing. */
+  vault: Vault;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -254,5 +257,6 @@ export function openStores(dataDir: string): Stores {
     issues: new IssueStore(db),
     settings: new SettingsStore(db),
     users: new UserStore(db),
+    vault: new Vault(db, dataDir),
   };
 }

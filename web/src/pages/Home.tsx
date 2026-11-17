@@ -3,6 +3,7 @@ import type { ProductType, Schedule } from "../../../src/types.ts";
 import { api, type Meta, type TargetFields, type Upload } from "../api.ts";
 import { CATEGORY_LABEL, go } from "../lib.ts";
 import { Icon } from "../ui.tsx";
+import { LOGIN_QUESTION, LoginFields, loginKind, type LoginDraft } from "./LoginFields.tsx";
 
 /** First screen: what kind of product do you want to test? */
 export function Home({ meta }: { meta: Meta }) {
@@ -109,6 +110,8 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
   const [maxPages, setMaxPages] = useState(meta.defaultMaxPages);
   const [schedule, setSchedule] = useState<Schedule>("off");
   const [checkLinks, setCheckLinks] = useState(true);
+  const [withLogin, setWithLogin] = useState(false);
+  const [login, setLogin] = useState<LoginDraft>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const isWeb = WEB_TYPES.includes(type);
@@ -144,7 +147,8 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
     setError("");
     setBusy(true);
     try {
-      const { run } = await api.createProject({ name, type, schedule, ...fields });
+      const kind = loginKind(type);
+      const { run } = await api.createProject({ name, type, schedule, ...fields, ...(withLogin && kind ? { login: { ...login, kind } } : {}) });
       go(`#/run/${run.id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -203,8 +207,8 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
               <input className="input" placeholder="Taken from the file's servers list" value={url} onChange={(e) => setUrl(e.target.value)} />
             </label>
             <div className="note">
-              Only read-only GET requests are sent, without logging in. Operations that change data (POST, PUT, PATCH,
-              DELETE) are counted but never called.
+              Only read-only GET requests are sent. Operations that change data (POST, PUT, PATCH, DELETE) are counted
+              but never called.
             </div>
           </>
         )}
@@ -230,8 +234,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
             <div className="or">or</div>
             <FilePicker accept=".zip" label="Upload a zip of the code" hint="up to 300 MB; node_modules and vendor are skipped" value={upload} onChange={setUpload} />
             <div className="note">
-              Public repositories for now (private ones need an access token, coming next). The code is read on GLV's
-              server and deleted after the test. Package names and versions are looked up in the free OSV database
+              The code is read on GLV's server and deleted after the test. Package names and versions are looked up in the free OSV database
               (osv.dev).
             </div>
           </>
@@ -280,10 +283,13 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
             link, including links to other websites
           </label>
         )}
-        {isApp && (
-          <div className="note">
-            Pages behind a login are tested in a later update. For now the agents test everything visitors can reach
-            without signing in.
+        {loginKind(type) && (
+          <div className="login-section">
+            <label className="check dark">
+              <input type="checkbox" checked={withLogin} onChange={(e) => setWithLogin(e.target.checked)} />{" "}
+              {LOGIN_QUESTION[loginKind(type)!]}
+            </label>
+            {withLogin && <LoginFields kind={loginKind(type)!} value={login} onChange={setLogin} />}
           </div>
         )}
         <div className="form-actions">

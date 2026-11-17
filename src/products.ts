@@ -45,7 +45,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Multi-tenant products with sign-up and billing",
     input: "url",
     available: true,
-    tests: ["Everything in Web app", "Opens in a real cloud browser", "Logged-in testing (next update)"],
+    tests: ["Everything in Web app", "Opens in a real cloud browser", "Logged-in testing"],
   },
   {
     type: "crm",
@@ -53,7 +53,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Customer, lead and WhatsApp CRMs",
     input: "url",
     available: true,
-    tests: ["Everything in Web app", "Opens in a real cloud browser", "Logged-in testing (next update)"],
+    tests: ["Everything in Web app", "Opens in a real cloud browser", "Logged-in testing"],
   },
   {
     type: "api",

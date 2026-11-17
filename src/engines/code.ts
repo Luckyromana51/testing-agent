@@ -8,7 +8,8 @@ import { CODE_AGENTS } from "../agents/code/index.js";
 import type { CodeContext, SourceFile } from "../agents/code/context.js";
 import { scoreFindings } from "../runner/score.js";
 import { validateTarget } from "../runner/urls.js";
-import type { Category, PageResult, ScanResult } from "../types.js";
+import type { Category, Login, PageResult, ScanResult } from "../types.js";
+import { gitUser } from "../vault.js";
 import { runEngineAgents } from "./agents.js";
 
 const run = promisify(execFile);
@@ -48,6 +49,8 @@ export const SKIP_DIRS = new Set([
 export interface CodeScanOptions {
   repoUrl?: string;
   branch?: string;
+  /** Access token for a private repository, from the project's saved login. */
+  gitLogin?: Login;
   /** An uploaded zip of the code, instead of a repository. */
   zipFile?: string;
   /** A folder on this machine (command line and CI use only, never from the dashboard). */
@@ -68,15 +71,47 @@ export function validateRepoUrl(raw: string): string {
   return url.replace(/\/$/, "");
 }
 
-async function clone(repoUrl: string, branch: string | undefined, dir: string): Promise<string> {
+/**
+ * Sends the access token as an HTTP header for the repository's own host only. It never goes into
+ * the address, the command line (visible to other processes) or the clone's .git/config.
+ */
+export function gitAuthEnv(repoUrl: string, login: Login | undefined, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  if (!login?.token) return {};
+  const n = Number(env.GIT_CONFIG_COUNT) || 0;
+  const basic = Buffer.from(`${gitUser(login.username, repoUrl)}:${login.token}`).toString("base64");
+  return {
+    GIT_CONFIG_COUNT: String(n + 1),
+    [`GIT_CONFIG_KEY_${n}`]: `http.${new URL(repoUrl).origin}/.extraHeader`,
+    [`GIT_CONFIG_VALUE_${n}`]: `Authorization: Basic ${basic}`,
+  };
+}
+
+/**
+ * The server's environment without anything that could hand git this server's own logins or
+ * settings: credential helpers, askpass programs, SSH agents, and global or system git config
+ * (which can hold saved tokens or rewrite addresses to SSH with the server's keys).
+ */
+export function isolatedGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (/^(GIT_CONFIG.*|GIT_ASKPASS|SSH_ASKPASS.*|GIT_SSH.*|SSH_AUTH_SOCK|GIT_CREDENTIAL.*)$/.test(k)) continue;
+    out[k] = v;
+  }
+  return { ...out, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+}
+
+async function clone(repoUrl: string, branch: string | undefined, dir: string, login?: Login): Promise<string> {
   const args = [
     // Never use this server's own saved Git logins for a client's repository.
     "-c",
     "credential.helper=",
     "-c",
     "core.askPass=true",
+    // https only: no local paths, no SSH (which would use this server's keys).
     "-c",
-    "protocol.file.allow=never",
+    "protocol.allow=never",
+    "-c",
+    "protocol.https.allow=always",
     "clone",
     "--depth",
     "1",
@@ -88,12 +123,18 @@ async function clone(repoUrl: string, branch: string | undefined, dir: string): 
     dir,
   ];
   try {
-    await run("git", args, { timeout: 180_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, maxBuffer: 10_000_000 });
+    await run("git", args, {
+      timeout: 180_000,
+      env: { ...isolatedGitEnv(), ...gitAuthEnv(repoUrl, login, {}) },
+      maxBuffer: 10_000_000,
+    });
   } catch (err) {
     const msg = String((err as { stderr?: string }).stderr || (err as Error).message);
     if (/Authentication failed|could not read Username|terminal prompts disabled|not found|403|401/i.test(msg)) {
       throw new Error(
-        "Could not open the repository. It may be private, or the address or branch may be wrong. Private repositories need an access token, which is not set up yet.",
+        login?.token
+          ? "Could not open the repository with the saved access token. Check the token can read this repository and has not expired, and that the address and branch are right."
+          : "Could not open the repository. It may be private, or the address or branch may be wrong. For a private repository, add an access token in the project's login settings.",
       );
     }
     throw new Error(`Could not clone the repository: ${msg.trim().split("\n").pop()}`);
@@ -204,7 +245,8 @@ export async function scanCode(opts: CodeScanOptions): Promise<ScanResult> {
     const repoUrl = validateRepoUrl(opts.repoUrl);
     log(`Cloning ${repoUrl}${opts.branch ? ` (branch ${opts.branch})` : ""}`);
     const dir = path.join(opts.workDir, "repo");
-    const commit = await clone(repoUrl, opts.branch, dir);
+    if (opts.gitLogin?.token) log("Using the saved access token for this repository");
+    const commit = await clone(repoUrl, opts.branch, dir, opts.gitLogin);
     tree = await readTree(dir);
     label = `${repoUrl}${opts.branch ? `, branch ${opts.branch}` : ""}${commit ? `, commit ${commit}` : ""}`;
   } else {

@@ -3,6 +3,8 @@ import type { ProductInfo } from "../../src/products.ts";
 import type {
   Issue,
   IssueStatus,
+  Login,
+  LoginSummary,
   ProductType,
   Project,
   Run,
@@ -24,7 +26,13 @@ export interface IssueCounts {
   byStatus: Record<IssueStatus, number>;
 }
 
-export type ProjectSummary = Project & { counts: IssueCounts; lastRun: RunSummary | null; busy: boolean };
+export type ProjectSummary = Project & {
+  counts: IssueCounts;
+  lastRun: RunSummary | null;
+  busy: boolean;
+  /** The saved login, without its secrets. */
+  login: LoginSummary | null;
+};
 
 export interface ProjectDetail {
   project: ProjectSummary;
@@ -46,6 +54,8 @@ export interface TargetFields {
   fileName?: string;
   maxPages?: number;
   checkLinks?: boolean;
+  /** A login to save (secrets left empty keep the saved ones), or null to remove it. */
+  login?: Partial<Login> | null;
 }
 
 export interface Upload {
@@ -60,6 +70,8 @@ export interface Meta {
   ai: boolean;
   aiSummary: boolean;
   defaultMaxPages: number;
+  /** Where the login vault's key comes from, and how many logins it holds. */
+  vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
 }
 
 export interface Settings {
@@ -118,7 +130,7 @@ export const api = {
   projects: () => call<ProjectSummary[]>("GET", "/api/projects"),
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
   createProject: (b: { name: string; type: ProductType; schedule: Schedule } & TargetFields) =>
-    call<{ project: Project; run: Run }>("POST", "/api/projects", b),
+    call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
   updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule } & TargetFields>) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
   /** Sends a file as the raw request body; returns the stored name to put in the project. */

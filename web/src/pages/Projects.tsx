@@ -3,6 +3,7 @@ import type { Schedule, User } from "../../../src/types.ts";
 import { api, type Meta, type ProjectSummary } from "../api.ts";
 import { CATEGORY_LABEL, go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts";
 import { FilePicker } from "./Home.tsx";
+import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
 const SCHEDULE_LABEL: Record<Schedule, string> = { off: "Manual", daily: "Daily re-test", weekly: "Weekly re-test" };
@@ -203,6 +204,8 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
           )}
         </div>
       </div>
+
+      {loginKind(p.type) && <ProjectLogin projectId={p.id} kind={loginKind(p.type)!} saved={p.login} onSaved={reload} />}
 
       <h2 className="section-title">Test runs</h2>
       <div className="card table-card">
