@@ -45,7 +45,7 @@ export async function summariseWithClaude(result: ScanResult): Promise<AiSummary
   const unit = kind === "api" ? "endpoint" : kind === "files" ? "file" : "page";
   const what =
     kind === "api"
-      ? `An automated test of the REST API ${result.startUrl} called ${result.pages.length} endpoint(s) without logging in`
+      ? `An automated test of the REST API ${result.startUrl} called ${result.pages.length} endpoint(s)`
       : kind === "files"
         ? `An automated offline test checked ${result.startUrl} (source code or a mobile app)`
         : `An automated scan of ${result.startUrl} tested ${result.pages.length} page(s)`;

@@ -6,6 +6,7 @@ import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../
 import { listen } from "../agents/web/signals.js";
 import type { AgentStat, Finding, PageResult, ScanOptions, ScanResult } from "../types.js";
 import { finding } from "./finding.js";
+import { LoginError, signIn, type SignedIn } from "./login.js";
 import { isCrawlable, normaliseUrl } from "./urls.js";
 import { scoreFindings } from "./score.js";
 
@@ -227,14 +228,42 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const linkSources = new Map<string, string>();
   const pages: PageResult[] = [];
   const findings: Finding[] = [];
-  const site: SiteState = { seo: new Map() };
+  const notes: string[] = [];
+  const site: SiteState = { seo: new Map(), loggedIn: Boolean(opts.login) };
+  let signedIn: SignedIn | undefined;
+  let signOuts = 0;
+  const loginOrigin = opts.login?.loginUrl ? new URL(opts.login.loginUrl).origin : "";
+  const isLoginPage = (url: string) => {
+    const u = new URL(url);
+    return Boolean(signedIn) && u.origin === loginOrigin && u.pathname === signedIn!.loginPath;
+  };
 
   try {
+    if (opts.login) {
+      signedIn = await signIn(context, opts.login, log);
+      notes.push(`Signed in as ${opts.login.username} at ${opts.login.loginUrl} before testing, so the pages behind the login were tested too.`);
+      notes.push("While signed in, links that look like actions (log out, delete, cancel, archive and similar) were not opened, to keep the account and its data unchanged.");
+    }
     while (queue.length && pages.length < maxPages) {
       const url = queue.shift()!;
       log(`Testing page ${pages.length + 1}: ${url}`);
       const isFirst = pages.length === 0;
       const r = await scanPage(context, url, pages.length, opts, isFirst, runner, site);
+      if (signedIn && r.result.redirectedFrom && isLoginPage(r.result.url) && !isLoginPage(url)) {
+        // The site sent the agent back to its sign-in page: the session ended. Sign in again and retry.
+        signOuts++;
+        if (isFirst && signOuts > 1) {
+          throw new LoginError(
+            `Signed in, but ${url} still sends the agent back to the sign-in page. Check the start address belongs to the same site as the sign-in page.`,
+          );
+        }
+        if (signOuts <= 3) {
+          log("The site signed the agent out; signing in again");
+          signedIn = await signIn(context, opts.login!, log);
+          queue.unshift(url);
+          continue;
+        }
+      }
       if (isFirst && r.result.redirectedFrom) {
         // Follow the site to where it really lives, e.g. http://example.com -> https://www.example.com.
         origin = new URL(r.result.url).origin;
@@ -259,7 +288,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
         }
         if (!/^https?:/.test(link)) continue;
         if (!linkSources.has(link)) linkSources.set(link, r.result.url);
-        if (isCrawlable(link, origin) && !seen.has(link)) {
+        if (isCrawlable(link, origin, site.loggedIn) && !seen.has(link)) {
           seen.add(link);
           queue.push(link);
         }
@@ -287,6 +316,9 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     await browser.close();
   }
 
+  if (signOuts) {
+    notes.push(`The site signed the agent out ${signOuts === 1 ? "once" : `${signOuts} times`} during the test, so it signed in again.`);
+  }
   dropDuplicates(findings);
   const { scores, overallScore } = scoreFindings(findings, pages.length);
   log(`Done: ${pages.length} pages, ${findings.length} findings`);
@@ -299,5 +331,6 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     scores,
     overallScore,
     agentStats: [...runner.stats.values()],
+    ...(notes.length ? { notes } : {}),
   };
 }

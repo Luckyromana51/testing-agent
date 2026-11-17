@@ -9,7 +9,11 @@ export interface DemoApi {
   base: string;
   /** Requests that tried to change data (must stay 0: the engine only reads). */
   writes: () => number;
+  /** Requests that carried the demo token, in the Authorization header or the api_key parameter. */
+  withToken: () => number;
 }
+
+export const DEMO_TOKEN = "demo-token-123";
 
 function spec(base: string) {
   return {
@@ -80,6 +84,7 @@ function spec(base: string) {
 
 export function startDemoApi(port = 4200): Promise<DemoApi> {
   let writes = 0;
+  let tokens = 0;
   const base = `http://localhost:${port}/v1`;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
@@ -93,6 +98,7 @@ export function startDemoApi(port = 4200): Promise<DemoApi> {
     const json = (status: number, body: unknown) => {
       res.writeHead(status, { ...headers, "content-type": "application/json" }).end(JSON.stringify(body));
     };
+    if (req.headers.authorization === `Bearer ${DEMO_TOKEN}` || url.searchParams.get("api_key") === DEMO_TOKEN) tokens++;
     if (req.method !== "GET") {
       writes++;
       return json(405, { error: "no writes in the demo" });
@@ -140,7 +146,7 @@ export function startDemoApi(port = 4200): Promise<DemoApi> {
     // /legacy and anything else: gone.
     return json(404, { error: "Not found" });
   });
-  return new Promise((resolve) => server.listen(port, () => resolve({ server, base, writes: () => writes })));
+  return new Promise((resolve) => server.listen(port, () => resolve({ server, base, writes: () => writes, withToken: () => tokens })));
 }
 
 if (process.argv[1]?.endsWith("demo-api.ts")) {

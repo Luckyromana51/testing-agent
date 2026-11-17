@@ -15,14 +15,27 @@ export function normaliseUrl(raw: string): string {
   return u.toString();
 }
 
-export function isCrawlable(link: string, origin: string): boolean {
+/**
+ * Signed in, a plain link can still change data or the session (cancel an order, switch account,
+ * mark everything read), so the crawler also stays away from links that look like actions.
+ */
+export const UNSAFE_LOGGED_IN =
+  /\/(cancel|deactivate|disable|enable|archive|unarchive|approve|reject|revoke|reset|clear|empty|purge|mark[-_]?(as[-_]?)?(read|unread|all|done)|toggle|send|resend|impersonate|switch[-_]?\w*|leave|accept|decline|confirm|verify|install|uninstall|sync|restore|duplicate|clone|copy)(\/|\?|$)|[?&](action|do|op|task|cmd|delete|remove|toggle)=/i;
+
+export function isUnsafeLink(link: string, loggedIn = false): boolean {
+  const u = new URL(link);
+  const where = u.pathname + u.search;
+  return UNSAFE_LINK.test(where) || (loggedIn && UNSAFE_LOGGED_IN.test(where));
+}
+
+export function isCrawlable(link: string, origin: string, loggedIn = false): boolean {
   try {
     const u = new URL(link);
     return (
       (u.protocol === "http:" || u.protocol === "https:") &&
       u.origin === origin &&
       !SKIP_EXT.test(u.pathname) &&
-      !UNSAFE_LINK.test(u.pathname + u.search)
+      !isUnsafeLink(link, loggedIn)
     );
   } catch {
     return false;

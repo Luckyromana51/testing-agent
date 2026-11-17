@@ -1782,3 +1782,42 @@ a.brand {
   font-size: 14px;
   line-height: 1.6;
 }
+
+/* Logins */
+.login-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.login-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.login-card {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.login-actions {
+  display: flex;
+  gap: 8px;
+}
+.error-text {
+  color: var(--bad);
+}

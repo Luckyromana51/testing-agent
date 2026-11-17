@@ -180,9 +180,9 @@ export const apiAuthAgent: ApiAgent = {
   name: "Login protection",
   description: "Calls endpoints that need a login without one, to find data anyone can read.",
   category: "security",
-  run({ calls, parsed, specUrl }) {
+  run({ anonymous, parsed, specUrl }) {
     const out: Finding[] = [];
-    for (const c of calls) {
+    for (const c of anonymous) {
       if (!c.op.secured || !ok(c)) continue;
       const add = (rule: string, severity: Finding["severity"], title: string, detail: string, category: Finding["category"] = "security") =>
         out.push(finding({ category, rule, severity, title, detail, pageUrl: c.op.url, evidence: `HTTP ${c.status} without credentials` }));
@@ -259,7 +259,7 @@ export const apiExposureAgent: ApiAgent = {
   name: "Data exposure",
   description: "Looks inside answers for passwords, tokens and lists of personal e-mail addresses.",
   category: "security",
-  run({ calls }) {
+  run({ calls, anonymous }) {
     const out: Finding[] = [];
     for (const c of calls) {
       if (!ok(c) || c.json === undefined) continue;
@@ -277,6 +277,11 @@ export const apiExposureAgent: ApiAgent = {
           }),
         );
       }
+    }
+    // Personal data only counts as exposed when it came back to a request with no login.
+    for (const c of anonymous) {
+      if (!ok(c) || c.json === undefined) continue;
+      const found = inspect(c.json);
       if (found.emails.size >= 3) {
         out.push(
           finding({
