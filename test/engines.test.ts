@@ -20,6 +20,8 @@ import { startDemoApi, type DemoApi } from "./fixtures/demo-api.js";
 import { buildDemoApk, elfWithAlign, encodeAxml, FAKE_AWS_KEY } from "./fixtures/demo-apk.js";
 
 process.env.ALLOW_PRIVATE_TARGETS = "1";
+// The outside tools have their own tests (tools.test.ts); here tests run only the platform's checks.
+process.env.DEFAULT_TOOLS = "none";
 const rules = (r: ScanResult) => new Set(r.findings.map((f) => f.rule));
 
 describe("OpenAPI reader", () => {

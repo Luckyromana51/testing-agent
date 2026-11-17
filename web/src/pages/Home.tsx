@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import type { ProductType, Schedule } from "../../../src/types.ts";
 import { api, type Meta, type TargetFields, type Upload } from "../api.ts";
-import { CATEGORY_LABEL, go } from "../lib.ts";
+import { go } from "../lib.ts";
 import { Icon } from "../ui.tsx";
 import { LOGIN_QUESTION, LoginFields, loginKind, type LoginDraft } from "./LoginFields.tsx";
+import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 
 /** First screen: what kind of product do you want to test? */
 export function Home({ meta }: { meta: Meta }) {
@@ -114,6 +115,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
   const [login, setLogin] = useState<LoginDraft>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tools, setTools] = useState<ToolDraft>(() => toolDraft(meta, type));
   const isWeb = WEB_TYPES.includes(type);
   const agents = useMemo(
     () => meta.agents.filter((a) => a.products.includes(type) && a.enabled && (checkLinks || a.id !== "web.links")),
@@ -148,7 +150,14 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
     setBusy(true);
     try {
       const kind = loginKind(type);
-      const { run } = await api.createProject({ name, type, schedule, ...fields, ...(withLogin && kind ? { login: { ...login, kind } } : {}) });
+      const { run } = await api.createProject({
+        name,
+        type,
+        schedule,
+        tools: toolChoices(meta, tools),
+        ...fields,
+        ...(withLogin && kind ? { login: { ...login, kind } } : {}),
+      });
       go(`#/run/${run.id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -292,24 +301,21 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
             {withLogin && <LoginFields kind={loginKind(type)!} value={login} onChange={setLogin} />}
           </div>
         )}
+        <div className="form-field">
+          <span>What runs in this test</span>
+          <ToolTabs meta={meta} type={type} agents={agents} draft={tools} onChange={setTools} />
+        </div>
         <div className="form-actions">
           <button className="btn primary" disabled={busy || !ready}>
-            {busy ? "Starting…" : `Start testing with ${agents.length} agents`}
+            {busy ? "Starting…" : startLabel(agents.length, toolChoices(meta, tools).length)}
           </button>
           {error && <div className="error">{error}</div>}
         </div>
       </form>
-
-      <h2 className="section-title">Agents on this test</h2>
-      <div className="agent-chips">
-        {agents.map((a) => (
-          <div className="agent-chip" key={a.id} title={a.description}>
-            <span className={`cat-dot cat-${a.category}`} />
-            {a.name}
-            <span className="muted"> · {CATEGORY_LABEL[a.category]}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
+}
+
+function startLabel(agents: number, tools: number): string {
+  return `Start testing with ${agents} agents${tools ? ` and ${tools} tool${tools === 1 ? "" : "s"}` : ""}`;
 }

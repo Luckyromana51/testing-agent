@@ -7,10 +7,11 @@ This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8Mpmf
 ## The dashboard
 
 - **New test**: pick the product type first, then enter its details: a web address; an OpenAPI file address or upload for an API; a Git repository or a zip for source code; an APK upload for an Android app. iOS shows as "Coming soon".
-- **Report**: score per category, then the major issues (critical and high) as cards with a fix suggestion and ready-to-paste code for Apache/LiteSpeed (Hostinger), Nginx, WordPress or PHP. Everything else is in a filterable list. The Agents tab shows what each agent found and how long it took.
+- **Report**: score per category, then the major issues (critical and high) as cards with a fix suggestion and ready-to-paste code for Apache/LiteSpeed (Hostinger), Nginx, WordPress or PHP. Everything else is in a filterable list. The Agents tab shows what each agent found and how long it took; the Tools tab shows each outside tool's scores, findings and its own report to open.
 - **Projects**: each site, API, codebase or app you test, with its score trend, open issues, test history and an automatic re-test schedule (daily or weekly). For an app, upload the next build on the project page and press Re-test to see what was fixed and what came back.
 - **Issues**: a board (Open, In progress, Fixed, Verified) across projects. Keys look like `GLV-12`. Mark an issue fixed, press Re-test, and the next run either verifies it or moves it back to Open as "Came back". Assign issues and add notes; everything is kept in the history.
 - **Logins**: tick "Sign in first" (websites and apps), "The API needs a key or token" or "The repository is private" on the new-test form, or use the Login card on the project page. See [Logged-in testing](#logged-in-testing-and-the-login-vault).
+- **Tool tabs**: after you pick the product type, the new-test page shows a row of tabs: **GLV checks** (the platform's own agents) first, then one tab per outside tool that fits that type (Lighthouse, W3C HTML checker, OWASP ZAP, Nuclei, testssl.sh). Each tab says what the tool checks, whether it is safe, how long it takes, and has a switch and options. The project page has the same tabs to change the tools for later tests. See [Outside tools](#outside-tools-tool-tabs).
 - **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count and the Claude summary, and see the login vault's status.
 
 With login on, the first time the dashboard opens it asks you to create the owner account. Do that straight after the first start, before anyone else can reach the server. While GLV is still building the system, Docker starts with login off (see [Login switch](#login-switch-auth_disabled)).
@@ -96,6 +97,31 @@ The APK is unpacked and read on the server; it is never installed or run.
 | Firebase database | A Realtime Database that anyone can read |
 | Native libraries | Missing 64-bit code, libraries not ready for 16 KB memory pages |
 
+## Outside tools (tool tabs)
+
+Well-known testing tools run in the same test as the platform's agents. Their findings join the same report, score and Issues board, so a test with five tools still gives one report. The comparison of about 40 tools, and the plan for the next ones, is in [Testing tools for the GLV platform](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD).
+
+| Tab | For | What it adds | Signed in |
+| --- | --- | --- | --- |
+| Lighthouse (Google) | Website, store, web app, SaaS, CRM | The Performance, Accessibility, Best practices and SEO scores clients see in PageSpeed Insights; Core Web Vitals on a slow phone or desktop; what slows the page most, with the time each fix saves | Yes |
+| W3C HTML checker | Website, store, web app, SaaS, CRM | HTML that breaks the standard (elements in the wrong place, duplicate ids, bad attributes), on up to 20 pages | Yes |
+| OWASP ZAP (passive) | Web types and API | Over 60 passive security rules: headers, cookies, information leaks, unsafe forms | Yes |
+| Nuclei | Web types and API | Thousands of community checks: known CVEs, exposed files and panels, wrong server and DNS settings | No |
+| TLS check (testssl.sh) | Web types and API | TLS versions, weak ciphers, the certificate, and known TLS attacks, with a grade | No |
+
+How they are kept safe and accurate:
+
+- **Safe tools only for now.** ZAP only looks at the pages the test already opened (GET requests): no spider, no form posts, no active scan. Nuclei leaves out every check tagged as an attack, flood, password guess or call to an outside service, and every check that sends POST, PUT, PATCH or DELETE. A test in `tools.test.ts` checks that nothing but GET reaches the site. Tools that attack or load a site come later, behind a permission step.
+- **One problem is shown once.** When a tool finds what a platform check already found (a missing header, a slow LCP, the public .env file), the tool's copy is folded into the platform's finding ("Also found by OWASP ZAP") instead of counting twice.
+- **Never counted as passed.** A tool that is switched on but cannot run (not installed, timed out, its checks not downloaded) makes the test "incomplete" and says why, and its issues stay open until it runs again.
+- **Logins stay hidden.** With a saved web login, Lighthouse, the HTML checker and ZAP test the signed-in pages with the same session. The session cookie is passed in a file, not on the command line, and is replaced with `[hidden]` in every finding and in each tool's own report (Lighthouse copies request headers into its report). Each tool's HTML report opens in a browser sandbox, so it cannot read the dashboard's data.
+- **Speed findings settle over two runs.** Lighthouse's speed findings follow the same two-run rule as the platform's own (below).
+- **Time limits.** Each tool runs as its own process group with a time limit, and Cancel test stops it at once.
+
+Tests started without a tool choice (the API, a quick test, projects made before the tabs existed) run every safe tool that is installed on the server. Set `DEFAULT_TOOLS=none` to run only the platform's own checks unless tools are chosen.
+
+**Installing the tools.** The Docker image includes Lighthouse, Java for the W3C HTML checker, testssl.sh and Nuclei (built from source at a fixed version, with its community checks downloaded when the image is built), and `docker compose` starts OWASP ZAP 2.17.0 in its own container that only the app can reach. Without Docker, `npm install` brings Lighthouse and the HTML checker (it needs Java); install testssl.sh and Nuclei yourself, run ZAP in daemon mode and set `ZAP_URL` and `ZAP_API_KEY`. The tabs show any tool that is missing as "Not available on this server", with the reason. On a server, set your own random `ZAP_API_KEY` in `.env`.
+
 ## Logged-in testing and the login vault
 
 A project can keep one login, used for every test of that project:
@@ -143,7 +169,7 @@ Each category gets a score out of 100. Any critical issue caps the overall score
 
 ## Quick start
 
-Needs Node 22.13 or newer.
+Needs Node 22.19 or newer (Lighthouse needs it).
 
 ```bash
 npm install
@@ -178,7 +204,7 @@ cp .env.example .env    # add ANTHROPIC_API_KEY
 docker compose up -d --build
 ```
 
-The dashboard runs on port 4000. Scan results and screenshots are kept in the `agent-data` volume. `docker compose stop` (or Ctrl-C when it runs in the foreground) cancels the running tests, closes their browsers and exits within a few seconds; cancelled tests say so in their report. On a server, turn login on first (below), then put it behind your usual reverse proxy (Nginx or Caddy) with HTTPS and set `TRUST_PROXY=1`.
+The dashboard runs on port 4000, with OWASP ZAP in a second container for the ZAP tool tab. The first build takes longer than before (it builds Nuclei and downloads its checks). Scan results and screenshots are kept in the `agent-data` volume. `docker compose stop` (or Ctrl-C when it runs in the foreground) cancels the running tests, closes their browsers and exits within a few seconds; cancelled tests say so in their report. On a server, turn login on first (below), then put it behind your usual reverse proxy (Nginx or Caddy) with HTTPS and set `TRUST_PROXY=1`.
 
 ### Login switch (AUTH_DISABLED)
 
@@ -215,12 +241,13 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET` | `/api/auth/state` | Whether the owner account exists, and who is signed in |
 | `POST` | `/api/auth/setup` | Create the owner account (first start only) |
 | `POST` | `/api/auth/login`, `/api/auth/logout` | Sign in and out |
-| `GET` | `/api/meta` | Product types and agents, with on/off state |
-| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android: `file`. Optional `login`: `{ "loginUrl", "username", "password" }` for web, `{ "authType": "bearer" \| "header" \| "query" \| "basic", "token", "paramName", "username", "password" }` for an API, `{ "token", "username" }` for code. Answers show only whether a secret is saved |
+| `GET` | `/api/meta` | Product types, agents with on/off state, and the outside tools with whether each is installed on this server |
+| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android: `file`. Optional `login`: `{ "loginUrl", "username", "password" }` for web, `{ "authType": "bearer" \| "header" \| "query" \| "basic", "token", "paramName", "username", "password" }` for an API, `{ "token", "username" }` for code. Optional `tools`: `[{ "id": "lighthouse", "options": { "device": "desktop", "pages": "3" } }, { "id": "zap" }]` (left out: every installed safe tool). Answers show only whether a secret is saved |
 | `POST` | `/api/uploads` | Upload an APK, a zip of code or an OpenAPI file as the raw body (`content-type: application/octet-stream`, file name in `x-file-name`, up to 300 MB). Returns the `file` to put in the project |
-| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner; a queued or running test is cancelled first) |
+| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), `tools` (the tool tabs for later tests; `null` goes back to the default), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner; a queued or running test is cancelled first) |
 | `POST` | `/api/projects/:id/runs` | Re-test now |
 | `GET` | `/api/runs/:id` | Full report, with live progress while it runs |
+| `GET` | `/api/runs/:id/artifacts/:file` | Screenshots, and each tool's own report (`tool-*.html` opens in a sandbox, `tool-*.json` is the raw results) |
 | `POST` | `/api/runs/:id/cancel` | Cancel a queued or running test (its browser or clone is stopped; issues are not changed) |
 | `POST` | `/api/runs` | Quick test by address (reuses the website project for that site) |
 | `GET` | `/api/issues?projectId=` | Tracked issues |
@@ -244,6 +271,8 @@ src/
   agents/code/              the source code engine's agents
   agents/mobile/            the Android engine's agents
   engines/                  one runner per engine, plus the OpenAPI, zip and Android binary XML readers
+  tools/index.ts            the outside tools (tool tabs); add new ones here. Runs them and merges their findings
+  tools/*.ts                one file per tool: Lighthouse, W3C HTML checker, ZAP, Nuclei, testssl.sh
   targets.ts                checks what each product type needs (address, repository, upload)
   runner/scan.ts            crawler that runs the agents (Playwright)
   runner/checks/            seo, security, accessibility rules used by agents
@@ -268,6 +297,7 @@ test/                       tests, plus a demo site, demo CRM behind a login, de
 
 ```bash
 npm test          # unit tests + full tests of the demo site, demo API, demo code and demo APK
+                  # tools.test.ts also runs each installed tool on a demo site; tools that are not installed are skipped
 npm run typecheck
 npm run demo-site # start the demo site on :4100 to try the dashboard
 npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
@@ -281,3 +311,4 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
+- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): Schemathesis, Newman, Opengrep, Gitleaks, OSV-Scanner and Trivy next; then MobSF, k6 and ZAP active scans behind a permission step

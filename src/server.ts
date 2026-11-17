@@ -15,6 +15,7 @@ import { ACTIVE, projectKey } from "./issues.js";
 import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
 import { startScheduler } from "./scheduler.js";
+import { TOOLS, cleanChoices, defaultChoices, describeTool, toolStatus } from "./tools/index.js";
 import { openStores, type Settings, type Stores } from "./store.js";
 import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
 import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
@@ -228,7 +229,10 @@ export async function createApp(opts: AppOptions) {
   // ---- Meta -----------------------------------------------------------------------------------
   app.get("/api/meta", async () => {
     const settings = stores.settings.get();
+    const status = await toolStatus();
     return {
+      // Outside tools, with whether each is installed on this server (and why not).
+      tools: TOOLS.map((t) => ({ ...describeTool(t), ready: status[t.id] === null, ...(status[t.id] ? { notReady: status[t.id] } : {}) })),
       products: PRODUCTS,
       agents: ALL_AGENTS.map((a) => ({ ...describeAgent(a), enabled: settings.agents[a.id] ?? !a.defaultOff })),
       ai: aiEnabled(),
@@ -255,17 +259,20 @@ export async function createApp(opts: AppOptions) {
   app.get("/api/projects", async () => stores.projects.list().map(projectSummary));
 
   app.post("/api/projects", async (req, reply) => {
-    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule; login: Partial<Login> | null }>(req);
+    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule; login: Partial<Login> | null; tools: unknown }>(req);
     const type = (b.type ?? "website") as ProductType;
     const info = PRODUCTS.find((p) => p.type === type);
     if (!info) throw new HttpError(400, "Unknown product type.");
     if (!info.available) throw new HttpError(400, `${info.name} testing is coming in a later update.`);
     let target: ProjectTarget;
     let login: Login | undefined;
+    let tools;
     try {
-      const { login: loginInput, ...targetInput } = b;
+      const { login: loginInput, tools: toolsInput, ...targetInput } = b;
       target = buildTarget(type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages);
       if (loginInput) login = buildLogin(type, loginInput);
+      // The tester's choice from the tool tabs; without one, every safe tool installed here.
+      tools = toolsInput === undefined ? await defaultChoices(type) : cleanChoices(type, toolsInput);
     } catch (err) {
       throw new HttpError(400, (err as Error).message);
     }
@@ -279,6 +286,7 @@ export async function createApp(opts: AppOptions) {
       schedule: SCHEDULES.includes(b.schedule as Schedule) ? (b.schedule as Schedule) : "off",
       createdAt: new Date().toISOString(),
       issueSeq: 0,
+      tools,
     };
     stores.projects.save(project);
     if (login) stores.vault.save(project.id, login);
@@ -340,12 +348,14 @@ export async function createApp(opts: AppOptions) {
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, login: loginInput, ...targetInput } = b;
+    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, ...targetInput } = b;
     let login: Login | undefined;
     try {
+      if (toolsInput === null) delete next.tools;
+      else if (toolsInput !== undefined) next.tools = cleanChoices(p.type, toolsInput);
       if (Object.keys(targetInput).length) {
         next.target = buildTarget(p.type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages, p.target);
       }
@@ -456,6 +466,14 @@ export async function createApp(opts: AppOptions) {
   app.get<{ Params: { id: string; file: string } }>("/api/runs/:id/artifacts/:file", async (req, reply) => {
     const { id, file } = req.params;
     if (!/^[\w-]+$/.test(id) || !/^[\w.-]+\.(jpg|png)$/.test(file)) {
+      // Reports written by the outside tools (Lighthouse, ZAP...).
+      if (/^[\w-]+$/.test(id) && /^tool-[\w.-]+\.(html|json)$/.test(file)) {
+        // A tool's HTML report runs in a sandbox: it cannot read the dashboard's login or data.
+        reply.header("Content-Security-Policy", "sandbox allow-scripts allow-popups allow-downloads");
+        reply.header("X-Content-Type-Options", "nosniff");
+        if (file.endsWith(".json")) reply.header("Content-Disposition", `inline; filename="${file}"`);
+        return reply.sendFile(file, queue.artifactsDir(id));
+      }
       return reply.code(400).send({ error: "Bad file name" });
     }
     return reply.sendFile(file, queue.artifactsDir(id));

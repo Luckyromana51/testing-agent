@@ -1,5 +1,6 @@
 import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
+import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
 import type {
   Issue,
   IssueStatus,
@@ -66,8 +67,12 @@ export interface Upload {
   size: number;
 }
 
+/** An outside tool, with whether it is installed on this server. */
+export type MetaTool = ToolInfo & { ready: boolean; notReady?: string };
+
 export interface Meta {
   products: ProductInfo[];
+  tools: MetaTool[];
   agents: (AgentInfo & { enabled: boolean })[];
   ai: boolean;
   aiSummary: boolean;
@@ -131,9 +136,9 @@ export const api = {
 
   projects: () => call<ProjectSummary[]>("GET", "/api/projects"),
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
-  createProject: (b: { name: string; type: ProductType; schedule: Schedule } & TargetFields) =>
+  createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[] } & TargetFields) =>
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
-  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule } & TargetFields>) =>
+  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[] } & TargetFields>) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
   /** Sends a file as the raw request body; returns the stored name to put in the project. */
   upload: async (file: File, onProgress?: (pct: number) => void) =>

@@ -1,0 +1,14 @@
+id: glv-test-sqli
+info:
+  name: SQL injection probe (GLV test template)
+  author: glv
+  severity: critical
+  tags: sqli,glv-test
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?id=1'"
+    matchers:
+      - type: status
+        status:
+          - 200

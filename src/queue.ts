@@ -5,6 +5,8 @@ import { agentsFor } from "./agents/registry.js";
 import { aiEnabled, summariseWithClaude } from "./ai/triage.js";
 import { syncIssues } from "./issues.js";
 import { runEngine } from "./engines/index.js";
+import { defaultChoices, runTools, toolById } from "./tools/index.js";
+import { secretsOf } from "./vault.js";
 import type { Stores } from "./store.js";
 import type { Project, Run } from "./types.js";
 
@@ -157,6 +159,7 @@ export class ScanQueue {
         // Decrypted only for this run, kept in memory, and hidden from the report and the log.
         const login = this.stores.vault.get(project.id);
         if (login) log("Using the saved login (kept encrypted on this server)");
+        let cookie: string | undefined;
         const engine = runEngine({
           product: project.type,
           target: project.target,
@@ -170,6 +173,7 @@ export class ScanQueue {
           onProgress: (m) => {
             if (!signal.aborted) log(m);
           },
+          onSession: (c) => (cookie = c),
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
@@ -180,6 +184,25 @@ export class ScanQueue {
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           }),
         ]);
+        // Then the outside tools the project uses (Lighthouse, ZAP...), merged into the same report.
+        const choices = (project.tools ?? (await defaultChoices(project.type))).filter((c) => toolById(c.id)?.products.includes(project.type));
+        if (choices.length) {
+          update({ tools: choices });
+          const cookieValues = (cookie ?? "").split(/;\s*/).map((p) => p.slice(p.indexOf("=") + 1));
+          result = await runTools(result, {
+            product: project.type,
+            target: project.target,
+            choices,
+            cookie,
+            secrets: [...secretsOf(login, project.target.repoUrl), ...cookieValues],
+            artifactsDir: this.artifactsDir(run.id),
+            workDir,
+            signal,
+            log: (m) => {
+              if (!signal.aborted) log(m);
+            },
+          });
+        }
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }

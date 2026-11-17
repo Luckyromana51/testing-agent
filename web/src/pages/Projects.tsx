@@ -1,9 +1,11 @@
 import { useState } from "react";
+import type { ToolChoice } from "../../../src/tools/types.ts";
 import type { Schedule, User } from "../../../src/types.ts";
-import { api, type Meta, type ProjectSummary } from "../api.ts";
-import { CATEGORY_LABEL, go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts";
+import { api, type Meta, type ProjectDetail, type ProjectSummary } from "../api.ts";
+import { go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts";
 import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
+import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
 const SCHEDULE_LABEL: Record<Schedule, string> = { off: "Manual", daily: "Daily re-test", weekly: "Weekly re-test" };
@@ -246,16 +248,8 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         </table>
       </div>
 
-      <h2 className="section-title">{agents.length} agents test this project</h2>
-      <div className="agent-chips">
-        {agents.map((a) => (
-          <div className="agent-chip" key={a.id} title={a.description}>
-            <span className={`cat-dot cat-${a.category}`} />
-            {a.name}
-            <span className="muted"> · {CATEGORY_LABEL[a.category]}</span>
-          </div>
-        ))}
-      </div>
+      <h2 className="section-title">What runs in each test</h2>
+      <ProjectTools meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
 
       {user.role === "owner" && (
         <div className="danger-zone">
@@ -272,6 +266,47 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             }}
           >
             Delete project
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The tool tabs for a saved project: changes apply from the next test. */
+function ProjectTools({
+  meta,
+  project,
+  agents,
+  onSave,
+}: {
+  meta: Meta;
+  project: ProjectSummary;
+  agents: ProjectDetail["agents"];
+  onSave: (tools: ToolChoice[]) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<ToolDraft>(() => toolDraft(meta, project.type, project.tools));
+  const [busy, setBusy] = useState(false);
+  const before = JSON.stringify(toolChoices(meta, toolDraft(meta, project.type, project.tools)));
+  const changed = JSON.stringify(toolChoices(meta, draft)) !== before;
+  return (
+    <div className="card form">
+      <ToolTabs meta={meta} type={project.type} agents={agents} draft={draft} onChange={setDraft} />
+      {changed && (
+        <div className="form-actions">
+          <button
+            className="btn primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await onSave(toolChoices(meta, draft));
+              setBusy(false);
+            }}
+          >
+            {busy ? "Saving…" : "Save tools for the next tests"}
+          </button>
+          <button className="btn ghost" onClick={() => setDraft(toolDraft(meta, project.type, project.tools))}>
+            Undo
           </button>
         </div>
       )}

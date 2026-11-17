@@ -22,6 +22,8 @@ export interface EngineInput {
   onProgress?: (message: string) => void;
   /** Aborted when the run is cancelled or the server stops. */
   signal?: AbortSignal;
+  /** Web tests signed in: gets the session's Cookie header, for the outside tools. */
+  onSession?: (cookie: string) => void;
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -87,6 +89,7 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         artifactsDir: input.artifactsDir,
         onProgress,
         signal: input.signal,
+        onSession: input.onSession,
       });
   }
 }
