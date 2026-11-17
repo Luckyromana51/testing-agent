@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { Schedule, User } from "../../../src/types.ts";
 import { api, type Meta, type ProjectSummary } from "../api.ts";
-import { CATEGORY_LABEL, go, hostOf, plural, timeAgo, usePoll } from "../lib.ts";
+import { CATEGORY_LABEL, go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts";
+import { FilePicker } from "./Home.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
 const SCHEDULE_LABEL: Record<Schedule, string> = { off: "Manual", daily: "Daily re-test", weekly: "Weekly re-test" };
@@ -46,7 +47,7 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
         <div className="project-card-name">
           <div className="strong">{p.name}</div>
           <div className="muted small">
-            {productName} · {hostOf(p.target.url)}
+            {productName} · {targetLabel(p.target)}
           </div>
         </div>
         <ScoreChip score={p.lastScore} status={p.busy ? "running" : p.lastRun?.status} />
@@ -85,6 +86,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
   if (!data) return <div className="loading">Loading…</div>;
   const { project: p, runs, trend, agents } = data;
   const product = meta.products.find((x) => x.type === p.type);
+  const isWeb = ["website", "ecommerce", "webapp", "saas", "crm"].includes(p.type);
 
   const save = async (patch: Parameters<typeof api.updateProject>[1]) => {
     setActionError("");
@@ -112,9 +114,13 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             {product?.name} · issue key {p.key}
           </div>
           <h1>{p.name}</h1>
-          <a href={p.target.url} target="_blank" rel="noreferrer" className="muted">
-            {p.target.url}
-          </a>
+          {targetHref(p.target) ? (
+            <a href={targetHref(p.target)} target="_blank" rel="noreferrer" className="muted">
+              {targetLabel(p.target)}
+            </a>
+          ) : (
+            <span className="muted">{targetLabel(p.target)}</span>
+          )}
         </div>
         <button
           className="btn primary"
@@ -162,25 +168,39 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
               <option value="weekly">Every week</option>
             </select>
           </label>
-          <label className="inline-field">
-            <span>Pages</span>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={200}
-              defaultValue={p.target.maxPages ?? meta.defaultMaxPages}
-              onBlur={(e) => Number(e.target.value) !== p.target.maxPages && save({ maxPages: Number(e.target.value) })}
-            />
-          </label>
-          <label className="check dark small">
-            <input
-              type="checkbox"
-              checked={p.target.checkLinks !== false}
-              onChange={(e) => save({ checkLinks: e.target.checked })}
-            />{" "}
-            Check every link
-          </label>
+          {isWeb ? (
+            <>
+              <label className="inline-field">
+                <span>Pages</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={200}
+                  defaultValue={p.target.maxPages ?? meta.defaultMaxPages}
+                  onBlur={(e) => Number(e.target.value) !== p.target.maxPages && save({ maxPages: Number(e.target.value) })}
+                />
+              </label>
+              <label className="check dark small">
+                <input
+                  type="checkbox"
+                  checked={p.target.checkLinks !== false}
+                  onChange={(e) => save({ checkLinks: e.target.checked })}
+                />{" "}
+                Check every link
+              </label>
+            </>
+          ) : (
+            p.target.file && (
+              <FilePicker
+                accept={p.type === "android" ? ".apk" : p.type === "code" ? ".zip" : ".json,.yaml,.yml"}
+                label={p.type === "android" ? "New build to test" : "Replace the file"}
+                hint="then press Re-test"
+                value={{ file: p.target.file, fileName: p.target.fileName ?? p.target.file, size: 0 }}
+                onChange={(u) => u && save({ file: u.file, fileName: u.fileName })}
+              />
+            )
+          )}
         </div>
       </div>
 

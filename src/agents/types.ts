@@ -1,7 +1,7 @@
 import type { BrowserContext, Page, Response } from "playwright";
 import type { Category, Finding, PageResult, ProductType } from "../types.js";
 
-/** Which test engine runs an agent. Only "web" exists today; api, code and mobile come next. */
+/** Which test engine runs an agent: the browser, the API caller, the offline code reader, or the app reader. */
 export type Engine = "web" | "api" | "code" | "mobile";
 
 export interface AgentInfo {
@@ -79,3 +79,8 @@ export interface SiteAgent extends AgentInfo {
 }
 
 export type WebAgent = PageAgent | SiteAgent;
+
+/** An agent of the API, code or mobile engine. Each engine passes its own context. */
+export interface EngineAgent<Ctx> extends AgentInfo {
+  run(ctx: Ctx): Promise<Finding[]> | Finding[];
+}

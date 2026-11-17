@@ -1,14 +1,14 @@
 # GLV Testing Agent
 
-An AI testing platform by GLV Infotech Solutions. Pick what you are testing (website, online store, web app, SaaS, CRM), give it the address, and a team of specialist agents opens every page in a real browser, checks it the way a QA engineer would, and writes a report: major issues first, each with a fix you can paste. Every problem becomes a tracked issue (like Jira) that re-tests verify as fixed, or reopen when it comes back.
+An AI testing platform by GLV Infotech Solutions. Pick what you are testing (website, online store, web app, SaaS, CRM, API, source code or Android app), give it the address or upload the file, and a team of specialist agents checks it the way a QA engineer would and writes a report: major issues first, each with a fix you can paste. Every problem becomes a tracked issue (like Jira) that re-tests verify as fixed, or reopen when it comes back.
 
-This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). The browser engine is built; API, source code and Android engines come next.
+This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). Four engines are built: the browser engine (websites and web apps), the API engine, the source code engine and the Android engine. iOS comes later.
 
 ## The dashboard
 
-- **New test**: pick the product type first, then enter its details. API, source code, Android and iOS show as "Next update" until their engines land.
+- **New test**: pick the product type first, then enter its details: a web address; an OpenAPI file address or upload for an API; a Git repository or a zip for source code; an APK upload for an Android app. iOS shows as "Coming soon".
 - **Report**: score per category, then the major issues (critical and high) as cards with a fix suggestion and ready-to-paste code for Apache/LiteSpeed (Hostinger), Nginx, WordPress or PHP. Everything else is in a filterable list. The Agents tab shows what each agent found and how long it took.
-- **Projects**: each site or app you test, with its score trend, open issues, test history and an automatic re-test schedule (daily or weekly).
+- **Projects**: each site, API, codebase or app you test, with its score trend, open issues, test history and an automatic re-test schedule (daily or weekly). For an app, upload the next build on the project page and press Re-test to see what was fixed and what came back.
 - **Issues**: a board (Open, In progress, Fixed, Verified) across projects. Keys look like `GLV-12`. Mark an issue fixed, press Re-test, and the next run either verifies it or moves it back to Open as "Came back". Assign issues and add notes; everything is kept in the history.
 - **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count and the Claude summary.
 
@@ -39,6 +39,47 @@ With login on, the first time the dashboard opens it asks you to create the owne
 | Phone layout | Sideways scrolling, tap targets (WCAG 2.2), text too small |
 
 The crawler and the link checker never open log-out or delete links.
+
+### API engine (OpenAPI 3 or Swagger 2)
+
+Only read-only GET requests are sent, without credentials. POST, PUT, PATCH and DELETE operations are counted but never called. Up to 60 endpoints per test, 3 at a time, with a retry on rate limits and gateway errors.
+
+| Agent | What it checks |
+| --- | --- |
+| Endpoint health | Server errors, no answer, documented endpoints that are missing (404), slow endpoints (the faster of two calls) |
+| Response format | Broken JSON, web pages where JSON should be, wrong content type, answers that do not match the documented schema, undocumented status codes |
+| Login protection | Endpoints marked as needing a login that answer without one; login errors sent as 200; no login described at all |
+| Data exposure | Password hashes, tokens and keys in answers; lists of personal e-mail addresses readable without a login |
+| Error handling | Stack traces, SQL errors and debug pages in answers, including for a missing address and a wrong-type id |
+| HTTPS, CORS and headers | Plain HTTP, CORS that lets any website call the API as the logged-in user, HSTS, nosniff, version disclosure |
+| API file quality | No servers, duplicate operationIds, operations without documented answers |
+
+### Source code engine (offline)
+
+Give it a public Git repository (https) or upload a zip. The code is read on the server and deleted after the test; installed packages and build output are skipped.
+
+| Agent | What it checks |
+| --- | --- |
+| Leaked secrets | AWS, GitHub, Stripe, Slack, SendGrid, Twilio, Google, Anthropic and OpenAI keys, private keys, database addresses with passwords, hard-coded passwords, committed .env files, database dumps, key stores. Values are masked in the report |
+| Vulnerable packages | Reads npm, Yarn, pnpm, Composer, pip, Pipfile, Poetry, Bundler and Go lockfiles and looks up every package in the free [OSV database](https://osv.dev), with the version that fixes it |
+| Risky code | SQL and command injection, eval, file inclusion, unsafe unserialize, XSS, MD5/SHA-1 passwords, turned-off HTTPS checks, debug mode, merge conflict markers (PHP, JavaScript/TypeScript, Python, Java, Kotlin) |
+| Project health | Broken JSON, no README, no .gitignore, committed node_modules, no tests, leftover debug output |
+
+Risky-code rules read one line at a time, so treat them as leads to confirm. Text that only mentions a risky call (a string, a regex or a comment) is not counted. Mark a reviewed line safe with a `glvtest-ignore` comment on it or on the line above.
+
+### Android engine (APK)
+
+The APK is unpacked and read on the server; it is never installed or run.
+
+| Agent | What it checks |
+| --- | --- |
+| App settings | Debug builds, test-only builds, USB backups, plain HTTP (manifest and network security config), trusting user-installed certificates, target API below what Google Play accepts, very old minimum API |
+| Permissions | SMS and call log permissions Play restricts, permissions that need a Play declaration, sensitive permissions to double-check |
+| Exposed components | Content providers, services, receivers and inner screens any other app can open (the app's own classes only) |
+| Signing | Unsigned, signed with the Android debug key, v1-only signatures (Janus) |
+| Hard-coded secrets and servers | Keys in the code, React Native bundle and Flutter library; the app's own servers called over plain HTTP |
+| Firebase database | A Realtime Database that anyone can read |
+| Native libraries | Missing 64-bit code, libraries not ready for 16 KB memory pages |
 
 ## What the categories cover
 
@@ -84,8 +125,11 @@ Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Each finished scan th
 
 ```bash
 npm run scan -- scan https://example.com --pages 20 --product ecommerce
+npm run scan -- api https://api.example.com/openapi.json
+npm run scan -- code .                      # the folder you are in (or a repo URL or a zip)
+npm run scan -- apk app-release.apk
 # or after npm run build:
-node dist/cli.js scan https://example.com --fail-on high
+node dist/cli.js code . --fail-on high
 ```
 
 `--fail-on high` exits with code 1 if anything high or critical is found, so it can block a deploy in GitHub Actions or GitLab CI. The full report is written to `glvtest-report/report.json` with screenshots alongside it.
@@ -134,8 +178,9 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `POST` | `/api/auth/setup` | Create the owner account (first start only) |
 | `POST` | `/api/auth/login`, `/api/auth/logout` | Sign in and out |
 | `GET` | `/api/meta` | Product types and agents, with on/off state |
-| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }` |
-| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule; delete (owner) |
+| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android: `file` |
+| `POST` | `/api/uploads` | Upload an APK, a zip of code or an OpenAPI file as the raw body (`content-type: application/octet-stream`, file name in `x-file-name`, up to 300 MB). Returns the `file` to put in the project |
+| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, or the uploaded file (a new app build); delete (owner) |
 | `POST` | `/api/projects/:id/runs` | Re-test now |
 | `GET` | `/api/runs/:id` | Full report, with live progress while it runs |
 | `POST` | `/api/runs` | Quick test by address (reuses the website project for that site) |
@@ -146,7 +191,9 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET`, `POST`, `DELETE` | `/api/owner/users` | Team accounts |
 | `GET` | `/api/health` | Health check |
 
-Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked by default so the server cannot be used to probe your internal network. Set `ALLOW_PRIVATE_TARGETS=1` to test internal staging sites. The check works on the address as typed; a public hostname that resolves to a private IP is not yet blocked.
+Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked by default so the server cannot be used to probe your internal network. This also applies to the server address inside an uploaded API file. Set `ALLOW_PRIVATE_TARGETS=1` to test internal staging sites. The check works on the address as typed; a public hostname that resolves to a private IP is not yet blocked.
+
+Repositories are cloned with this server's own saved Git logins switched off, so a project can never read GLV's private repositories.
 
 ## Project layout
 
@@ -154,6 +201,11 @@ Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked b
 src/
   agents/registry.ts        every specialist agent; add new ones here
   agents/web/               the browser engine's agents
+  agents/api/               the API engine's agents
+  agents/code/              the source code engine's agents
+  agents/mobile/            the Android engine's agents
+  engines/                  one runner per engine, plus the OpenAPI, zip and Android binary XML readers
+  targets.ts                checks what each product type needs (address, repository, upload)
   runner/scan.ts            crawler that runs the agents (Playwright)
   runner/checks/            seo, security, accessibility rules used by agents
   runner/score.ts           category and overall scores
@@ -168,21 +220,23 @@ src/
   server.ts                 Fastify API, serves the dashboard
   cli.ts                    glvtest command line
 web/                        React dashboard (Vite)
-test/                       tests, plus a demo site with deliberate bugs
+test/                       tests, plus a demo site, demo API and demo APK with deliberate bugs
 ```
 
 ## Testing
 
 ```bash
-npm test          # unit tests + a full scan of the bundled demo site
+npm test          # unit tests + full tests of the demo site, demo API, demo code and demo APK
 npm run typecheck
 npm run demo-site # start the demo site on :4100 to try the dashboard
+npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 ```
 
 ## Not built yet (next steps from the plan)
 
-- API engine (OpenAPI), source code engine (secrets, vulnerable packages, risky code), Android APK checks
-- Testing pages behind a login for SaaS and CRM, and Claude exploring flows (sign-up, checkout, forms)
+- Testing pages and APIs behind a login (needs an encrypted credentials vault), and Claude exploring flows (sign-up, checkout, forms)
+- Private Git repositories (needs access tokens in the same vault)
+- iOS app checks (IPA)
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium

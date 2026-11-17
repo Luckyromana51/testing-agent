@@ -1,4 +1,4 @@
-import type { ProductType } from "./types.js";
+import { CATEGORIES, type Category, type ProductType } from "./types.js";
 
 export interface ProductInfo {
   type: ProductType;
@@ -60,24 +60,24 @@ export const PRODUCTS: ProductInfo[] = [
     name: "API",
     description: "REST APIs with an OpenAPI or Swagger file",
     input: "openapi",
-    available: false,
-    tests: ["Every endpoint answers", "Auth required where it should be", "Error leaks", "Slow endpoints", "CORS"],
+    available: true,
+    tests: ["Every endpoint answers", "Answers match the API file", "Login required where it should be", "Data and error leaks", "Slow endpoints", "HTTPS and CORS"],
   },
   {
     type: "code",
     name: "Source code",
-    description: "A Git repository, tested offline",
+    description: "A Git repository or a zip, tested offline",
     input: "repo",
-    available: false,
-    tests: ["Leaked secrets", "Vulnerable packages", "Risky code", "AI fix suggestions"],
+    available: true,
+    tests: ["Leaked passwords and keys", "Packages with known holes", "SQL injection and other risky code", "Broken files and missing tests"],
   },
   {
     type: "android",
     name: "Android app",
     description: "Upload an APK file",
     input: "apk",
-    available: false,
-    tests: ["Permissions", "Insecure settings", "Hard-coded secrets", "Network security"],
+    available: true,
+    tests: ["Debug builds and signing", "Permissions Play restricts", "Plain HTTP and certificates", "Hard-coded keys", "Exposed components", "64-bit and 16 KB pages"],
   },
   {
     type: "ios",
@@ -88,6 +88,13 @@ export const PRODUCTS: ProductInfo[] = [
     tests: ["Permissions", "App Transport Security", "Hard-coded secrets"],
   },
 ];
+
+/** Score categories that apply to each kind of test (an API has no phone layout). */
+export function categoriesFor(type: ProductType): Category[] {
+  if (type === "api") return ["functional", "security", "performance"];
+  if (type === "code" || type === "android" || type === "ios") return ["security", "functional"];
+  return CATEGORIES;
+}
 
 export const productInfo = (type: ProductType): ProductInfo => PRODUCTS.find((p) => p.type === type) ?? PRODUCTS[0];
 

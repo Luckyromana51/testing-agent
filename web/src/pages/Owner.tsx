@@ -99,7 +99,7 @@ function OverviewTab() {
               <li key={p.type}>
                 <span>{p.name}</span>
                 <span className={p.available ? "ok" : "muted"}>
-                  {p.available ? plural(p.projects, "project") : "Next update"}
+                  {p.available ? plural(p.projects, "project") : "Coming soon"}
                 </span>
               </li>
             ))}
@@ -115,12 +115,19 @@ function OverviewTab() {
   );
 }
 
+const ENGINE_LABEL: Record<string, string> = {
+  web: "Websites and web apps (real browser)",
+  api: "APIs (OpenAPI / Swagger)",
+  code: "Source code (offline)",
+  mobile: "Android apps (APK)",
+};
+
 function AgentsTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void }) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const byCategory = useMemo(() => {
-    const m = new Map<Category, Meta["agents"]>();
-    for (const a of meta.agents) m.set(a.category, [...(m.get(a.category) ?? []), a]);
+  const byEngine = useMemo(() => {
+    const m = new Map<string, Meta["agents"]>();
+    for (const a of meta.agents) m.set(a.engine, [...(m.get(a.engine) ?? []), a]);
     return [...m.entries()];
   }, [meta]);
   const on = meta.agents.filter((a) => a.enabled).length;
@@ -142,19 +149,22 @@ function AgentsTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void })
     <>
       <p className="muted">
         {on} of {meta.agents.length} specialist agents are on. Turned-off agents skip every new test; reports already made
-        are not changed. API, code and Android agents arrive with their engines.
+        are not changed.
       </p>
       {error && <div className="error">{error}</div>}
-      {byCategory.map(([cat, agents]) => (
-        <div key={cat} className="agent-group">
+      {byEngine.map(([engine, agents]) => (
+        <div key={engine} className="agent-group">
           <h2 className="section-title">
-            <span className={`cat-dot cat-${cat}`} /> {CATEGORY_LABEL[cat]}
+            {ENGINE_LABEL[engine] ?? engine} <span className="muted">· {plural(agents.length, "agent")}</span>
           </h2>
           <div className="card agent-list">
             {agents.map((a) => (
               <div className="agent-row" key={a.id}>
                 <div className="grow">
-                  <div className="strong">{a.name}</div>
+                  <div className="strong">
+                    <span className={`cat-dot cat-${a.category}`} /> {a.name}{" "}
+                    <span className="muted small">· {CATEGORY_LABEL[a.category]}</span>
+                  </div>
                   <div className="muted small">{a.description}</div>
                   <code className="muted small">{a.id}</code>
                 </div>

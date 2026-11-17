@@ -29,3 +29,27 @@ export function isCrawlable(link: string, origin: string): boolean {
   }
 }
 
+/** Only public http(s) URLs. Blocks localhost and private ranges unless ALLOW_PRIVATE_TARGETS=1. */
+export function validateTarget(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw.includes("://") ? raw : `https://${raw}`);
+  } catch {
+    throw new Error("That does not look like a website address.");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("Only http and https are supported.");
+  const host = u.hostname;
+  const isPrivate =
+    host === "localhost" ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    host === "0.0.0.0" ||
+    host === "[::1]";
+  if (isPrivate && process.env.ALLOW_PRIVATE_TARGETS !== "1") {
+    throw new Error("Private and local addresses are blocked. Set ALLOW_PRIVATE_TARGETS=1 to test them.");
+  }
+  return u.toString();
+}

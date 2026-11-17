@@ -36,6 +36,24 @@ export interface ProjectDetail {
 export type IssueSummary = Omit<Issue, "history"> & { projectName: string; events: number };
 export type IssueDetail = Issue & { projectName?: string };
 
+/** What a tester can enter for a project, depending on the product type. */
+export interface TargetFields {
+  url?: string;
+  specUrl?: string;
+  repoUrl?: string;
+  branch?: string;
+  file?: string;
+  fileName?: string;
+  maxPages?: number;
+  checkLinks?: boolean;
+}
+
+export interface Upload {
+  file: string;
+  fileName: string;
+  size: number;
+}
+
 export interface Meta {
   products: ProductInfo[];
   agents: (AgentInfo & { enabled: boolean })[];
@@ -99,16 +117,27 @@ export const api = {
 
   projects: () => call<ProjectSummary[]>("GET", "/api/projects"),
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
-  createProject: (b: {
-    name: string;
-    type: ProductType;
-    url: string;
-    maxPages: number;
-    schedule: Schedule;
-    checkLinks: boolean;
-  }) => call<{ project: Project; run: Run }>("POST", "/api/projects", b),
-  updateProject: (id: string, b: Partial<{ name: string; url: string; maxPages: number; schedule: Schedule; checkLinks: boolean }>) =>
+  createProject: (b: { name: string; type: ProductType; schedule: Schedule } & TargetFields) =>
+    call<{ project: Project; run: Run }>("POST", "/api/projects", b),
+  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule } & TargetFields>) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
+  /** Sends a file as the raw request body; returns the stored name to put in the project. */
+  upload: async (file: File, onProgress?: (pct: number) => void) =>
+    new Promise<Upload>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/uploads");
+      xhr.setRequestHeader("content-type", "application/octet-stream");
+      xhr.setRequestHeader("x-file-name", encodeURIComponent(file.name));
+      xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(Math.round((e.loaded / e.total) * 100));
+      xhr.onload = () => {
+        const data = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED));
+        if (xhr.status >= 400) reject(new Error(data.error ?? `Upload failed (${xhr.status})`));
+        else resolve(data as Upload);
+      };
+      xhr.onerror = () => reject(new Error("The upload was interrupted. Check the connection and try again."));
+      xhr.send(file);
+    }),
   deleteProject: (id: string) => call("DELETE", `/api/projects/${id}`),
   retest: (id: string) => call<Run>("POST", `/api/projects/${id}/runs`, { trigger: "retest" }),
 
