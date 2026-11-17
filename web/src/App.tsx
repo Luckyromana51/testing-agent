@@ -1,537 +1,130 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Category, Finding, Run, Severity } from "../../src/types.ts";
-import { groupFindings } from "../../src/group.ts";
-import { api, type RunSummary } from "./api.ts";
-
-const CATEGORY_LABEL: Record<Category, string> = {
-  functional: "Functional",
-  accessibility: "Accessibility",
-  seo: "SEO",
-  security: "Security",
-  performance: "Performance",
-  mobile: "Mobile",
-};
-const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
-
-function scoreTone(score?: number) {
-  if (score === undefined) return "muted";
-  if (score >= 90) return "good";
-  if (score >= 60) return "warn";
-  return "bad";
-}
-
-function timeAgo(iso: string) {
-  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-function useHashRoute(): [string | null, (id: string | null) => void] {
-  const read = () => window.location.hash.replace(/^#\/?run\//, "") || null;
-  const [id, setId] = useState<string | null>(read);
-  useEffect(() => {
-    const on = () => setId(read());
-    window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
-  }, []);
-  return [id, (next) => (window.location.hash = next ? `#/run/${next}` : "")];
-}
+import { useCallback, useEffect, useState } from "react";
+import type { ProductType, User } from "../../src/types.ts";
+import { api, UNAUTHORIZED, type Meta } from "./api.ts";
+import { go, hostOf, useRoute, usePoll } from "./lib.ts";
+import { AuthScreen } from "./pages/Auth.tsx";
+import { Home, NewProject } from "./pages/Home.tsx";
+import { Issues } from "./pages/Issues.tsx";
+import { Owner } from "./pages/Owner.tsx";
+import { Projects, ProjectView } from "./pages/Projects.tsx";
+import { Report } from "./pages/Report.tsx";
+import { Icon, ScoreChip } from "./ui.tsx";
 
 export function App() {
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [aiOn, setAiOn] = useState<boolean | null>(null);
-  const [selected, select] = useHashRoute();
-
-  const refresh = useCallback(
-    () =>
-      api
-        .list()
-        .then(setRuns)
-        .catch(() => {}),
-    [],
-  );
-  useEffect(() => {
-    refresh();
+  const [auth, setAuth] = useState<{ setupNeeded: boolean; user: User | null } | null>(null);
+  const checkAuth = useCallback(() => {
     api
-      .health()
-      .then((h) => setAiOn(h.ai))
-      .catch(() => setAiOn(false));
-    const t = setInterval(refresh, 3000);
-    return () => clearInterval(t);
-  }, [refresh]);
+      .authState()
+      .then(setAuth)
+      .catch(() => setAuth({ setupNeeded: false, user: null }));
+  }, []);
+  useEffect(() => {
+    checkAuth();
+    window.addEventListener(UNAUTHORIZED, checkAuth);
+    return () => window.removeEventListener(UNAUTHORIZED, checkAuth);
+  }, [checkAuth]);
+
+  if (!auth) return <div className="loading">Loading…</div>;
+  if (!auth.user) {
+    return <AuthScreen setupNeeded={auth.setupNeeded} onSignedIn={(user) => setAuth({ setupNeeded: false, user })} />;
+  }
+  return <Shell user={auth.user} onSignedOut={() => setAuth({ setupNeeded: false, user: null })} />;
+}
+
+function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
+  const route = useRoute();
+  const [meta, setMeta] = useState<Meta | null>(null);
+  const reloadMeta = useCallback(() => {
+    api.meta().then(setMeta).catch(() => {});
+  }, []);
+  useEffect(reloadMeta, [reloadMeta]);
+  const projects = usePoll(() => api.projects(), [], 5000).data;
+
+  const nav: [string, string, Parameters<typeof Icon>[0]["name"], boolean][] = [
+    ["#/", "New test", "new", route.name === "home" || route.name === "new"],
+    ["#/projects", "Projects", "projects", route.name === "projects" || route.name === "project"],
+    ["#/issues", "Issues", "issues", route.name === "issues"],
+  ];
+  if (user.role === "owner") nav.push(["#/owner", "Owner panel", "owner", route.name === "owner"]);
+
+  let page = <div className="loading">Loading…</div>;
+  if (meta) {
+    if (route.name === "home") page = <Home meta={meta} />;
+    else if (route.name === "new") page = <NewProject meta={meta} type={route.id as ProductType} key={route.id} />;
+    else if (route.name === "projects") page = <Projects meta={meta} />;
+    else if (route.name === "project" && route.id) page = <ProjectView id={route.id} meta={meta} user={user} key={route.id} />;
+    else if (route.name === "run" && route.id) page = <Report id={route.id} key={route.id} />;
+    else if (route.name === "issues") page = <Issues projectId={route.query.get("project") ?? undefined} openId={route.id} />;
+    else if (route.name === "owner") page = <Owner tab={route.id} meta={meta} reloadMeta={reloadMeta} user={user} />;
+  }
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
+        <a className="brand" href="#/">
           <div className="logo">GLV</div>
           <div>
             <div className="brand-name">Testing Agent</div>
             <div className="brand-sub">by GLV Infotech Solutions</div>
           </div>
-        </div>
-        <NewScan
-          onCreated={(run) => {
-            refresh();
-            select(run.id);
-          }}
-        />
-        <div className="section-label">Recent scans</div>
-        <ul className="run-list">
-          {runs.length === 0 && <li className="empty">No scans yet. Start one above.</li>}
-          {runs.map((r) => (
-            <li key={r.id}>
-              <button
-                className={`run-item ${selected === r.id ? "active" : ""}`}
-                onClick={() => select(r.id)}
-              >
-                <span className={`score-chip ${scoreTone(r.overallScore)}`}>
-                  {r.status === "done" ? r.overallScore : r.status === "failed" ? "!" : "…"}
-                </span>
-                <span className="run-meta">
-                  <span className="run-url">{r.url.replace(/^https?:\/\//, "")}</span>
-                  <span className="run-sub">
-                    {r.status === "done"
-                      ? `${r.pageCount} pages · ${r.findingCount} issues · ${timeAgo(r.createdAt)}`
-                      : r.status === "failed"
-                        ? `Failed · ${timeAgo(r.createdAt)}`
-                        : (r.lastProgress ?? "Queued")}
-                  </span>
-                </span>
-              </button>
-            </li>
+        </a>
+        <nav className="nav">
+          {nav.map(([href, label, icon, active]) => (
+            <a key={href} href={href} className={`nav-item ${active ? "active" : ""}`}>
+              <Icon name={icon} size={18} />
+              {label}
+            </a>
           ))}
-        </ul>
-        <div className={`ai-status ${aiOn ? "on" : ""}`}>
-          {aiOn === null ? "" : aiOn ? "Claude summary is on" : "Claude summary is off (no API key)"}
-        </div>
-      </aside>
-      <main className="main">
-        {selected ? (
-          <RunView id={selected} key={selected} onDeleted={() => (select(null), refresh())} />
-        ) : (
-          <Welcome />
-        )}
-      </main>
-    </div>
-  );
-}
-
-function NewScan({ onCreated }: { onCreated: (run: Run) => void }) {
-  const [url, setUrl] = useState("");
-  const [maxPages, setMaxPages] = useState(10);
-  const [checkLinks, setCheckLinks] = useState(true);
-  const [accessibility, setAccessibility] = useState(true);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
-      onCreated(await api.create({ url, maxPages, checkLinks, accessibility }));
-      setUrl("");
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form className="new-scan" onSubmit={submit}>
-      <label className="field-label" htmlFor="url">
-        Website to test
-      </label>
-      <input
-        id="url"
-        className="input"
-        placeholder="https://example.com"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        required
-      />
-      <div className="row">
-        <label className="field-label inline" htmlFor="pages">
-          Pages
-        </label>
-        <input
-          id="pages"
-          className="input small"
-          type="number"
-          min={1}
-          max={100}
-          value={maxPages}
-          onChange={(e) => setMaxPages(Number(e.target.value))}
-        />
-      </div>
-      <label className="check">
-        <input type="checkbox" checked={checkLinks} onChange={(e) => setCheckLinks(e.target.checked)} /> Check
-        every link
-      </label>
-      <label className="check">
-        <input type="checkbox" checked={accessibility} onChange={(e) => setAccessibility(e.target.checked)} />{" "}
-        Accessibility (WCAG 2.2)
-      </label>
-      <button className="btn primary" disabled={busy}>
-        {busy ? "Starting…" : "Start scan"}
-      </button>
-      {error && <div className="error">{error}</div>}
-    </form>
-  );
-}
-
-function Welcome() {
-  return (
-    <div className="welcome">
-      <h1>Test any website in minutes</h1>
-      <p>
-        Enter a website address on the left. The agent opens every page in a real browser and checks it the
-        way a QA engineer would.
-      </p>
-      <div className="welcome-grid">
-        {[
-          ["Functional", "Broken links, 404 pages, JavaScript errors, failed requests"],
-          ["Accessibility", "WCAG 2.2 A/AA checks with axe-core: contrast, labels, alt text"],
-          ["SEO", "Titles, meta descriptions, headings, canonical, Open Graph"],
-          ["Security", "HTTPS, security headers, cookie flags, mixed content (passive only)"],
-          ["Performance", "Load time and page weight for every page"],
-          ["Mobile", "Phone-width layout, sideways scrolling, tap target size"],
-        ].map(([t, d]) => (
-          <div className="welcome-card" key={t}>
-            <div className="welcome-title">{t}</div>
-            <div className="welcome-desc">{d}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RunView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
-  const [run, setRun] = useState<Run | null>(null);
-  const [error, setError] = useState("");
-  const [tab, setTab] = useState<"findings" | "pages">("findings");
-
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const r = await api.get(id);
-        if (stop) return;
-        setRun(r);
-        if (r.status === "queued" || r.status === "running") setTimeout(load, 1500);
-      } catch (err) {
-        setError((err as Error).message);
-      }
-    };
-    load();
-    return () => {
-      stop = true;
-    };
-  }, [id]);
-
-  if (error) return <div className="error big">{error}</div>;
-  if (!run) return <div className="loading">Loading…</div>;
-
-  const header = (
-    <header className="run-header">
-      <div>
-        <div className="eyebrow">Scan report</div>
-        <h1 className="run-title">
-          <a href={run.url} target="_blank" rel="noreferrer">
-            {run.url}
-          </a>
-        </h1>
-        <div className="run-sub">
-          Started {new Date(run.createdAt).toLocaleString()}
-          {run.result && ` · ${run.result.pages.length} pages tested`}
-        </div>
-      </div>
-      <button
-        className="btn ghost"
-        onClick={async () => {
-          await api.remove(run.id);
-          onDeleted();
-        }}
-      >
-        Delete
-      </button>
-    </header>
-  );
-
-  if (run.status === "queued" || run.status === "running") {
-    return (
-      <div className="run">
-        {header}
-        <div className="progress-card">
-          <div className="spinner" />
-          <div>
-            <div className="progress-title">Testing in progress</div>
-            <ul className="progress-log">
-              {run.progress.slice(-8).map((p, i) => (
-                <li key={i}>{p}</li>
+        </nav>
+        {projects && projects.length > 0 && (
+          <>
+            <div className="section-label">Recent projects</div>
+            <ul className="run-list">
+              {projects.slice(0, 8).map((p) => (
+                <li key={p.id}>
+                  <button
+                    className={`run-item ${route.name === "project" && route.id === p.id ? "active" : ""}`}
+                    onClick={() => go(`#/project/${p.id}`)}
+                  >
+                    <ScoreChip score={p.lastScore} status={p.busy ? "running" : p.lastRun?.status} />
+                    <span className="run-meta">
+                      <span className="run-url">{p.name}</span>
+                      <span className="run-sub">
+                        {p.busy ? "Testing now…" : hostOf(p.target.url)}
+                        {p.counts.open.critical + p.counts.open.high > 0 &&
+                          ` · ${p.counts.open.critical + p.counts.open.high} major`}
+                      </span>
+                    </span>
+                  </button>
+                </li>
               ))}
             </ul>
+          </>
+        )}
+        <div className="sidebar-foot">
+          <div className={`ai-status ${meta?.ai && meta.aiSummary ? "on" : ""}`}>
+            {meta ? (meta.ai && meta.aiSummary ? "Claude summary is on" : "Claude summary is off") : ""}
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (run.status === "failed" || !run.result) {
-    return (
-      <div className="run">
-        {header}
-        <div className="error big">The scan failed: {run.error}</div>
-      </div>
-    );
-  }
-
-  const { result } = run;
-  return (
-    <div className="run">
-      {header}
-      <section className="scores">
-        <div className={`overall ${scoreTone(result.overallScore)}`}>
-          <div className="overall-num">{result.overallScore}</div>
-          <div className="overall-label">Overall score</div>
-        </div>
-        <div className="score-grid">
-          {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => {
-            const n = groupFindings(result.findings.filter((f) => f.category === c && f.severity !== "info")).length;
-            return (
-              <div className="score-card" key={c}>
-                <div className="score-card-top">
-                  <span>{CATEGORY_LABEL[c]}</span>
-                  <span className={`score-num ${scoreTone(result.scores[c])}`}>{result.scores[c]}</span>
-                </div>
-                <div className="bar">
-                  <div
-                    className={`bar-fill ${scoreTone(result.scores[c])}`}
-                    style={{ width: `${result.scores[c]}%` }}
-                  />
-                </div>
-                <div className="score-card-sub">
-                  {n === 0 ? "No issues" : `${n} issue${n > 1 ? "s" : ""}`}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <AiPanel run={run} />
-
-      <div className="tabs">
-        <button className={tab === "findings" ? "active" : ""} onClick={() => setTab("findings")}>
-          Issues ({groupFindings(result.findings).length})
-        </button>
-        <button className={tab === "pages" ? "active" : ""} onClick={() => setTab("pages")}>
-          Pages ({result.pages.length})
-        </button>
-      </div>
-      {tab === "findings" ? <Findings findings={result.findings} /> : <Pages run={run} />}
-    </div>
-  );
-}
-
-function AiPanel({ run }: { run: Run }) {
-  if (!run.ai) {
-    return (
-      <section className="ai-panel off">
-        <div className="ai-head">Claude summary</div>
-        <p className="muted">{run.aiError ?? "No summary for this scan."}</p>
-      </section>
-    );
-  }
-  return (
-    <section className="ai-panel">
-      <div className="ai-head">
-        Claude summary <span className="model">{run.ai.model}</span>
-      </div>
-      <p>{run.ai.summary}</p>
-      <ol className="fixes">
-        {run.ai.topFixes.map((f, i) => (
-          <li key={i}>
-            <div className="fix-title">{f.title}</div>
-            <div className="fix-why">{f.why}</div>
-            <div className="fix-how">{f.how}</div>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
-function Findings({ findings }: { findings: Finding[] }) {
-  const [cat, setCat] = useState<Category | "all">("all");
-  const [minSev, setMinSev] = useState<Severity>("low");
-  const [open, setOpen] = useState<string | null>(null);
-
-  // The same issue often appears on every page (a shared header or footer). Group it into one
-  // row so the list shows distinct problems, not repeats.
-  const groups = useMemo(() => groupFindings(findings), [findings]);
-  const shown = useMemo(() => {
-    const limit = SEVERITIES.indexOf(minSev);
-    return groups.filter(
-      (g) => (cat === "all" || g.first.category === cat) && SEVERITIES.indexOf(g.severity) <= limit,
-    );
-  }, [groups, cat, minSev]);
-
-  const counts = useMemo(() => {
-    const c = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<Severity, number>;
-    for (const g of groups) c[g.severity]++;
-    return c;
-  }, [groups]);
-
-  return (
-    <section>
-      <div className="filters">
-        <div className="pills">
-          {(["all", ...Object.keys(CATEGORY_LABEL)] as (Category | "all")[]).map((c) => (
-            <button key={c} className={`pill ${cat === c ? "active" : ""}`} onClick={() => setCat(c)}>
-              {c === "all" ? "All" : CATEGORY_LABEL[c]}
+          <div className="me">
+            <div>
+              <div className="me-name">{user.name}</div>
+              <div className="me-role">{user.role === "owner" ? "Owner" : "Team member"}</div>
+            </div>
+            <button
+              className="icon-btn"
+              title="Sign out"
+              aria-label="Sign out"
+              onClick={async () => {
+                await api.logout().catch(() => {});
+                onSignedOut();
+              }}
+            >
+              <Icon name="logout" size={18} />
             </button>
-          ))}
-        </div>
-        <select
-          className="input select"
-          value={minSev}
-          onChange={(e) => setMinSev(e.target.value as Severity)}
-        >
-          {SEVERITIES.map((s) => (
-            <option key={s} value={s}>
-              {s === "info" ? "Show everything" : `${s[0].toUpperCase()}${s.slice(1)} and above`}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="sev-summary">
-        {SEVERITIES.map((s) => (
-          <span key={s} className={`sev-count sev-${s}`}>
-            {counts[s]} {s}
-          </span>
-        ))}
-        <span className="muted">distinct issues</span>
-      </div>
-      <ul className="findings">
-        {shown.length === 0 && <li className="empty">Nothing to show with these filters.</li>}
-        {shown.map(({ key, first: f, items, pages, severity }) => {
-          const hasTargets = items.some((i) => i.evidence && /^https?:\/\//.test(i.evidence));
-          return (
-            <li key={key} className={`finding ${open === key ? "open" : ""}`}>
-              <button className="finding-row" onClick={() => setOpen(open === key ? null : key)}>
-                <span className={`sev sev-${severity}`}>{severity}</span>
-                <span className="finding-title">
-                  {items.length > 1 && hasTargets ? `${f.title} (${items.length})` : f.title}
-                </span>
-                <span className="finding-cat">{CATEGORY_LABEL[f.category]}</span>
-                <span className="finding-page">
-                  {pages.length > 1 ? `${pages.length} pages` : new URL(f.pageUrl).pathname}
-                </span>
-              </button>
-              {open === key && (
-                <div className="finding-body">
-                  <p>{f.detail}</p>
-                  {!hasTargets && f.evidence && <pre className="evidence">{f.evidence}</pre>}
-                  <div className="finding-foot">
-                    Rule <code>{f.rule}</code> ·{" "}
-                    {hasTargets
-                      ? `${items.length} link${items.length > 1 ? "s" : ""}:`
-                      : pages.length > 1
-                        ? `Found on ${pages.length} pages:`
-                        : "Page:"}
-                  </div>
-                  <ul className="finding-pages">
-                    {hasTargets
-                      ? items.map((i) => (
-                          <li key={i.id}>
-                            <code>{i.evidence}</code>
-                            <span className="muted">
-                              {" "}
-                              · on{" "}
-                              <a href={i.pageUrl} target="_blank" rel="noreferrer">
-                                {new URL(i.pageUrl).pathname}
-                              </a>
-                            </span>
-                          </li>
-                        ))
-                      : pages.map((p) => {
-                          const onPage = items.filter((i) => i.pageUrl === p);
-                          const other = onPage.find((i) => i.title !== f.title);
-                          return (
-                            <li key={p}>
-                              <a href={p} target="_blank" rel="noreferrer">
-                                {p}
-                              </a>
-                              {other && <span className="muted"> · {other.title}</span>}
-                            </li>
-                          );
-                        })}
-                  </ul>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-function Pages({ run }: { run: Run }) {
-  const pages = run.result!.pages;
-  return (
-    <div className="pages">
-      {pages.map((p) => {
-        const issues = run.result!.findings.filter(
-          (f) => f.pageUrl === p.url && f.severity !== "info",
-        ).length;
-        return (
-          <div className="page-card" key={p.url}>
-            <div className="shots">
-              {p.screenshot && (
-                <img
-                  className="shot"
-                  src={api.artifact(run.id, p.screenshot)}
-                  alt={`Desktop view of ${p.url}`}
-                />
-              )}
-              {p.mobileScreenshot && (
-                <img
-                  className="shot mobile"
-                  src={api.artifact(run.id, p.mobileScreenshot)}
-                  alt={`Phone view of ${p.url}`}
-                />
-              )}
-            </div>
-            <div className="page-info">
-              <div className="page-title">{p.title || "(no title)"}</div>
-              <a className="page-url" href={p.url} target="_blank" rel="noreferrer">
-                {p.url}
-              </a>
-              <div className="page-stats">
-                <span className={p.status && p.status < 400 ? "ok" : "bad"}>HTTP {p.status ?? "error"}</span>
-                {p.metrics?.lcpMs ? (
-                  <span title="Largest Contentful Paint: when the main content appears">
-                    LCP {(p.metrics.lcpMs / 1000).toFixed(1)} s
-                  </span>
-                ) : (
-                  p.loadMs !== null && <span>{(p.loadMs / 1000).toFixed(1)} s</span>
-                )}
-                {p.metrics && <span>{(p.metrics.bytes / 1_000_000).toFixed(1)} MB</span>}
-                <span>
-                  {issues} issue{issues === 1 ? "" : "s"}
-                </span>
-              </div>
-            </div>
           </div>
-        );
-      })}
+        </div>
+      </aside>
+      <main className="main">{page}</main>
     </div>
   );
 }

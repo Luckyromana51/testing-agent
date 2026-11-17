@@ -178,6 +178,27 @@ async function scanPage(
   return { result, findings, links };
 }
 
+/**
+ * The SEO agent and axe both flag missing alt text, language and title. When axe found it on a
+ * page, keep only the accessibility finding (it is the stricter one) and note the SEO impact there.
+ */
+const SAME_PROBLEM: Record<string, string> = {
+  "seo:img-alt": "axe:image-alt",
+  "seo:lang-missing": "axe:html-has-lang",
+  "seo:title-missing": "axe:document-title",
+};
+
+function dropDuplicates(findings: Finding[]): void {
+  const axeOnPage = new Set(findings.filter((f) => f.rule.startsWith("axe:")).map((f) => `${f.rule}|${f.pageUrl}`));
+  for (let i = findings.length - 1; i >= 0; i--) {
+    const twin = SAME_PROBLEM[findings[i].rule];
+    if (!twin || !axeOnPage.has(`${twin}|${findings[i].pageUrl}`)) continue;
+    const axe = findings.find((f) => f.rule === twin && f.pageUrl === findings[i].pageUrl);
+    if (axe && !axe.detail.includes("search")) axe.detail += " This also hurts search ranking.";
+    findings.splice(i, 1);
+  }
+}
+
 /** Crawls a website from `opts.url` and runs every selected agent on each page, then on the site. */
 export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const startedAt = new Date().toISOString();
@@ -266,6 +287,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     await browser.close();
   }
 
+  dropDuplicates(findings);
   const { scores, overallScore } = scoreFindings(findings, pages.length);
   log(`Done: ${pages.length} pages, ${findings.length} findings`);
   return {

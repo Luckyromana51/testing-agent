@@ -15,7 +15,7 @@ export function projectKey(name: string, taken: string[] = []): string {
     .replace(/^https?:\/\/(www\.)?/i, "")
     .split(/[^A-Za-z0-9]+/)
     .filter(Boolean);
-  let base = (words.length > 1 ? words.map((w) => w[0]).join("") : (words[0] ?? "PRJ").slice(0, 4)).toUpperCase();
+  let base = (words.length > 1 ? words.slice(0, 4).map((w) => w[0]).join("") : (words[0] ?? "PRJ").slice(0, 4)).toUpperCase();
   if (base.length < 2) base = (words[0] ?? "PRJ").slice(0, 3).toUpperCase();
   base = base.replace(/^[0-9]+/, "") || "PRJ";
   let key = base.slice(0, 5);

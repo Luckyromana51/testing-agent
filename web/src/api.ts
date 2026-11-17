@@ -1,4 +1,16 @@
-import type { Run } from "../../src/types.ts";
+import type { AgentInfo } from "../../src/agents/types.ts";
+import type { ProductInfo } from "../../src/products.ts";
+import type {
+  Issue,
+  IssueStatus,
+  ProductType,
+  Project,
+  Run,
+  RunDiff,
+  Schedule,
+  Severity,
+  User,
+} from "../../src/types.ts";
 
 export type RunSummary = Omit<Run, "result" | "ai" | "progress"> & {
   overallScore?: number;
@@ -7,24 +19,106 @@ export type RunSummary = Omit<Run, "result" | "ai" | "progress"> & {
   lastProgress?: string;
 };
 
-async function json<T>(res: Response): Promise<T> {
+export interface IssueCounts {
+  open: Record<Severity, number>;
+  byStatus: Record<IssueStatus, number>;
+}
+
+export type ProjectSummary = Project & { counts: IssueCounts; lastRun: RunSummary | null; busy: boolean };
+
+export interface ProjectDetail {
+  project: ProjectSummary;
+  runs: RunSummary[];
+  trend: { runId: string; at: string; score: number; diff?: RunDiff }[];
+  agents: AgentInfo[];
+}
+
+export type IssueSummary = Omit<Issue, "history"> & { projectName: string; events: number };
+export type IssueDetail = Issue & { projectName?: string };
+
+export interface Meta {
+  products: ProductInfo[];
+  agents: (AgentInfo & { enabled: boolean })[];
+  ai: boolean;
+  aiSummary: boolean;
+  defaultMaxPages: number;
+}
+
+export interface Settings {
+  agents: Record<string, boolean>;
+  defaultMaxPages: number;
+  aiSummary: boolean;
+}
+
+export interface Overview {
+  projects: number;
+  scheduled: number;
+  runsTotal: number;
+  runsThisWeek: number;
+  issues: IssueCounts;
+  fixedThisWeek: number;
+  queue: { active: number; waiting: number; concurrency: number };
+  agents: { total: number; on: number };
+  ai: boolean;
+  users: number;
+  products: { type: ProductType; name: string; available: boolean; projects: number }[];
+}
+
+/** Fired when the server says the session is gone, so the app can show the sign-in screen. */
+export const UNAUTHORIZED = "glv:unauthorized";
+
+async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401 && !url.startsWith("/api/auth/")) window.dispatchEvent(new Event(UNAUTHORIZED));
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Request failed (${res.status})`);
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error ?? `Request failed (${res.status})`);
   }
-  return res.json() as Promise<T>;
+  return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
 export const api = {
-  health: () => fetch("/api/health").then((r) => json<{ ok: boolean; ai: boolean }>(r)),
-  list: () => fetch("/api/runs").then((r) => json<RunSummary[]>(r)),
-  get: (id: string) => fetch(`/api/runs/${id}`).then((r) => json<Run>(r)),
-  create: (body: { url: string; maxPages: number; checkLinks: boolean; accessibility: boolean }) =>
-    fetch("/api/runs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((r) => json<Run>(r)),
-  remove: (id: string) => fetch(`/api/runs/${id}`, { method: "DELETE" }),
+  authState: () => call<{ setupNeeded: boolean; user: User | null }>("GET", "/api/auth/state"),
+  setup: (b: { name: string; email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/setup", b),
+  login: (b: { email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/login", b),
+  logout: () => call("POST", "/api/auth/logout", {}),
+  changePassword: (b: { current: string; password: string }) => call("POST", "/api/auth/password", b),
+
+  meta: () => call<Meta>("GET", "/api/meta"),
+
+  projects: () => call<ProjectSummary[]>("GET", "/api/projects"),
+  project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
+  createProject: (b: {
+    name: string;
+    type: ProductType;
+    url: string;
+    maxPages: number;
+    schedule: Schedule;
+    checkLinks: boolean;
+  }) => call<{ project: Project; run: Run }>("POST", "/api/projects", b),
+  updateProject: (id: string, b: Partial<{ name: string; url: string; maxPages: number; schedule: Schedule; checkLinks: boolean }>) =>
+    call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
+  deleteProject: (id: string) => call("DELETE", `/api/projects/${id}`),
+  retest: (id: string) => call<Run>("POST", `/api/projects/${id}/runs`, { trigger: "retest" }),
+
+  run: (id: string) => call<Run>("GET", `/api/runs/${id}`),
+  deleteRun: (id: string) => call("DELETE", `/api/runs/${id}`),
   artifact: (id: string, file: string) => `/api/runs/${id}/artifacts/${file}`,
+
+  issues: (projectId?: string) => call<IssueSummary[]>("GET", `/api/issues${projectId ? `?projectId=${projectId}` : ""}`),
+  issue: (id: string) => call<IssueDetail>("GET", `/api/issues/${id}`),
+  updateIssue: (id: string, b: Partial<{ status: IssueStatus; assignee: string; comment: string }>) =>
+    call<IssueDetail>("PATCH", `/api/issues/${id}`, b),
+
+  overview: () => call<Overview>("GET", "/api/owner/overview"),
+  settings: () => call<Settings>("GET", "/api/owner/settings"),
+  updateSettings: (b: Partial<Settings>) => call<Settings>("PATCH", "/api/owner/settings", b),
+  users: () => call<User[]>("GET", "/api/owner/users"),
+  addUser: (b: { name: string; email: string; password: string; role: "owner" | "member" }) =>
+    call<User>("POST", "/api/owner/users", b),
+  removeUser: (id: string) => call("DELETE", `/api/owner/users/${id}`),
 };

@@ -1,10 +1,46 @@
 # GLV Testing Agent
 
-An AI testing agent by GLV Infotech Solutions. Give it a website address and it opens every page in a real browser, checks it the way a QA engineer would, and writes a report with a score, every issue found, screenshots, and (with Claude) a plain-English summary of the fixes that matter most.
+An AI testing platform by GLV Infotech Solutions. Pick what you are testing (website, online store, web app, SaaS, CRM), give it the address, and a team of specialist agents opens every page in a real browser, checks it the way a QA engineer would, and writes a report: major issues first, each with a fix you can paste. Every problem becomes a tracked issue (like Jira) that re-tests verify as fixed, or reopen when it comes back.
 
-This is the first MVP slice from the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE): the browser engine for web apps, SaaS, CRM and websites.
+This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). The browser engine is built; API, source code and Android engines come next.
 
-## What it checks
+## The dashboard
+
+- **New test**: pick the product type first, then enter its details. API, source code, Android and iOS show as "Next update" until their engines land.
+- **Report**: score per category, then the major issues (critical and high) as cards with a fix suggestion and ready-to-paste code for Apache/LiteSpeed (Hostinger), Nginx, WordPress or PHP. Everything else is in a filterable list. The Agents tab shows what each agent found and how long it took.
+- **Projects**: each site or app you test, with its score trend, open issues, test history and an automatic re-test schedule (daily or weekly).
+- **Issues**: a board (Open, In progress, Fixed, Verified) across projects. Keys look like `GLV-12`. Mark an issue fixed, press Re-test, and the next run either verifies it or moves it back to Open as "Came back". Assign issues and add notes; everything is kept in the history.
+- **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count and the Claude summary.
+
+The first time the dashboard opens, it asks you to create the owner account. Do that straight after the first start, before anyone else can reach the server.
+
+## Specialist agents
+
+| Agent | What it checks |
+| --- | --- |
+| JavaScript errors | Crashes, scripts blocked by a wrong integrity hash, CSP blocks, console errors (your own code apart from third-party widgets) |
+| Missing files | Images, scripts, styles and fonts that fail to load |
+| Link checker | Every link; only reported after a second look a few seconds later |
+| Content mistakes | Lorem ipsum, unfilled `{{tags}}`, "undefined" / "NaN" on the page, old copyright year |
+| Forms | Passwords on pages without HTTPS, data sent over HTTP, fields that would not be submitted, email field type |
+| Accessibility (WCAG 2.2) | axe-core rules for WCAG 2.0 to 2.2, A and AA |
+| On-page SEO | Title, description, headings, canonical, viewport, noindex, Open Graph |
+| Structured data | JSON-LD syntax errors; Product data on store product pages |
+| Duplicate titles | Pages sharing a title or description |
+| Search engine access | robots.txt blocking Google, missing sitemap, sitemap on the wrong address or listing missing pages |
+| Missing page handling | Unknown addresses must answer 404 (no soft 404) |
+| Security headers and cookies | HTTPS, HSTS, CSP, clickjacking, nosniff, referrer, version disclosure, cookie flags |
+| HTTPS and certificate | http:// redirects to https://, certificate trusted, complete chain, not about to expire |
+| Mixed content | HTTP files on HTTPS pages |
+| Exposed files | .env, .git, config backups, phpinfo, debug logs, folder listings (confirmed by content, secrets masked) |
+| WordPress security | Public user list, XML-RPC, visible version |
+| Privacy and cookie consent | Trackers loaded without a consent banner (GDPR, India's DPDP Act) |
+| Speed (Core Web Vitals) | LCP, CLS, server response time, page weight |
+| Phone layout | Sideways scrolling, tap targets (WCAG 2.2), text too small |
+
+The crawler and the link checker never open log-out or delete links.
+
+## What the categories cover
 
 | Area | Checks |
 | --- | --- |
@@ -35,7 +71,7 @@ Needs Node 22.13 or newer.
 npm install
 npx playwright install chromium   # first time only
 npm run build
-npm start                          # dashboard at http://localhost:4000
+npm start                          # dashboard at http://localhost:4000 (asks for the owner account first)
 ```
 
 For development with hot reload: `npm run dev` (API on :4000, dashboard on :5173).
@@ -47,7 +83,7 @@ Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Each finished scan th
 ### Command line (offline and CI)
 
 ```bash
-npm run scan -- scan https://example.com --pages 20
+npm run scan -- scan https://example.com --pages 20 --product ecommerce
 # or after npm run build:
 node dist/cli.js scan https://example.com --fail-on high
 ```
@@ -75,14 +111,25 @@ If you ever see `exec /bin/sh: exec format error` during the build, Docker picke
 
 ## API
 
+Every route except `/api/health` and the sign-in routes needs a signed-in session (cookie). Writes from other websites are refused.
+
 | Method | Path | What it does |
 | --- | --- | --- |
-| `POST` | `/api/runs` | Start a scan. Body: `{ "url": "https://...", "maxPages": 10, "checkLinks": true, "accessibility": true }` |
-| `GET` | `/api/runs` | List recent scans |
-| `GET` | `/api/runs/:id` | Full report for one scan, including live progress while it runs |
-| `DELETE` | `/api/runs/:id` | Delete a scan |
-| `GET` | `/api/runs/:id/artifacts/:file` | Screenshot files |
-| `GET` | `/api/health` | Health check; shows whether the Claude summary is on |
+| `GET` | `/api/auth/state` | Whether the owner account exists, and who is signed in |
+| `POST` | `/api/auth/setup` | Create the owner account (first start only) |
+| `POST` | `/api/auth/login`, `/api/auth/logout` | Sign in and out |
+| `GET` | `/api/meta` | Product types and agents, with on/off state |
+| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }` |
+| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule; delete (owner) |
+| `POST` | `/api/projects/:id/runs` | Re-test now |
+| `GET` | `/api/runs/:id` | Full report, with live progress while it runs |
+| `POST` | `/api/runs` | Quick test by address (reuses the website project for that site) |
+| `GET` | `/api/issues?projectId=` | Tracked issues |
+| `GET`, `PATCH` | `/api/issues/:id` | One issue with history; change status, assignee, or add a note |
+| `GET` | `/api/owner/overview` | Owner numbers |
+| `GET`, `PATCH` | `/api/owner/settings` | Agent switches, default pages, Claude summary |
+| `GET`, `POST`, `DELETE` | `/api/owner/users` | Team accounts |
+| `GET` | `/api/health` | Health check |
 
 Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked by default so the server cannot be used to probe your internal network. Set `ALLOW_PRIVATE_TARGETS=1` to test internal staging sites. The check works on the address as typed; a public hostname that resolves to a private IP is not yet blocked.
 
@@ -90,9 +137,16 @@ Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked b
 
 ```
 src/
-  runner/scan.ts            crawler and per-page checks (Playwright)
-  runner/checks/            seo, security, accessibility rules
+  agents/registry.ts        every specialist agent; add new ones here
+  agents/web/               the browser engine's agents
+  runner/scan.ts            crawler that runs the agents (Playwright)
+  runner/checks/            seo, security, accessibility rules used by agents
   runner/score.ts           category and overall scores
+  group.ts                  groups findings into distinct issues
+  fixes.ts                  fix suggestion for every rule
+  issues.ts                 issue tracker sync and regression check
+  auth.ts                   owner and team sign-in
+  scheduler.ts              daily and weekly re-tests
   ai/triage.ts              Claude summary and top fixes
   queue.ts                  in-process job queue (swap for BullMQ + Redis later)
   store.ts                  SQLite storage (node:sqlite; swap for PostgreSQL later)
@@ -112,8 +166,8 @@ npm run demo-site # start the demo site on :4100 to try the dashboard
 
 ## Not built yet (next steps from the plan)
 
-- Claude exploring flows and writing saved Playwright tests (login, checkout, forms)
-- Code engine: unit tests, Semgrep, Gitleaks, Trivy, and AI fix pull requests
+- API engine (OpenAPI), source code engine (secrets, vulnerable packages, risky code), Android APK checks
+- Testing pages behind a login for SaaS and CRM, and Claude exploring flows (sign-up, checkout, forms)
+- Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
-- Logins, projects and multiple users on the dashboard
-- Mobile app testing with Appium (phase 2)
+- Mobile app testing on devices with Appium

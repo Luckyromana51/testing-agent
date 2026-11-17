@@ -107,9 +107,13 @@ describe("scanSite against the demo site", () => {
     assert.equal(scoreFindings([{ ...one, pageUrl: "a" }], 4).scores.seo, 94);
   });
   it("finds SEO problems", () => {
-    for (const r of ["seo:description-missing", "seo:img-alt", "seo:h1-multiple", "seo:lang-missing"]) {
+    for (const r of ["seo:description-missing", "seo:h1-multiple", "seo:canonical-missing"]) {
       assert.ok(rules().has(r), r);
     }
+  });
+  it("reports missing alt text and language once, not as both SEO and accessibility", () => {
+    assert.ok(rules().has("axe:image-alt") && rules().has("axe:html-has-lang"));
+    assert.ok(!rules().has("seo:img-alt") && !rules().has("seo:lang-missing"));
   });
   it("finds accessibility problems", () => {
     assert.ok([...rules()].some((r) => r.startsWith("axe:")));
