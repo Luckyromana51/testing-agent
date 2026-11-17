@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { isIPv4, isIPv6 } from "node:net";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { UserStore } from "./store.js";
 import type { Role, User } from "./types.js";
@@ -35,6 +36,40 @@ function readCookie(req: FastifyRequest, name: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * AUTH_DISABLED=1 turns login off while GLV is still building and testing the system on its own
+ * computers: no owner account, no sign-in, everyone is the owner. Never use it on a server.
+ */
+export function loginTurnedOff(): boolean {
+  return process.env.AUTH_DISABLED === "1";
+}
+
+/** This computer or its local network, including Docker's own network between the host and the container. */
+export function isLocalAddress(raw: string | undefined): boolean {
+  let ip = String(raw ?? "").trim().toLowerCase();
+  if (ip.startsWith("::ffff:")) ip = ip.slice(7);
+  if (isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  if (isIPv6(ip)) return ip === "::1" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip);
+  return false;
+}
+
+/** True when the visit, or any proxy it passed through, comes from outside this computer and its local network. */
+export function fromOutside(req: FastifyRequest): boolean {
+  const forwarded = [req.headers["x-forwarded-for"], req.headers["x-real-ip"]]
+    .flat()
+    .filter(Boolean)
+    .flatMap((h) => String(h).split(","))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return !isLocalAddress(req.ip) || forwarded.some((ip) => !isLocalAddress(ip));
+}
+
+/** Stands in for the owner while login is off and no owner account has been made yet. */
+const LOCAL_OWNER: User = { id: "local-owner", email: "owner@localhost", name: "Owner", role: "owner", createdAt: "2026-01-01T00:00:00.000Z" };
 
 /** Simple per-address limit on failed logins: 10 tries per 15 minutes. */
 const failures = new Map<string, { n: number; until: number }>();
@@ -98,6 +133,11 @@ export class Auth {
     const token = readCookie(req, COOKIE);
     if (token) this.users.deleteSession(sha256(token));
     reply.header("set-cookie", `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  }
+
+  /** Who uses the dashboard while login is off: the first owner account if one exists, otherwise a stand-in owner. */
+  localOwner(): User {
+    return this.users.list().find((u) => u.role === "owner") ?? LOCAL_OWNER;
   }
 
   userFor(req: FastifyRequest): User | undefined {

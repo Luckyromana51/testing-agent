@@ -9,7 +9,7 @@ import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { ALL_AGENTS, agentsFor, describeAgent } from "./agents/registry.js";
 import { aiEnabled } from "./ai/triage.js";
-import { Auth, checkPasswordRules, hashPassword, recordFailure, tooManyFailures } from "./auth.js";
+import { Auth, checkPasswordRules, fromOutside, hashPassword, loginTurnedOff, recordFailure, tooManyFailures } from "./auth.js";
 import { groupFindings } from "./group.js";
 import { ACTIVE, projectKey } from "./issues.js";
 import { PRODUCTS } from "./products.js";
@@ -129,6 +129,13 @@ export async function createApp(opts: AppOptions) {
     reply.code(status).send({ error: status >= 500 ? "Something went wrong on the server." : err.message });
   });
 
+  const loginOff = loginTurnedOff();
+  if (loginOff) {
+    app.log.warn(
+      "Login is turned off (AUTH_DISABLED=1): everyone who opens the dashboard is the owner. Only visits from this computer and its local network are accepted. Set AUTH_DISABLED=0 before putting this on a server.",
+    );
+  }
+
   const PUBLIC = new Set(["/api/health", "/api/auth/state", "/api/auth/setup", "/api/auth/login", "/api/auth/logout"]);
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api/")) return;
@@ -141,6 +148,16 @@ export async function createApp(opts: AppOptions) {
         // unreadable origin: refused below
       }
       if (originHost !== req.headers.host) return reply.code(403).send({ error: "Cross-site request refused." });
+    }
+    if (loginOff) {
+      // Safety net in case the switch is left on by mistake on a server that the internet can reach.
+      if (fromOutside(req)) {
+        return reply.code(403).send({
+          error: "Login is turned off on this server (AUTH_DISABLED=1), so it only accepts visits from its own computer and local network.",
+        });
+      }
+      req.user = auth.localOwner();
+      return;
     }
     req.user = auth.userFor(req);
     if (!PUBLIC.has(req.url.split("?")[0]) && !req.user) {
@@ -161,7 +178,11 @@ export async function createApp(opts: AppOptions) {
   // ---- Auth -----------------------------------------------------------------------------------
   app.get("/api/health", async () => ({ ok: true, ai: aiEnabled() }));
 
-  app.get("/api/auth/state", async (req) => ({ setupNeeded: auth.setupNeeded(), user: req.user ?? null }));
+  app.get("/api/auth/state", async (req) => ({
+    setupNeeded: !loginOff && auth.setupNeeded(),
+    user: req.user ?? null,
+    loginOff,
+  }));
 
   app.post("/api/auth/setup", async (req, reply) => {
     if (!auth.setupNeeded()) throw new HttpError(409, "The owner account already exists. Please sign in.");
@@ -192,6 +213,7 @@ export async function createApp(opts: AppOptions) {
   });
 
   app.post("/api/auth/password", async (req) => {
+    if (loginOff) throw new HttpError(400, "Login is turned off (AUTH_DISABLED=1), so there is no password to change.");
     const b = body<{ current: string; password: string }>(req);
     if (!auth.login(req.user!.email, String(b.current ?? ""))) throw new HttpError(400, "The current password is wrong.");
     const problem = checkPasswordRules(String(b.password ?? ""));

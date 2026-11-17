@@ -6,6 +6,7 @@ import { after, before, describe, it } from "node:test";
 import type { Server } from "node:http";
 import { certFindings, robotsBlocksAll } from "../src/agents/web/site.js";
 import { trackersIn } from "../src/agents/web/page.js";
+import { isLocalAddress } from "../src/auth.js";
 import { fixFor } from "../src/fixes.js";
 import { projectKey, syncIssues } from "../src/issues.js";
 import { createApp } from "../src/server.js";
@@ -220,6 +221,65 @@ describe("platform API", () => {
     const overview = (await call("GET", "/api/owner/overview")).body;
     assert.equal(overview.users, 2);
     assert.ok(overview.runsTotal >= 2);
+  });
+});
+
+describe("login switched off (AUTH_DISABLED=1)", () => {
+  let dir: string;
+  let app: Awaited<ReturnType<typeof createApp>>["app"];
+  type Opts = { payload?: object; remoteAddress?: string; headers?: Record<string, string> };
+  const call = async (method: string, url: string, opts: Opts = {}) => {
+    const res = await app.inject({ method: method as "GET", url, ...opts });
+    return { status: res.statusCode, body: res.body ? res.json() : null };
+  };
+
+  before(async () => {
+    process.env.AUTH_DISABLED = "1";
+    dir = await mkdtemp(path.join(tmpdir(), "glvoff-"));
+    ({ app } = await createApp({ dataDir: dir }));
+  });
+  after(async () => {
+    delete process.env.AUTH_DISABLED;
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("skips the owner account and sign-in on this computer and the local network", async () => {
+    const state = (await call("GET", "/api/auth/state")).body;
+    assert.equal(state.loginOff, true);
+    assert.equal(state.setupNeeded, false);
+    assert.equal(state.user.role, "owner");
+    assert.equal((await call("GET", "/api/projects")).status, 200);
+    assert.equal((await call("GET", "/api/owner/overview", { remoteAddress: "192.168.65.1" })).status, 200);
+    const saved = await call("PATCH", "/api/owner/settings", { payload: { defaultMaxPages: 15 } });
+    assert.equal(saved.status, 200);
+    assert.equal((await call("POST", "/api/auth/password", { payload: { current: "x", password: "a-long-password" } })).status, 400);
+  });
+
+  it("refuses visits from the internet, directly or through a proxy", async () => {
+    assert.equal((await call("GET", "/api/projects", { remoteAddress: "203.0.113.9" })).status, 403);
+    assert.equal((await call("GET", "/api/projects", { headers: { "x-forwarded-for": "203.0.113.9, 10.0.0.2" } })).status, 403);
+    assert.equal((await call("GET", "/api/auth/state", { headers: { "x-real-ip": "2001:db8::1" } })).status, 403);
+  });
+
+  it("knows which addresses are local", () => {
+    for (const ip of ["127.0.0.1", "::1", "::ffff:172.17.0.1", "10.1.2.3", "192.168.1.20", "fd00::1", "fe80::1"]) {
+      assert.ok(isLocalAddress(ip), ip);
+    }
+    for (const ip of ["8.8.8.8", "172.32.0.1", "203.0.113.9", "2001:db8::1", "", "localhost"]) assert.ok(!isLocalAddress(ip), ip);
+  });
+
+  it("asks for the owner account again once login is back on", async () => {
+    delete process.env.AUTH_DISABLED;
+    const { app: on } = await createApp({ dataDir: dir });
+    try {
+      const state = (await on.inject({ method: "GET", url: "/api/auth/state" })).json();
+      assert.equal(state.loginOff, false);
+      assert.equal(state.setupNeeded, true);
+      assert.equal((await on.inject({ method: "GET", url: "/api/projects" })).statusCode, 401);
+    } finally {
+      await on.close();
+    }
   });
 });
 

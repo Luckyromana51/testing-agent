@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProductType, User } from "../../src/types.ts";
-import { api, UNAUTHORIZED, type Meta } from "./api.ts";
+import { api, UNAUTHORIZED, type AuthState, type Meta } from "./api.ts";
 import { go, hostOf, useRoute, usePoll } from "./lib.ts";
 import { AuthScreen } from "./pages/Auth.tsx";
 import { Home, NewProject } from "./pages/Home.tsx";
@@ -11,7 +11,7 @@ import { Report } from "./pages/Report.tsx";
 import { Icon, ScoreChip } from "./ui.tsx";
 
 export function App() {
-  const [auth, setAuth] = useState<{ setupNeeded: boolean; user: User | null } | null>(null);
+  const [auth, setAuth] = useState<AuthState | null>(null);
   const checkAuth = useCallback(() => {
     api
       .authState()
@@ -28,10 +28,10 @@ export function App() {
   if (!auth.user) {
     return <AuthScreen setupNeeded={auth.setupNeeded} onSignedIn={(user) => setAuth({ setupNeeded: false, user })} />;
   }
-  return <Shell user={auth.user} onSignedOut={() => setAuth({ setupNeeded: false, user: null })} />;
+  return <Shell user={auth.user} loginOff={Boolean(auth.loginOff)} onSignedOut={() => setAuth({ setupNeeded: false, user: null })} />;
 }
 
-function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
+function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean; onSignedOut: () => void }) {
   const route = useRoute();
   const [meta, setMeta] = useState<Meta | null>(null);
   const reloadMeta = useCallback(() => {
@@ -55,7 +55,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
     else if (route.name === "project" && route.id) page = <ProjectView id={route.id} meta={meta} user={user} key={route.id} />;
     else if (route.name === "run" && route.id) page = <Report id={route.id} key={route.id} />;
     else if (route.name === "issues") page = <Issues projectId={route.query.get("project") ?? undefined} openId={route.id} />;
-    else if (route.name === "owner") page = <Owner tab={route.id} meta={meta} reloadMeta={reloadMeta} user={user} />;
+    else if (route.name === "owner") page = <Owner tab={route.id} meta={meta} reloadMeta={reloadMeta} user={user} loginOff={loginOff} />;
   }
 
   return (
@@ -110,18 +110,25 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
               <div className="me-name">{user.name}</div>
               <div className="me-role">{user.role === "owner" ? "Owner" : "Team member"}</div>
             </div>
-            <button
-              className="icon-btn"
-              title="Sign out"
-              aria-label="Sign out"
-              onClick={async () => {
-                await api.logout().catch(() => {});
-                onSignedOut();
-              }}
-            >
-              <Icon name="logout" size={18} />
-            </button>
+            {!loginOff && (
+              <button
+                className="icon-btn"
+                title="Sign out"
+                aria-label="Sign out"
+                onClick={async () => {
+                  await api.logout().catch(() => {});
+                  onSignedOut();
+                }}
+              >
+                <Icon name="logout" size={18} />
+              </button>
+            )}
           </div>
+          {loginOff && (
+            <div className="login-off" title="AUTH_DISABLED=1 is set. Set AUTH_DISABLED=0 in .env and restart before putting this on a server.">
+              Login is off for local use
+            </div>
+          )}
         </div>
       </aside>
       <main className="main">{page}</main>
