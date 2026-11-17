@@ -28,6 +28,8 @@ export function scoreFindings(
     // Site-wide findings (security headers) repeat on every page, so average them out.
     scores[cat] = Math.max(0, Math.round(100 - penalty / Math.sqrt(pages)));
   }
-  const overallScore = Math.round(CATEGORIES.reduce((s, c) => s + scores[c], 0) / CATEGORIES.length);
+  let overallScore = Math.round(CATEGORIES.reduce((s, c) => s + scores[c], 0) / CATEGORIES.length);
+  // A single critical issue (site down, no HTTPS, unusable for screen readers) caps the grade.
+  if (findings.some((f) => f.severity === "critical")) overallScore = Math.min(overallScore, 69);
   return { scores, overallScore };
 }

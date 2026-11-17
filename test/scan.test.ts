@@ -42,6 +42,13 @@ describe("scoring", () => {
     );
     assert.equal(scores.security, 75);
   });
+  it("caps the overall score below 70 when anything is critical", () => {
+    const { overallScore } = scoreFindings(
+      [{ id: "1", category: "seo", severity: "critical", title: "", detail: "", pageUrl: "", rule: "x" }],
+      1,
+    );
+    assert.ok(overallScore <= 69);
+  });
 });
 
 describe("scanSite against the demo site", () => {

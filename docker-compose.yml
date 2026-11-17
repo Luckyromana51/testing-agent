@@ -1,0 +1,15 @@
+services:
+  testing-agent:
+    build: .
+    image: glv/testing-agent:latest
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    env_file: .env
+    volumes:
+      - agent-data:/data
+    # Chromium needs more shared memory than Docker's 64 MB default.
+    shm_size: "1gb"
+
+volumes:
+  agent-data:
