@@ -2,6 +2,10 @@ services:
   testing-agent:
     build: .
     image: glv/testing-agent:latest
+    # Intel (amd64) by default: native on most servers, and runs on Apple Silicon Macs
+    # through Docker Desktop's Rosetta emulation. On an ARM Linux server, set
+    # DOCKER_PLATFORM=linux/arm64 in .env to build the native ARM image instead.
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
     restart: unless-stopped
     ports:
       - "4000:4000"

@@ -57,24 +57,13 @@ The dashboard runs on port 4000. Scan results and screenshots are kept in the `a
 
 Each scan uses about 1 to 2 CPU cores and 1 to 2 GB of RAM while running (an estimate, not yet measured). `SCAN_CONCURRENCY` (default 2) controls how many scans run at once.
 
-### Troubleshooting Docker
+### Processor type (Intel vs Apple Silicon / ARM)
 
-**`exec /bin/sh: exec format error` during `RUN npm ci`**: Docker downloaded the image for the wrong processor type. The base image ships both Intel (amd64) and Apple Silicon/ARM (arm64) versions, so this usually means a `DOCKER_DEFAULT_PLATFORM` setting or an Intel build of Docker Desktop. Check with:
+`docker-compose.yml` builds the Intel (amd64) image by default. That runs natively on most servers (including Hostinger VPS) and on Apple Silicon Macs through Docker Desktop's Rosetta emulation, so `docker compose up -d --build` works on both without extra settings. Docker prints a warning on Apple Silicon that the image platform does not match the host; that is expected.
 
-```bash
-uname -m                                         # your machine: arm64 or x86_64
-docker version --format '{{.Server.Arch}}'       # what Docker runs: should match
-echo $DOCKER_DEFAULT_PLATFORM                    # should be empty
-```
+On an ARM Linux server (for example AWS Graviton), add `DOCKER_PLATFORM=linux/arm64` to `.env` to build the native ARM image.
 
-To build for Intel explicitly (works on Intel machines and, more slowly, on Apple Silicon through Rosetta):
-
-```bash
-DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose build --no-cache
-docker compose up -d
-```
-
-On a Mac laptop you can also skip Docker and run it with Node directly (see Quick start).
+If you ever see `exec /bin/sh: exec format error` during the build, Docker picked an image your machine cannot run: set `DOCKER_PLATFORM` in `.env` to match `docker version --format '{{.Server.Arch}}'` (or keep the amd64 default) and rebuild with `docker compose build --no-cache`.
 
 ## API
 
