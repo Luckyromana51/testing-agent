@@ -1,0 +1,171 @@
+# GLV rules for PHP. Written by GLV Infotech for the testing platform.
+rules:
+  - id: glv.php.sql-injection
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: >-
+      SQL query built from request data (SQL injection). Use prepared statements with bound
+      values (PDO prepare and execute, or mysqli bind_param).
+    metadata:
+      glv-same-as: "code:sql-injection"
+      glv-title: "SQL query built from request data (SQL injection)"
+      cwe: "CWE-89"
+    pattern-sources: &php-request
+      - pattern: $_GET
+      - pattern: $_POST
+      - pattern: $_REQUEST
+      - pattern: $_COOKIE
+      - pattern: $_SERVER['QUERY_STRING']
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: mysqli_query($C, $Q, ...)
+              - pattern: mysql_query($Q, ...)
+              - pattern: pg_query($C, $Q)
+              - pattern: $DB->query($Q, ...)
+              - pattern: $DB->exec($Q)
+              - pattern: $DB->get_results($Q, ...)
+              - pattern: DB::raw($Q)
+              - pattern: DB::select($Q)
+          - focus-metavariable: $Q
+    pattern-sanitizers:
+      - pattern: intval(...)
+      - pattern: (int) $X
+      - pattern: $DB->prepare(...)
+      - pattern: mysqli_real_escape_string(...)
+
+  - id: glv.php.unserialize
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: >-
+      unserialize on request data can run code on the server (object injection). Use
+      json_decode for data from users.
+    metadata:
+      glv-same-as: "code:unsafe-deserialize"
+      glv-title: "Request data read with unserialize (object injection)"
+      cwe: "CWE-502"
+    pattern-sources: *php-request
+    pattern-sinks:
+      - pattern: unserialize(...)
+
+  - id: glv.php.command-injection
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Shell command built from request data (command injection). Avoid the shell, or wrap
+      every value in escapeshellarg.
+    metadata:
+      glv-same-as: "code:command-injection"
+      glv-title: "Shell command built from request data (command injection)"
+      cwe: "CWE-78"
+    pattern-sources: *php-request
+    pattern-sinks:
+      - pattern-either:
+          - pattern: system(...)
+          - pattern: exec(...)
+          - pattern: shell_exec(...)
+          - pattern: passthru(...)
+          - pattern: popen(...)
+          - pattern: proc_open(...)
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+
+  - id: glv.php.file-include
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: >-
+      A file to include comes from the request: an attacker can run other files on the server.
+      Pick the file from a fixed list instead.
+    metadata:
+      glv-same-as: "code:file-include"
+      glv-title: "File to include taken from the request"
+      cwe: "CWE-98"
+    pattern-sources: *php-request
+    pattern-sinks:
+      - pattern-either:
+          - pattern: include $X;
+          - pattern: include_once $X;
+          - pattern: require $X;
+          - pattern: require_once $X;
+    pattern-sanitizers:
+      - pattern: basename(...)
+
+  - id: glv.php.xss
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Request data is printed into the page without escaping (cross-site scripting). Wrap it
+      in htmlspecialchars($value, ENT_QUOTES).
+    metadata:
+      glv-same-as: "code:xss"
+      glv-title: "Request data printed into the page without escaping (XSS)"
+      cwe: "CWE-79"
+    pattern-sources: *php-request
+    pattern-sinks:
+      - pattern-either:
+          - pattern: echo ...;
+          - pattern: print(...);
+          - pattern: printf(...);
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+      - pattern: htmlentities(...)
+      - pattern: esc_html(...)
+      - pattern: esc_attr(...)
+      - pattern: intval(...)
+      - pattern: (int) $X
+      - pattern: json_encode(...)
+
+  - id: glv.php.eval
+    mode: taint
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Request data is run as PHP code. Never pass input to eval, assert or create_function.
+    metadata:
+      glv-same-as: "code:eval"
+      glv-title: "Request data run as PHP code"
+      cwe: "CWE-95"
+    pattern-sources: *php-request
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: assert(...)
+          - pattern: create_function(...)
+
+  - id: glv.php.weak-password-hash
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Passwords are hashed with MD5 or SHA-1, which can be cracked in seconds. Use
+      password_hash and password_verify.
+    metadata:
+      glv-same-as: "code:weak-password-hash"
+      glv-title: "Passwords hashed with MD5 or SHA-1"
+      cwe: "CWE-916"
+    patterns:
+      - pattern-either:
+          - pattern: md5($PW)
+          - pattern: sha1($PW)
+      - metavariable-regex:
+          metavariable: $PW
+          regex: "(?i).*pass.*"
+
+  - id: glv.php.tls-verify-off
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Certificate checks are turned off for curl, so anyone on the network can read and change
+      the traffic. Remove CURLOPT_SSL_VERIFYPEER false.
+    metadata:
+      glv-same-as: "code:tls-verify-off"
+      glv-title: "Certificate checks turned off"
+      cwe: "CWE-295"
+    pattern-either:
+      - pattern: curl_setopt($C, CURLOPT_SSL_VERIFYPEER, false)
+      - pattern: curl_setopt($C, CURLOPT_SSL_VERIFYPEER, 0)
+      - pattern: curl_setopt($C, CURLOPT_SSL_VERIFYHOST, 0)

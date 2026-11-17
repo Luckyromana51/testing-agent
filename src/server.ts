@@ -16,6 +16,7 @@ import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
 import { startScheduler } from "./scheduler.js";
 import { TOOLS, cleanChoices, defaultChoices, describeTool, toolStatus } from "./tools/index.js";
+import { toJunit, toSarif } from "./export.js";
 import { openStores, type Settings, type Stores } from "./store.js";
 import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
 import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
@@ -442,6 +443,25 @@ export async function createApp(opts: AppOptions) {
     return run ?? reply.code(404).send({ error: "Run not found" });
   });
 
+  // The run's findings for CI and security dashboards: SARIF (GitHub code scanning and others) and JUnit XML.
+  const exportOf = (id: string) => {
+    const run = stores.runs.get(id);
+    if (!run) throw new HttpError(404, "Run not found");
+    if (!run.result) throw new HttpError(409, "This test has no result yet.");
+    const project = (stores.projects.get(run.projectId ?? "")?.name ?? "report").replace(/[^\w-]+/g, "-").slice(0, 60);
+    return { result: run.result, name: `glv-${project}-${run.id.slice(0, 8)}` };
+  };
+  app.get<{ Params: { id: string } }>("/api/runs/:id/report.sarif", async (req, reply) => {
+    const { result, name } = exportOf(req.params.id);
+    reply.header("Content-Disposition", `attachment; filename="${name}.sarif"`).header("X-Content-Type-Options", "nosniff");
+    return reply.type("application/sarif+json").send(JSON.stringify(toSarif(result), null, 1));
+  });
+  app.get<{ Params: { id: string } }>("/api/runs/:id/report.junit.xml", async (req, reply) => {
+    const { result, name } = exportOf(req.params.id);
+    reply.header("Content-Disposition", `attachment; filename="${name}.junit.xml"`).header("X-Content-Type-Options", "nosniff");
+    return reply.type("application/xml").send(toJunit(result));
+  });
+
   app.post<{ Params: { id: string } }>("/api/runs/:id/cancel", async (req) => {
     const run = stores.runs.get(req.params.id);
     if (!run) throw new HttpError(404, "Run not found");
@@ -467,11 +487,16 @@ export async function createApp(opts: AppOptions) {
     const { id, file } = req.params;
     if (!/^[\w-]+$/.test(id) || !/^[\w.-]+\.(jpg|png)$/.test(file)) {
       // Reports written by the outside tools (Lighthouse, ZAP...).
-      if (/^[\w-]+$/.test(id) && /^tool-[\w.-]+\.(html|json)$/.test(file)) {
+      if (/^[\w-]+$/.test(id) && /^tool-[\w.-]+\.(html|json|xml)$/.test(file)) {
         // A tool's HTML report runs in a sandbox: it cannot read the dashboard's login or data.
         reply.header("Content-Security-Policy", "sandbox allow-scripts allow-popups allow-downloads");
         reply.header("X-Content-Type-Options", "nosniff");
         if (file.endsWith(".json")) reply.header("Content-Disposition", `inline; filename="${file}"`);
+        // JUnit XML is downloaded, never shown as a page.
+        if (file.endsWith(".xml")) {
+          reply.header("Content-Disposition", `attachment; filename="${file}"`);
+          reply.type("application/xml");
+        }
         return reply.sendFile(file, queue.artifactsDir(id));
       }
       return reply.code(400).send({ error: "Bad file name" });

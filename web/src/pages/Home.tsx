@@ -84,7 +84,7 @@ export function FilePicker({
           <span>Uploading… {pct}%</span>
         ) : value ? (
           <span>
-            <strong>{value.fileName}</strong>{value.size ? ` · ${(value.size / 1e6).toFixed(1)} MB` : ""} · <u>change</u>
+            <strong>{value.fileName}</strong>{value.size ? ` · ${value.size < 1e6 ? `${Math.max(1, Math.round(value.size / 1e3))} KB` : `${(value.size / 1e6).toFixed(1)} MB`}` : ""} · <u>change</u>
           </span>
         ) : (
           <span>

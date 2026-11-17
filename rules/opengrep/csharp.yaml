@@ -1,0 +1,35 @@
+# GLV rules for C#. Written by GLV Infotech for the testing platform.
+rules:
+  - id: glv.cs.sql-injection
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      SQL query built by joining text (SQL injection). Use parameters:
+      cmd.Parameters.AddWithValue("@id", id), or FromSqlInterpolated in Entity Framework.
+    metadata:
+      glv-same-as: "code:sql-injection"
+      glv-title: "SQL query built by joining text (SQL injection)"
+      cwe: "CWE-89"
+    pattern-either:
+      - pattern: new SqlCommand("..." + $X, ...)
+      - pattern: new SqlCommand($"...", ...)
+      - pattern: $CMD.CommandText = "..." + $X
+      - pattern: $CMD.CommandText = $"..."
+      - pattern: $DB.FromSqlRaw("..." + $X, ...)
+      - pattern: $DB.FromSqlRaw($"...", ...)
+      - pattern: $DB.ExecuteSqlRaw("..." + $X, ...)
+
+  - id: glv.cs.tls-verify-off
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Every certificate is accepted, so anyone on the network can read and change the traffic.
+      Remove the callback that always returns true.
+    metadata:
+      glv-same-as: "code:tls-verify-off"
+      glv-title: "Certificate checks turned off"
+      cwe: "CWE-295"
+    pattern-either:
+      - pattern: $X.ServerCertificateCustomValidationCallback = (...) => true
+      - pattern: ServicePointManager.ServerCertificateValidationCallback = (...) => true
+      - pattern: $X.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator

@@ -1,0 +1,52 @@
+# GLV rules for Go. Written by GLV Infotech for the testing platform.
+rules:
+  - id: glv.go.sql-injection
+    languages: [go]
+    severity: ERROR
+    message: >-
+      SQL query built by joining text (SQL injection). Pass the values as arguments with
+      ? or $1 placeholders: db.Query("... WHERE id = $1", id).
+    metadata:
+      glv-same-as: "code:sql-injection"
+      glv-title: "SQL query built by joining text (SQL injection)"
+      cwe: "CWE-89"
+    patterns:
+      - pattern-either:
+          - pattern: $DB.$Q(fmt.Sprintf(...), ...)
+          - pattern: $DB.$Q("..." + $X, ...)
+          - pattern: $DB.$Q($CTX, fmt.Sprintf(...), ...)
+          - pattern: $DB.$Q($CTX, "..." + $X, ...)
+      - metavariable-regex:
+          metavariable: $Q
+          regex: "^(Query|QueryRow|Exec|QueryContext|QueryRowContext|ExecContext|Raw)$"
+
+  - id: glv.go.command-injection
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A shell runs text that is not fixed (command injection). Call the program directly with
+      exec.Command(name, args...) instead of sh -c.
+    metadata:
+      glv-same-as: "code:command-injection"
+      glv-title: "Shell command built from text that is not fixed (command injection)"
+      cwe: "CWE-78"
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD)
+          - pattern: exec.Command("bash", "-c", $CMD)
+          - pattern: exec.CommandContext($CTX, "sh", "-c", $CMD)
+          - pattern: exec.CommandContext($CTX, "bash", "-c", $CMD)
+      - pattern-not: exec.Command("sh", "-c", "...")
+      - pattern-not: exec.Command("bash", "-c", "...")
+
+  - id: glv.go.tls-verify-off
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Certificate checks are turned off (InsecureSkipVerify), so anyone on the network can read
+      and change the traffic. Remove it.
+    metadata:
+      glv-same-as: "code:tls-verify-off"
+      glv-title: "Certificate checks turned off"
+      cwe: "CWE-295"
+    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"

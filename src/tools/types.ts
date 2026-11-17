@@ -1,4 +1,4 @@
-import type { Category, Finding, ProductType, ProjectTarget } from "../types.js";
+import type { Category, Finding, Login, ProductType, ProjectTarget } from "../types.js";
 
 /** Safe tools behave like a normal visitor. Permission tools attack or load a site (phase 3). */
 export type ToolSafety = "safe" | "permission";
@@ -6,6 +6,14 @@ export type ToolSafety = "safe" | "permission";
 export interface ToolOption {
   id: string;
   label: string;
+  /** "choice" (the default) picks from choices; "file" is a file the tester uploads (a Postman collection). */
+  kind?: "choice" | "file";
+  /** For a file: the file types the upload takes, e.g. ".json". */
+  accept?: string;
+  /** For a file: the tool cannot run without it. */
+  required?: boolean;
+  /** One line under the option. */
+  hint?: string;
   choices: { value: string; label: string }[];
   default: string;
 }
@@ -49,6 +57,14 @@ export interface ToolContext {
   urls: string[];
   /** Cookie header of the signed-in session, for tools that test signed-in pages. */
   cookie?: string;
+  /** The project's saved login (API key or Git token), decrypted for this run, for tools that use it. */
+  login?: Login;
+  /** Code tests: the project's files on disk (the clone, or the unpacked zip). */
+  sourceDir?: string;
+  /** API tests: the uploaded OpenAPI file on disk (else target.specUrl). */
+  specFile?: string;
+  /** Where uploaded files are kept (a tool's own upload, such as a Postman collection). */
+  uploadsDir: string;
   options: Record<string, string>;
   /** Where the tool's own report files go (served with the run's evidence). */
   outDir: string;
@@ -69,7 +85,21 @@ export interface ToolReport {
  * platform check already found it on the same site, the tool's copy is folded into that finding
  * instead of being counted twice.
  */
-export type ToolFinding = Omit<Finding, "id" | "agent"> & { sameAs?: string[] };
+export type ToolFinding = Omit<Finding, "id" | "agent"> & {
+  sameAs?: string[];
+  /**
+   * Where the platform's finding must be: on the same site (the default), in the same file (code),
+   * or on the same API endpoint (sameText then holds its path, such as "/users/{id}").
+   */
+  sameScope?: "site" | "file" | "endpoint";
+  /** Text the platform's finding must also hold, such as "lodash@4.17.15" or "line 12:". */
+  sameText?: string;
+  /**
+   * Names the problem across tools, such as "pkg:lodash@4.17.15": when an earlier tool in the same
+   * run reported the same key, this copy is folded into that finding.
+   */
+  key?: string;
+};
 
 export interface ToolOutput {
   findings: ToolFinding[];
