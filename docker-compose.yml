@@ -10,6 +10,11 @@ services:
     ports:
       - "4000:4000"
     env_file: .env
+    # These win over .env: inside the container the app must listen on 4000 and store
+    # data in the /data volume (it runs as a non-root user and cannot write elsewhere).
+    environment:
+      PORT: "4000"
+      DATA_DIR: /data
     volumes:
       - agent-data:/data
     # Chromium needs more shared memory than Docker's 64 MB default.
