@@ -67,6 +67,13 @@ export interface Overview {
 /** Fired when the server says the session is gone, so the app can show the sign-in screen. */
 export const UNAUTHORIZED = "glv:unauthorized";
 
+/** loginOff: the server runs with AUTH_DISABLED=1, so there is no sign-in and everyone is the owner. */
+export interface AuthState {
+  setupNeeded: boolean;
+  user: User | null;
+  loginOff?: boolean;
+}
+
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
@@ -82,7 +89,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 }
 
 export const api = {
-  authState: () => call<{ setupNeeded: boolean; user: User | null }>("GET", "/api/auth/state"),
+  authState: () => call<AuthState>("GET", "/api/auth/state"),
   setup: (b: { name: string; email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/setup", b),
   login: (b: { email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/login", b),
   logout: () => call("POST", "/api/auth/logout", {}),

@@ -15,6 +15,10 @@ services:
     environment:
       PORT: "4000"
       DATA_DIR: /data
+      # Login is OFF by default while GLV builds and tests the system on its own computers:
+      # no owner account and no sign-in. Before putting it on a server, add AUTH_DISABLED=0
+      # to .env and restart (docker compose up -d). See "Login switch" in README.md.
+      AUTH_DISABLED: ${AUTH_DISABLED:-1}
     volumes:
       - agent-data:/data
     # Chromium needs more shared memory than Docker's 64 MB default.

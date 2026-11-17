@@ -12,7 +12,19 @@ const TABS: [Tab, string][] = [
   ["settings", "Settings"],
 ];
 
-export function Owner({ tab, meta, reloadMeta, user }: { tab?: string; meta: Meta; reloadMeta: () => void; user: User }) {
+export function Owner({
+  tab,
+  meta,
+  reloadMeta,
+  user,
+  loginOff,
+}: {
+  tab?: string;
+  meta: Meta;
+  reloadMeta: () => void;
+  user: User;
+  loginOff: boolean;
+}) {
   const current = (TABS.find(([t]) => t === tab)?.[0] ?? "overview") as Tab;
   if (user.role !== "owner") {
     return (
@@ -40,7 +52,7 @@ export function Owner({ tab, meta, reloadMeta, user }: { tab?: string; meta: Met
       {current === "overview" && <OverviewTab />}
       {current === "agents" && <AgentsTab meta={meta} reloadMeta={reloadMeta} />}
       {current === "team" && <TeamTab me={user} />}
-      {current === "settings" && <SettingsTab meta={meta} reloadMeta={reloadMeta} />}
+      {current === "settings" && <SettingsTab meta={meta} reloadMeta={reloadMeta} loginOff={loginOff} />}
     </div>
   );
 }
@@ -257,7 +269,7 @@ function TeamTab({ me }: { me: User }) {
   );
 }
 
-function SettingsTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void }) {
+function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: () => void; loginOff: boolean }) {
   const [pages, setPages] = useState(meta.defaultMaxPages);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -302,44 +314,58 @@ function SettingsTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void 
         </div>
         {err && <div className="error">{err}</div>}
       </div>
-      <form
-        className="card form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setErr("");
-          try {
-            await api.changePassword(pw);
-            setPw({ current: "", password: "" });
-            setMsg("Password changed");
-          } catch (e2) {
-            setErr((e2 as Error).message);
-          }
-        }}
-      >
-        <div className="stat-label">Change my password</div>
-        <label className="form-field">
-          <span>Current password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            value={pw.current}
-            onChange={(e) => setPw({ ...pw, current: e.target.value })}
-          />
-        </label>
-        <label className="form-field">
-          <span>New password</span>
-          <input
-            className="input"
-            type="password"
-            minLength={10}
-            autoComplete="new-password"
-            value={pw.password}
-            onChange={(e) => setPw({ ...pw, password: e.target.value })}
-          />
-        </label>
-        <button className="btn">Change password</button>
-      </form>
+      {loginOff ? (
+        <div className="card form">
+          <div className="stat-label">Login is off</div>
+          <p className="muted small">
+            The server runs with AUTH_DISABLED=1, so there is no sign-in and everyone who opens the dashboard is the owner. It
+            only accepts visits from this computer and its local network.
+          </p>
+          <p className="muted small">
+            Before you put it on a server, set AUTH_DISABLED=0 in the .env file and restart. The dashboard then asks for the owner
+            account (or uses OWNER_EMAIL and OWNER_PASSWORD from .env).
+          </p>
+        </div>
+      ) : (
+        <form
+          className="card form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setErr("");
+            try {
+              await api.changePassword(pw);
+              setPw({ current: "", password: "" });
+              setMsg("Password changed");
+            } catch (e2) {
+              setErr((e2 as Error).message);
+            }
+          }}
+        >
+          <div className="stat-label">Change my password</div>
+          <label className="form-field">
+            <span>Current password</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              value={pw.current}
+              onChange={(e) => setPw({ ...pw, current: e.target.value })}
+            />
+          </label>
+          <label className="form-field">
+            <span>New password</span>
+            <input
+              className="input"
+              type="password"
+              minLength={10}
+              autoComplete="new-password"
+              value={pw.password}
+              onChange={(e) => setPw({ ...pw, password: e.target.value })}
+            />
+          </label>
+          <button className="btn">Change password</button>
+        </form>
+      )}
     </div>
   );
 }

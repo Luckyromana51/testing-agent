@@ -12,7 +12,7 @@ This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8Mpmf
 - **Issues**: a board (Open, In progress, Fixed, Verified) across projects. Keys look like `GLV-12`. Mark an issue fixed, press Re-test, and the next run either verifies it or moves it back to Open as "Came back". Assign issues and add notes; everything is kept in the history.
 - **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count and the Claude summary.
 
-The first time the dashboard opens, it asks you to create the owner account. Do that straight after the first start, before anyone else can reach the server.
+With login on, the first time the dashboard opens it asks you to create the owner account. Do that straight after the first start, before anyone else can reach the server. While GLV is still building the system, Docker starts with login off (see [Login switch](#login-switch-auth_disabled)).
 
 ## Specialist agents
 
@@ -97,7 +97,22 @@ cp .env.example .env    # add ANTHROPIC_API_KEY
 docker compose up -d --build
 ```
 
-The dashboard runs on port 4000. Scan results and screenshots are kept in the `agent-data` volume. Put it behind your usual reverse proxy (Nginx or Caddy) with HTTPS and a login, because the dashboard has no sign-in yet.
+The dashboard runs on port 4000. Scan results and screenshots are kept in the `agent-data` volume. On a server, turn login on first (below), then put it behind your usual reverse proxy (Nginx or Caddy) with HTTPS and set `TRUST_PROXY=1`.
+
+### Login switch (AUTH_DISABLED)
+
+While GLV builds and tests the system on its own computers, `docker compose` starts with **login off** (`AUTH_DISABLED=1`): no owner account screen and no sign-in, and everyone who opens the dashboard is the owner. The sidebar shows "Login is off for local use", and the server log prints a warning at start.
+
+As a safety net, with login off the server only answers visits from its own computer and local network (including Docker's network on a Mac). Anything from the internet, directly or through a proxy that passes the visitor's address, gets "Login is turned off on this server". Do not rely on that on a real server.
+
+**Before putting it on a server, turn login on:**
+
+1. In `.env`, set `AUTH_DISABLED=0` (add the line if it is missing).
+2. Optional: set `OWNER_EMAIL` and `OWNER_PASSWORD` in `.env` to create the owner account at start. Otherwise the dashboard asks for it the first time it opens.
+3. Restart: `docker compose up -d`.
+4. Check: opening the dashboard now shows the sign-in or owner account screen, and the sidebar no longer says "Login is off".
+
+Projects, reports and issues made while login was off are kept. To turn login off again on your own computer, set `AUTH_DISABLED=1` and restart. Without Docker (`npm start`), login is on unless you set `AUTH_DISABLED=1` yourself.
 
 Each scan uses about 1 to 2 CPU cores and 1 to 2 GB of RAM while running (an estimate, not yet measured). `SCAN_CONCURRENCY` (default 2) controls how many scans run at once.
 
