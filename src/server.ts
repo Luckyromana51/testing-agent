@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { aiEnabled } from "./ai/triage.js";
+import { groupFindings } from "./group.js";
 import { ScanQueue, type ScanRequest } from "./queue.js";
 import { RunStore } from "./store.js";
 
@@ -49,7 +50,7 @@ app.get("/api/runs", async () =>
     ...run,
     overallScore: result?.overallScore,
     pageCount: result?.pages.length,
-    findingCount: result?.findings.length,
+    findingCount: result ? groupFindings(result.findings).length : undefined,
     lastProgress: progress.at(-1),
   })),
 );

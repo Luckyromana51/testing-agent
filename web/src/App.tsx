@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Category, Finding, Run, Severity } from "../../src/types.ts";
+import { groupFindings } from "../../src/group.ts";
 import { api, type RunSummary } from "./api.ts";
 
 const CATEGORY_LABEL: Record<Category, string> = {
@@ -93,7 +94,7 @@ export function App() {
                   <span className="run-url">{r.url.replace(/^https?:\/\//, "")}</span>
                   <span className="run-sub">
                     {r.status === "done"
-                      ? `${r.pageCount} pages · ${r.findingCount} findings · ${timeAgo(r.createdAt)}`
+                      ? `${r.pageCount} pages · ${r.findingCount} issues · ${timeAgo(r.createdAt)}`
                       : r.status === "failed"
                         ? `Failed · ${timeAgo(r.createdAt)}`
                         : (r.lastProgress ?? "Queued")}
@@ -301,7 +302,7 @@ function RunView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
         </div>
         <div className="score-grid">
           {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => {
-            const n = result.findings.filter((f) => f.category === c && f.severity !== "info").length;
+            const n = groupFindings(result.findings.filter((f) => f.category === c && f.severity !== "info")).length;
             return (
               <div className="score-card" key={c}>
                 <div className="score-card-top">
@@ -327,7 +328,7 @@ function RunView({ id, onDeleted }: { id: string; onDeleted: () => void }) {
 
       <div className="tabs">
         <button className={tab === "findings" ? "active" : ""} onClick={() => setTab("findings")}>
-          Findings ({result.findings.length})
+          Issues ({groupFindings(result.findings).length})
         </button>
         <button className={tab === "pages" ? "active" : ""} onClick={() => setTab("pages")}>
           Pages ({result.pages.length})
@@ -371,30 +372,21 @@ function Findings({ findings }: { findings: Finding[] }) {
   const [minSev, setMinSev] = useState<Severity>("low");
   const [open, setOpen] = useState<string | null>(null);
 
-  // The same issue often appears on every page (a shared header, a site-wide header).
-  // Group it into one row so the list shows distinct problems, not repeats.
+  // The same issue often appears on every page (a shared header or footer). Group it into one
+  // row so the list shows distinct problems, not repeats.
+  const groups = useMemo(() => groupFindings(findings), [findings]);
   const shown = useMemo(() => {
     const limit = SEVERITIES.indexOf(minSev);
-    const groups = new Map<string, { key: string; first: Finding; items: Finding[] }>();
-    for (const f of findings) {
-      if (!(cat === "all" || f.category === cat) || SEVERITIES.indexOf(f.severity) > limit) continue;
-      const key = `${f.rule}|${f.title.replace(/\d+(\.\d+)?/g, "#")}`;
-      const g = groups.get(key) ?? { key, first: f, items: [] };
-      g.items.push(f);
-      groups.set(key, g);
-    }
-    return [...groups.values()].sort(
-      (a, b) =>
-        SEVERITIES.indexOf(a.first.severity) - SEVERITIES.indexOf(b.first.severity) ||
-        b.items.length - a.items.length,
+    return groups.filter(
+      (g) => (cat === "all" || g.first.category === cat) && SEVERITIES.indexOf(g.severity) <= limit,
     );
-  }, [findings, cat, minSev]);
+  }, [groups, cat, minSev]);
 
   const counts = useMemo(() => {
     const c = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<Severity, number>;
-    for (const f of findings) c[f.severity]++;
+    for (const g of groups) c[g.severity]++;
     return c;
-  }, [findings]);
+  }, [groups]);
 
   return (
     <section>
@@ -424,40 +416,68 @@ function Findings({ findings }: { findings: Finding[] }) {
             {counts[s]} {s}
           </span>
         ))}
+        <span className="muted">distinct issues</span>
       </div>
       <ul className="findings">
         {shown.length === 0 && <li className="empty">Nothing to show with these filters.</li>}
-        {shown.map(({ key, first: f, items }) => (
-          <li key={key} className={`finding ${open === key ? "open" : ""}`}>
-            <button className="finding-row" onClick={() => setOpen(open === key ? null : key)}>
-              <span className={`sev sev-${f.severity}`}>{f.severity}</span>
-              <span className="finding-title">{f.title}</span>
-              <span className="finding-cat">{CATEGORY_LABEL[f.category]}</span>
-              <span className="finding-page">
-                {items.length > 1 ? `${items.length} pages` : new URL(f.pageUrl).pathname}
-              </span>
-            </button>
-            {open === key && (
-              <div className="finding-body">
-                <p>{f.detail}</p>
-                {f.evidence && <pre className="evidence">{f.evidence}</pre>}
-                <div className="finding-foot">
-                  Rule <code>{f.rule}</code> · {items.length > 1 ? `Found on ${items.length} pages:` : "Page"}
+        {shown.map(({ key, first: f, items, pages, severity }) => {
+          const hasTargets = items.some((i) => i.evidence && /^https?:\/\//.test(i.evidence));
+          return (
+            <li key={key} className={`finding ${open === key ? "open" : ""}`}>
+              <button className="finding-row" onClick={() => setOpen(open === key ? null : key)}>
+                <span className={`sev sev-${severity}`}>{severity}</span>
+                <span className="finding-title">
+                  {items.length > 1 && hasTargets ? `${f.title} (${items.length})` : f.title}
+                </span>
+                <span className="finding-cat">{CATEGORY_LABEL[f.category]}</span>
+                <span className="finding-page">
+                  {pages.length > 1 ? `${pages.length} pages` : new URL(f.pageUrl).pathname}
+                </span>
+              </button>
+              {open === key && (
+                <div className="finding-body">
+                  <p>{f.detail}</p>
+                  {!hasTargets && f.evidence && <pre className="evidence">{f.evidence}</pre>}
+                  <div className="finding-foot">
+                    Rule <code>{f.rule}</code> ·{" "}
+                    {hasTargets
+                      ? `${items.length} link${items.length > 1 ? "s" : ""}:`
+                      : pages.length > 1
+                        ? `Found on ${pages.length} pages:`
+                        : "Page:"}
+                  </div>
+                  <ul className="finding-pages">
+                    {hasTargets
+                      ? items.map((i) => (
+                          <li key={i.id}>
+                            <code>{i.evidence}</code>
+                            <span className="muted">
+                              {" "}
+                              · on{" "}
+                              <a href={i.pageUrl} target="_blank" rel="noreferrer">
+                                {new URL(i.pageUrl).pathname}
+                              </a>
+                            </span>
+                          </li>
+                        ))
+                      : pages.map((p) => {
+                          const onPage = items.filter((i) => i.pageUrl === p);
+                          const other = onPage.find((i) => i.title !== f.title);
+                          return (
+                            <li key={p}>
+                              <a href={p} target="_blank" rel="noreferrer">
+                                {p}
+                              </a>
+                              {other && <span className="muted"> · {other.title}</span>}
+                            </li>
+                          );
+                        })}
+                  </ul>
                 </div>
-                <ul className="finding-pages">
-                  {items.map((i) => (
-                    <li key={i.id}>
-                      <a href={i.pageUrl} target="_blank" rel="noreferrer">
-                        {i.pageUrl}
-                      </a>
-                      {items.length > 1 && i.title !== f.title && <span className="muted"> · {i.title}</span>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </li>
-        ))}
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -496,7 +516,14 @@ function Pages({ run }: { run: Run }) {
               </a>
               <div className="page-stats">
                 <span className={p.status && p.status < 400 ? "ok" : "bad"}>HTTP {p.status ?? "error"}</span>
-                {p.loadMs !== null && <span>{(p.loadMs / 1000).toFixed(1)} s</span>}
+                {p.metrics?.lcpMs ? (
+                  <span title="Largest Contentful Paint: when the main content appears">
+                    LCP {(p.metrics.lcpMs / 1000).toFixed(1)} s
+                  </span>
+                ) : (
+                  p.loadMs !== null && <span>{(p.loadMs / 1000).toFixed(1)} s</span>
+                )}
+                {p.metrics && <span>{(p.metrics.bytes / 1_000_000).toFixed(1)} MB</span>}
                 <span>
                   {issues} issue{issues === 1 ? "" : "s"}
                 </span>

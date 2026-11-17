@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
-import type { AiSummary, Finding, ScanResult, Severity } from "../types.js";
+import { groupFindings } from "../group.js";
+import type { AiSummary, Finding, ScanResult } from "../types.js";
 
 const SummarySchema = z.object({
   summary: z
@@ -18,23 +19,13 @@ const SummarySchema = z.object({
     .describe("The 3 to 5 fixes with the biggest impact, most important first."),
 });
 
-const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
-
-/** Keeps the prompt small: one line per unique rule, worst first, with how many pages it hit. */
+/** Keeps the prompt small: one line per distinct issue, worst first, with how many pages it hit. */
 export function compactFindings(findings: Finding[], limit = 60): string {
-  const byRule = new Map<string, { f: Finding; pages: Set<string> }>();
-  for (const f of findings) {
-    const key = `${f.rule}|${f.title}`;
-    const entry = byRule.get(key) ?? { f, pages: new Set<string>() };
-    entry.pages.add(f.pageUrl);
-    byRule.set(key, entry);
-  }
-  return [...byRule.values()]
-    .sort((a, b) => SEVERITY_ORDER.indexOf(a.f.severity) - SEVERITY_ORDER.indexOf(b.f.severity))
+  return groupFindings(findings)
     .slice(0, limit)
     .map(
-      ({ f, pages }) =>
-        `- [${f.severity}] [${f.category}] ${f.title} (${pages.size} page(s), e.g. ${f.pageUrl})${
+      ({ first: f, severity, pages }) =>
+        `- [${severity}] [${f.category}] ${f.title} (${pages.length} page(s), e.g. ${f.pageUrl})${
           f.evidence ? ` evidence: ${f.evidence.split("\n").slice(0, 2).join(" | ").slice(0, 200)}` : ""
         }`,
     )

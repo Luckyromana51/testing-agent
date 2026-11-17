@@ -4,6 +4,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { aiEnabled, summariseWithClaude } from "./ai/triage.js";
 import { scanSite } from "./runner/scan.js";
+import { groupFindings } from "./group.js";
 import type { Severity } from "./types.js";
 
 const HELP = `glvtest - GLV Testing Agent
@@ -62,17 +63,20 @@ async function main() {
   }
   await writeFile(path.join(outDir, "report.json"), JSON.stringify({ ...result, ai }, null, 2));
 
+  const issues = groupFindings(result.findings);
   const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 } as Record<Severity, number>;
-  for (const f of result.findings) counts[f.severity]++;
+  for (const g of issues) counts[g.severity]++;
 
   console.log(`\nGLV Testing Agent report for ${result.startUrl}`);
   console.log(`Pages tested: ${result.pages.length}   Overall score: ${result.overallScore}/100\n`);
   console.table(result.scores);
   console.log(
-    `Findings: ${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low, ${counts.info} info`,
+    `Issues: ${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low, ${counts.info} info`,
   );
-  const worst = [...result.findings].sort((a, b) => RANK[b.severity] - RANK[a.severity]).slice(0, 10);
-  for (const f of worst) console.log(`  [${f.severity.toUpperCase()}] ${f.title}  (${f.pageUrl})`);
+  for (const g of issues.slice(0, 15)) {
+    const where = g.pages.length > 1 ? `${g.pages.length} pages` : g.first.pageUrl;
+    console.log(`  [${g.severity.toUpperCase()}] ${g.first.title}  (${where})`);
+  }
   if (ai) {
     console.log(`\nClaude summary (${ai.model}):\n${ai.summary}\n`);
     ai.topFixes.forEach((fix, i) => console.log(`${i + 1}. ${fix.title}: ${fix.how}`));

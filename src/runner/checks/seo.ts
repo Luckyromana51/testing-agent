@@ -62,12 +62,12 @@ export function seoFindings(url: string, f: SeoFacts): Finding[] {
       "Page has no title",
       "Search engines show the <title> as the result headline.",
     );
-  } else if (f.title.length < 10 || f.title.length > 60) {
+  } else if (f.title.length < 10 || f.title.length > 70) {
     add(
       "seo:title-length",
       "low",
-      `Title is ${f.title.length} characters`,
-      "Keep titles between 10 and 60 characters so they are not cut off in search results.",
+      `Title is ${f.title.length < 10 ? "too short" : "too long"} (${f.title.length} characters)`,
+      "Google shows about 60 characters of a title before cutting it off. Keep titles between 10 and 70 characters.",
       f.title,
     );
   }
@@ -82,8 +82,8 @@ export function seoFindings(url: string, f: SeoFacts): Finding[] {
     add(
       "seo:description-length",
       "low",
-      `Meta description is ${f.description.length} characters`,
-      "Aim for 50 to 160 characters.",
+      `Meta description is ${f.description.length < 50 ? "too short" : "too long"} (${f.description.length} characters)`,
+      "Google shows about 160 characters of a description before cutting it off. Aim for 50 to 160.",
       f.description,
     );
   }

@@ -1,3 +1,4 @@
+import { groupFindings } from "../group.js";
 import { CATEGORIES, type Category, type Finding, type Severity } from "../types.js";
 
 const PENALTY: Record<Severity, number> = {
@@ -9,8 +10,9 @@ const PENALTY: Record<Severity, number> = {
 };
 
 /**
- * Scores each category from 0 to 100. Every finding takes points off by severity;
- * the penalty is averaged per page so a big site is not punished just for being big.
+ * Scores each category from 0 to 100. Each distinct issue takes points off once, by severity,
+ * scaled by how widespread it is: half the penalty for an issue on one page, the full penalty for
+ * one on every page. So a shared header problem counts as one issue, not one per page.
  */
 export function scoreFindings(
   findings: Finding[],
@@ -20,14 +22,13 @@ export function scoreFindings(
   overallScore: number;
 } {
   const pages = Math.max(1, pageCount);
-  const scores = {} as Record<Category, number>;
-  for (const cat of CATEGORIES) {
-    const penalty = findings
-      .filter((f) => f.category === cat)
-      .reduce((sum, f) => sum + PENALTY[f.severity], 0);
-    // Site-wide findings (security headers) repeat on every page, so average them out.
-    scores[cat] = Math.max(0, Math.round(100 - penalty / Math.sqrt(pages)));
+  const penalty = Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Record<Category, number>;
+  for (const g of groupFindings(findings)) {
+    const spread = Math.min(1, g.pages.length / pages);
+    penalty[g.first.category] += PENALTY[g.severity] * (0.5 + 0.5 * spread);
   }
+  const scores = {} as Record<Category, number>;
+  for (const cat of CATEGORIES) scores[cat] = Math.max(0, Math.round(100 - penalty[cat]));
   let overallScore = Math.round(CATEGORIES.reduce((s, c) => s + scores[c], 0) / CATEGORIES.length);
   // A single critical issue (site down, no HTTPS, unusable for screen readers) caps the grade.
   if (findings.some((f) => f.severity === "critical")) overallScore = Math.min(overallScore, 69);

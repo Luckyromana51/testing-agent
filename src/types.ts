@@ -32,6 +32,14 @@ export interface PageResult {
   status: number | null;
   title: string;
   loadMs: number | null;
+  /** Speed numbers from the browser's timing data (lab measurement). */
+  metrics?: {
+    ttfbMs: number;
+    lcpMs: number | null;
+    cls: number;
+    loadMs: number | null;
+    bytes: number;
+  };
   screenshot?: string;
   mobileScreenshot?: string;
   error?: string;

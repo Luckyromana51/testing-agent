@@ -14,6 +14,9 @@ const pages: Record<string, string> = {
   <a href="/about">About us</a>
   <a href="/contact">Contact</a>
   <a href="/missing-page">Our team</a>
+  <a href="/busy">Offers</a>
+  <a href="/files/brochure.pdf">Brochure</a>
+  <a href="/files/price-list.pdf">Price list</a>
   <script>window.addEventListener('load', () => { undefinedFunction(); });</script>
 </body></html>`,
   "/about": `<!doctype html><html lang="en"><head><title>About Demo Shop - who we are</title>
@@ -23,9 +26,13 @@ const pages: Record<string, string> = {
 <body><h1>About</h1><h1>Second heading</h1>
   <div style="width:1200px">This box is too wide for phones.</div>
   <a href="/">Home</a></body></html>`,
+  "/busy": `<!doctype html><html lang="en"><head><title>Offers at Demo Shop</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><h1>Offers</h1><a href="/">Home</a></body></html>`,
   "/contact": `<!doctype html><html lang="en"><head><title>Contact</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body><h1>Contact us</h1>
+  <img src="/missing.png" alt="Map">
   <form><input type="email" placeholder="Email"><button></button></form>
   <a href="/">Home</a></body></html>`,
 };
@@ -35,9 +42,23 @@ const PNG = Buffer.from(
   "base64",
 );
 
+/** Pages that answer 503 at first, like a server that is rate limiting or briefly overloaded. */
+const FLAKY: Record<string, number> = { "/busy": 1, "/files/price-list.pdf": 2 };
+
 export function startDemoSite(port = 4100): Promise<Server> {
+  const hits = new Map<string, number>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
+    const hit = (hits.get(url.pathname) ?? 0) + 1;
+    hits.set(url.pathname, hit);
+    if (FLAKY[url.pathname] && hit <= FLAKY[url.pathname]) {
+      res.writeHead(503, { "content-type": "text/html" }).end("<h1>Busy, try again</h1>");
+      return;
+    }
+    if (url.pathname === "/files/price-list.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" }).end("%PDF-1.4");
+      return;
+    }
     // Like a real site moving from example.com to www.example.com: localhost redirects to 127.0.0.1.
     const host = req.headers.host ?? "";
     if (host.startsWith("localhost:")) {

@@ -78,6 +78,32 @@ describe("scanSite against the demo site", () => {
     assert.ok(rules().has("page-error-status"), "404 page");
     assert.ok(rules().has("js-exception"), "uncaught error");
   });
+  it("re-checks before reporting: a busy page or link that recovers is not reported", () => {
+    const busy = result.pages.find((p) => p.url.endsWith("/busy"));
+    assert.equal(busy?.status, 200);
+    const flagged = result.findings.filter(
+      (f) => f.category === "functional" && /busy|price-list/.test(`${f.pageUrl} ${f.evidence ?? ""}`),
+    );
+    assert.deepEqual(flagged, []);
+  });
+  it("reports a link that is really broken, once", () => {
+    const broken = result.findings.filter((f) => f.rule === "broken-link");
+    assert.equal(broken.length, 1);
+    assert.match(broken[0].evidence ?? "", /brochure\.pdf.*404/);
+  });
+  it("does not double-count a missing image as a console error", () => {
+    assert.ok(rules().has("broken-resource"));
+    assert.ok(!rules().has("console-error"), "console-error duplicates broken-resource");
+  });
+  it("counts an issue on every page once when scoring", () => {
+    const one = { id: "1", category: "seo" as const, severity: "high" as const, title: "x", detail: "", rule: "r" };
+    const everywhere = scoreFindings(
+      ["a", "b", "c", "d"].map((p) => ({ ...one, id: p, pageUrl: p })),
+      4,
+    );
+    assert.equal(everywhere.scores.seo, 90);
+    assert.equal(scoreFindings([{ ...one, pageUrl: "a" }], 4).scores.seo, 94);
+  });
   it("finds SEO problems", () => {
     for (const r of ["seo:description-missing", "seo:img-alt", "seo:h1-multiple", "seo:lang-missing"]) {
       assert.ok(rules().has(r), r);

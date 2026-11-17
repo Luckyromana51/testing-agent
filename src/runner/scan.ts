@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page, type Response } from "playwright";
 import type { Finding, PageResult, ScanOptions, ScanResult } from "../types.js";
-import { accessibilityFindings } from "./checks/accessibility.js";
+import { accessibilityFindings, tapTargetFindings } from "./checks/accessibility.js";
 import { collectSeoFacts, seoFindings } from "./checks/seo.js";
 import { cookieFindings, headerFindings, mixedContentFinding } from "./checks/security.js";
 import { finding } from "./finding.js";
@@ -12,7 +12,9 @@ const SKIP_EXT =
   /\.(pdf|zip|rar|7z|gz|jpe?g|png|gif|webp|svg|ico|mp4|mp3|webm|avi|mov|docx?|xlsx?|pptx?|csv|exe|dmg|apk)$/i;
 const DESKTOP = { width: 1366, height: 900 };
 const MOBILE = { width: 390, height: 844 };
-const SLOW_PAGE_MS = 3000;
+const RETRY_STATUSES = [429, 502, 503, 504];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Normalises a URL for de-duplication: drops the #hash and trailing slash. */
 export function normaliseUrl(raw: string): string {
@@ -34,7 +36,7 @@ export function isCrawlable(link: string, origin: string): boolean {
 }
 
 interface PageSignals {
-  consoleErrors: string[];
+  consoleErrors: { text: string; source: string }[];
   pageErrors: string[];
   failedRequests: string[];
   badResponses: string[];
@@ -50,7 +52,7 @@ function listen(page: Page, pageUrl: string): PageSignals {
     insecure: [],
   };
   page.on("console", (msg) => {
-    if (msg.type() === "error") s.consoleErrors.push(msg.text().slice(0, 300));
+    if (msg.type() === "error") s.consoleErrors.push({ text: msg.text().slice(0, 300), source: msg.location().url });
   });
   page.on("pageerror", (err) => s.pageErrors.push(err.message.slice(0, 300)));
   page.on("requestfailed", (req) => {
@@ -76,12 +78,13 @@ function signalFindings(url: string, s: PageSignals): Finding[] {
     severity: Finding["severity"],
     title: string,
     detail: string,
+    category: Finding["category"] = "functional",
   ) => {
     const unique = [...new Set(items)];
     if (!unique.length) return;
     out.push(
       finding({
-        category: "functional",
+        category,
         rule,
         severity,
         title: `${unique.length} ${title}`,
@@ -92,6 +95,23 @@ function signalFindings(url: string, s: PageSignals): Finding[] {
       }),
     );
   };
+
+  // "Failed to load resource" console lines repeat what broken-resource / failed-request already report.
+  const consoleErrors = s.consoleErrors.filter((c) => !/^Failed to load resource/i.test(c.text));
+  const sri = consoleErrors.filter((c) => /integrity/i.test(c.text) && /block/i.test(c.text));
+  const csp = consoleErrors.filter((c) => /Content Security Policy/i.test(c.text));
+  const rest = consoleErrors.filter((c) => !sri.includes(c) && !csp.includes(c));
+  const pageOrigin = new URL(url).origin;
+  const isThirdParty = (source: string) => {
+    try {
+      return Boolean(source) && new URL(source).origin !== pageOrigin;
+    } catch {
+      return false;
+    }
+  };
+  const firstParty = rest.filter((c) => !isThirdParty(c.source)).map((c) => c.text);
+  const thirdParty = rest.filter((c) => isThirdParty(c.source)).map((c) => `${c.text} (from ${c.source})`);
+
   group(
     s.pageErrors,
     "js-exception",
@@ -100,11 +120,33 @@ function signalFindings(url: string, s: PageSignals): Finding[] {
     "Uncaught errors can break buttons, forms and other features on the page.",
   );
   group(
-    s.consoleErrors,
+    sri.map((c) => c.text),
+    "sri-blocked",
+    "high",
+    "script(s) or style(s) blocked by an integrity check",
+    "The browser refused to run a file because its content no longer matches the integrity hash in the HTML, so that feature does not work. This usually happens after a deploy when the file changed but the page (or a cache) still has the old hash. Update the integrity attribute and clear the page cache.",
+  );
+  group(
+    csp.map((c) => c.text),
+    "csp-violation",
+    "medium",
+    "Content-Security-Policy violation(s)",
+    "The site's own security policy blocked something the page tried to load or run. Either the policy is too strict for a feature you use, or something unexpected was injected.",
+    "security",
+  );
+  group(
+    firstParty,
     "console-error",
     "medium",
     "console error(s)",
     "Errors logged in the browser console often point to broken scripts or missing files.",
+  );
+  group(
+    thirdParty,
+    "console-error-third-party",
+    "low",
+    "console error(s) from third-party scripts",
+    "These come from code loaded from other sites (chat widgets, analytics, ads). They rarely break your page but are worth a look.",
   );
   group(
     s.badResponses,
@@ -121,6 +163,88 @@ function signalFindings(url: string, s: PageSignals): Finding[] {
     "The browser could not fetch these files at all (DNS, network or blocked).",
   );
   out.push(...mixedContentFinding(url, [...new Set(s.insecure)]));
+  return out;
+}
+
+interface PageMetrics {
+  ttfb: number;
+  load: number;
+  lcp: number;
+  cls: number;
+  weight: number;
+}
+
+const LAB_NOTE =
+  "Measured once from the testing server, so real visitors on other networks may see different numbers.";
+
+/**
+ * Speed numbers from the browser's own timing data, judged against Google's Core Web Vitals
+ * thresholds (LCP good under 2.5 s, poor over 4 s; CLS good under 0.1, poor over 0.25; TTFB good under 0.8 s).
+ */
+async function speedFindings(page: Page, url: string, result: PageResult): Promise<Finding[]> {
+  // A string, not a function: bundlers rewrite named functions in ways the browser cannot run.
+  const m = (await page.evaluate(`new Promise(function (resolve) {
+    var lcp = 0, cls = 0;
+    try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { lcp = Math.max(lcp, e.startTime); }); }).observe({ type: "largest-contentful-paint", buffered: true }); } catch (e) {}
+    try { new PerformanceObserver(function (l) { l.getEntries().forEach(function (e) { if (!e.hadRecentInput) cls += e.value; }); }).observe({ type: "layout-shift", buffered: true }); } catch (e) {}
+    var nav = performance.getEntriesByType("navigation")[0] || {};
+    var weight = performance.getEntriesByType("resource").reduce(function (s, e) { return s + (e.transferSize || 0); }, nav.transferSize || 0);
+    setTimeout(function () { resolve({ ttfb: nav.responseStart || 0, load: nav.loadEventEnd || 0, lcp: lcp, cls: cls, weight: weight }); }, 200);
+  })`)) as PageMetrics;
+
+  result.metrics = {
+    ttfbMs: Math.round(m.ttfb),
+    lcpMs: m.lcp ? Math.round(m.lcp) : null,
+    cls: Math.round(m.cls * 1000) / 1000,
+    loadMs: m.load ? Math.round(m.load) : null,
+    bytes: m.weight,
+  };
+  if (m.load) result.loadMs = Math.round(m.load);
+
+  const out: Finding[] = [];
+  const add = (rule: string, severity: Finding["severity"], title: string, detail: string) =>
+    out.push(finding({ category: "performance", rule, severity, title, detail: `${detail} ${LAB_NOTE}`, pageUrl: url }));
+  const sec = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+
+  if (m.lcp > 2500) {
+    add(
+      "perf:lcp",
+      m.lcp > 4000 ? "high" : "medium",
+      `Main content takes ${sec(m.lcp)} to appear (LCP)`,
+      "Largest Contentful Paint should be under 2.5 s (Google ranks pages over 4 s as poor). Compress and resize the main image, preload it, and cut render-blocking scripts and fonts.",
+    );
+  } else if (m.load > 10_000) {
+    add(
+      "slow-page",
+      "medium",
+      `Page takes ${sec(m.load)} to finish loading`,
+      "The main content shows quickly, but the page keeps loading for a long time. Defer or lazy-load scripts, videos and images below the fold.",
+    );
+  }
+  if (m.cls > 0.1) {
+    add(
+      "perf:cls",
+      m.cls > 0.25 ? "medium" : "low",
+      `Layout jumps while loading (CLS ${m.cls.toFixed(2)})`,
+      "Content moves after it appears, which causes mis-taps. Set width and height on images and embeds, and reserve space for banners.",
+    );
+  }
+  if (m.ttfb > 800) {
+    add(
+      "perf:ttfb",
+      m.ttfb > 1800 ? "medium" : "low",
+      `Server takes ${sec(m.ttfb)} to start answering`,
+      "Time to first byte should be under 0.8 s. Turn on page caching (LiteSpeed Cache, a CDN), and check slow database queries.",
+    );
+  }
+  if (m.weight > 3_000_000) {
+    add(
+      "heavy-page",
+      m.weight > 6_000_000 ? "high" : "medium",
+      `Page downloads ${(m.weight / 1_000_000).toFixed(1)} MB`,
+      "Heavy pages are slow on mobile data. Compress images (WebP or AVIF), lazy-load videos, and remove unused scripts.",
+    );
+  }
   return out;
 }
 
@@ -159,8 +283,15 @@ async function scanPage(
 
   let res: Response | null = null;
   try {
-    const started = Date.now();
+    let started = Date.now();
     res = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+    if (res && RETRY_STATUSES.includes(res.status())) {
+      // Usually rate limiting or a brief hiccup, not a broken page: wait, then look again.
+      await sleep(3000);
+      for (const list of Object.values(signals)) list.length = 0;
+      started = Date.now();
+      res = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+    }
     result.loadMs = Date.now() - started;
     url = normaliseUrl(page.url());
     result.url = url;
@@ -200,38 +331,8 @@ async function scanPage(
       );
     }
 
-    if (result.loadMs !== null && result.loadMs > SLOW_PAGE_MS) {
-      findings.push(
-        finding({
-          category: "performance",
-          rule: "slow-page",
-          severity: result.loadMs > 8000 ? "high" : "medium",
-          title: `Page took ${(result.loadMs / 1000).toFixed(1)} s to load`,
-          detail: `Pages should load in under ${SLOW_PAGE_MS / 1000} s. Compress images, defer scripts and enable caching.`,
-          pageUrl: url,
-        }),
-      );
-    }
-
-    await step("page weight", async () => {
-      const weight = await page.evaluate(() =>
-        performance
-          .getEntriesByType("resource")
-          .reduce((sum, e) => sum + ((e as PerformanceResourceTiming).transferSize || 0), 0),
-      );
-      if (weight > 3_000_000) {
-        findings.push(
-          finding({
-            category: "performance",
-            rule: "heavy-page",
-            severity: weight > 6_000_000 ? "high" : "medium",
-            title: `Page downloads ${(weight / 1_000_000).toFixed(1)} MB`,
-            detail:
-              "Heavy pages are slow on mobile data. Compress images (WebP/AVIF) and remove unused scripts.",
-            pageUrl: url,
-          }),
-        );
-      }
+    await step("speed", async () => {
+      findings.push(...(await speedFindings(page, url, result)));
     });
 
     links = await page.$$eval("a[href]", (as) =>
@@ -284,26 +385,9 @@ async function scanPage(
           }),
         );
       }
-      const smallTargets = await page.evaluate(() => {
-        let n = 0;
-        for (const el of Array.from(document.querySelectorAll("a, button, input, select"))) {
-          const r = el.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0 && (r.width < 24 || r.height < 24)) n++;
-        }
-        return n;
-      });
-      if (smallTargets > 5) {
-        findings.push(
-          finding({
-            category: "mobile",
-            rule: "small-tap-targets",
-            severity: "low",
-            title: `${smallTargets} tap targets smaller than 24px on phones`,
-            detail: "Small links and buttons are hard to tap. WCAG 2.2 asks for at least 24 x 24 px.",
-            pageUrl: url,
-          }),
-        );
-      }
+      // axe's WCAG 2.2 target-size rule, run at phone width. Unlike a plain size count it skips
+      // links inside sentences and small targets that have enough space around them.
+      findings.push(...(await tapTargetFindings(page, url)));
       const mshot = `page-${index}-mobile.jpg`;
       await page.screenshot({ path: path.join(opts.artifactsDir, mshot), type: "jpeg", quality: 60 });
       result.mobileScreenshot = mshot;
@@ -317,6 +401,57 @@ async function scanPage(
   return { result, findings, links };
 }
 
+/** Social networks answer automated requests with 999, 403 or a login wall, so a check proves nothing. */
+const BOT_BLOCKING_HOSTS =
+  /(^|\.)(linkedin\.com|facebook\.com|fb\.com|instagram\.com|x\.com|twitter\.com|wa\.me|whatsapp\.com|t\.me|tiktok\.com|pinterest\.com|threads\.net)$/i;
+
+const STATUS_TEXT: Record<number, string> = {
+  400: "Bad Request",
+  404: "Not Found",
+  410: "Gone",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+const describeStatus = (s: number) => `HTTP ${s}${STATUS_TEXT[s] ? ` ${STATUS_TEXT[s]}` : ""}`;
+
+/** One request with HEAD, then GET if HEAD fails or is refused (many servers mishandle HEAD). */
+async function probe(context: BrowserContext, link: string): Promise<{ status: number; error: string }> {
+  const opts = { timeout: 15_000, maxRedirects: 5 };
+  try {
+    const res = await context.request.head(link, opts);
+    if (res.status() < 400) return { status: res.status(), error: "" };
+  } catch {
+    // fall through to GET
+  }
+  try {
+    const res = await context.request.get(link, opts);
+    return { status: res.status(), error: "" };
+  } catch (e) {
+    return { status: 0, error: (e as Error).message.split("\n")[0] };
+  }
+}
+
+/** Loads the link in a real browser tab, which is what a visitor would get. */
+async function browserStatus(context: BrowserContext, link: string): Promise<{ status: number; error: string }> {
+  const page = await context.newPage();
+  try {
+    const res = await page.goto(link, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    return { status: res?.status() ?? 0, error: "" };
+  } catch (e) {
+    return { status: 0, error: (e as Error).message.split("\n")[0] };
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * Checks every link that was not already opened as a page.
+ * A link is only reported as broken after a second look: internal links are re-opened in a real
+ * browser after a pause (so rate limiting or a brief outage is not reported as broken), and other
+ * sites are retried once. At most 2 requests go to the same host at a time.
+ */
 async function checkLinks(
   context: BrowserContext,
   origin: string,
@@ -324,64 +459,79 @@ async function checkLinks(
   onProgress?: (m: string) => void,
 ): Promise<Finding[]> {
   const out: Finding[] = [];
-  const links = [...linkSources.keys()].slice(0, 200);
-  onProgress?.(`Checking ${links.length} links`);
+  const all = [...linkSources.keys()];
+  const skipped = all.filter((l) => BOT_BLOCKING_HOSTS.test(new URL(l).hostname));
+  const links = all.filter((l) => !skipped.includes(l)).slice(0, 200);
+  onProgress?.(
+    `Checking ${links.length} links${skipped.length ? ` (skipping ${skipped.length} social media links, which block automated checks)` : ""}`,
+  );
+
+  const perHost = new Map<string, number>();
+  const withHostSlot = async <T>(host: string, fn: () => Promise<T>): Promise<T> => {
+    while ((perHost.get(host) ?? 0) >= 2) await sleep(50);
+    perHost.set(host, (perHost.get(host) ?? 0) + 1);
+    try {
+      return await fn();
+    } finally {
+      perHost.set(host, (perHost.get(host) ?? 1) - 1);
+    }
+  };
+
   let i = 0;
   const worker = async () => {
     while (i < links.length) {
       const link = links[i++];
-      let status = 0;
-      let error = "";
-      try {
-        let res = await context.request.head(link, { timeout: 15_000, maxRedirects: 5 });
-        // Some servers do not support HEAD; retry with GET.
-        if (res.status() === 405 || res.status() === 501 || res.status() === 403) {
-          res = await context.request.get(link, { timeout: 15_000, maxRedirects: 5 });
-        }
-        status = res.status();
-      } catch (e) {
-        error = (e as Error).message.split("\n")[0];
-      }
-      const source = linkSources.get(link) ?? link;
+      const host = new URL(link).host;
       const internal = new URL(link).origin === origin;
-      const ok = !error && status > 0 && status < 400;
-      // 401/403/429 usually mean "blocked for bots", not broken.
-      if (ok || [401, 403, 429].includes(status)) continue;
+      const failed = (r: { status: number; error: string }) =>
+        Boolean(r.error) || r.status === 0 || (r.status >= 400 && ![401, 403, 429].includes(r.status));
+
+      let r = await withHostSlot(host, () => probe(context, link));
+      if (!failed(r)) continue;
+      // Second look before reporting anything.
+      await sleep(2000);
+      // Internal pages get a real browser; files (PDFs and so on) would only start a download there.
+      const isPage = internal && !SKIP_EXT.test(new URL(link).pathname);
+      r = await withHostSlot(host, () => (isPage ? browserStatus(context, link) : probe(context, link)));
+      if (!failed(r)) continue;
+
+      const source = linkSources.get(link) ?? link;
+      const what = r.error ? r.error : describeStatus(r.status);
       if (internal) {
         out.push(
           finding({
             category: "functional",
             rule: "broken-link",
             severity: "high",
-            title: error ? "Internal link could not be reached" : `Broken link (HTTP ${status})`,
-            detail: `Linked from ${source}.${error ? ` ${error}` : ""}`,
+            title: "Broken link on your site",
+            detail: `Visitors who click this link get an error (${what}). Checked twice, a few seconds apart, so this is not a brief outage.`,
             pageUrl: source,
-            evidence: link,
+            evidence: `${link}  (${r.error ? "could not be reached" : describeStatus(r.status)})`,
           }),
         );
-      } else if (status === 404 || status === 410) {
+      } else if (r.status === 404 || r.status === 410) {
         out.push(
           finding({
             category: "functional",
             rule: "broken-external-link",
             severity: "medium",
-            title: `Broken link to another website (HTTP ${status})`,
-            detail: `The page this links to no longer exists. Linked from ${source}.`,
+            title: "Link to another website is broken",
+            detail: `The page this links to no longer exists (${what}). Update or remove the link.`,
             pageUrl: source,
-            evidence: link,
+            evidence: `${link}  (${describeStatus(r.status)})`,
           }),
         );
       } else {
-        // Other sites often refuse automated checks (503, 999, timeouts), so this is not proof of a broken link.
+        // Other sites often refuse automated checks (503, timeouts), so this is not proof of a broken link.
         out.push(
           finding({
             category: "functional",
             rule: "unverified-external-link",
             severity: "info",
             title: "Link to another website could not be checked",
-            detail: `${error || `The site answered HTTP ${status}`}. Many sites block automated checks, so open it by hand to confirm. Linked from ${source}.`,
+            detail: `${what}. Many sites block automated checks, so open it by hand to confirm.`,
             pageUrl: source,
-            evidence: link,
+            evidence: `${link}  (${r.error ? "no answer" : describeStatus(r.status)})`,
           }),
         );
       }
