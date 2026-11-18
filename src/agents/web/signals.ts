@@ -1,9 +1,17 @@
-import type { Page } from "playwright";
+import type { Page, Request } from "playwright";
 import { mixedContentFinding } from "../../runner/checks/security.js";
 import { finding } from "../../runner/finding.js";
 import { WEB_PRODUCTS } from "../../products.js";
 import type { Finding } from "../../types.js";
 import type { PageAgent, PageSignals } from "../types.js";
+
+/** The address a chain of redirects started from. */
+const firstOf = (req: Request): string | undefined => {
+  let r = req.redirectedFrom();
+  if (!r) return undefined;
+  while (r.redirectedFrom()) r = r.redirectedFrom()!;
+  return r.url();
+};
 
 /** Starts recording console errors, crashes and requests. Call before the page loads. */
 export function listen(page: Page): PageSignals {
@@ -14,6 +22,7 @@ export function listen(page: Page): PageSignals {
     badResponses: [],
     insecure: [],
     requests: [],
+    responses: [],
   };
   // The page's own address (and its redirects) is reported by the crawler, not as a resource.
   const isMainDocument = (req: { isNavigationRequest(): boolean; frame(): unknown }) => {
@@ -39,6 +48,23 @@ export function listen(page: Page): PageSignals {
   page.on("request", (req) => {
     s.requests.push(req.url());
     if (req.url().startsWith("http://") && !isMainDocument(req)) s.insecure.push(req.url());
+  });
+  // What the network inspector reads: every answer with its headers and size.
+  page.on("requestfinished", (req) => {
+    void (async () => {
+      const res = await req.response().catch(() => null);
+      if (!res || s.responses.length >= 1500) return;
+      const sizes = await req.sizes().catch(() => null);
+      s.responses.push({
+        url: req.url(),
+        status: res.status(),
+        type: req.resourceType(),
+        headers: res.headers(),
+        bytes: sizes?.responseBodySize ?? Number(res.headers()["content-length"] ?? 0),
+        redirected: Boolean(req.redirectedFrom()),
+        redirectedFrom: firstOf(req),
+      });
+    })();
   });
   return s;
 }

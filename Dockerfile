@@ -30,7 +30,8 @@ RUN CGO_ENABLED=0 go install github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_V
       install -m 755 /tmp/opengrep /tools/opengrep; \
     else echo "Opengrep ${OPENGREP_VERSION} could not be downloaded and verified: it is left out of the image"; fi
 
-# Playwright's image ships Node and the Chromium build that matches playwright@1.63.0.
+# Playwright's image ships Node and the Chromium, Firefox and WebKit builds that match playwright@1.63.0
+# (the cross-browser lab opens pages in all three).
 FROM mcr.microsoft.com/playwright:v1.63.0-noble AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

@@ -557,6 +557,15 @@ function Pages({ run }: { run: Run }) {
                 {p.metrics && <span>{(p.metrics.bytes / 1_000_000).toFixed(1)} MB</span>}
                 <span>{plural(issues, "issue")}</span>
               </div>
+              {p.files && p.files.length > 0 && (
+                <div className="page-files">
+                  {p.files.map((f) => (
+                    <a key={f.file} href={api.artifact(run.id, f.file)} target="_blank" rel="noreferrer">
+                      {f.label}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         );

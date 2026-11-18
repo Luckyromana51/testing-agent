@@ -41,6 +41,35 @@ With login on, the first time the dashboard opens it asks you to create the owne
 | Speed (Core Web Vitals) | LCP, CLS, server response time, page weight |
 | Phone layout | Sideways scrolling, tap targets (WCAG 2.2), text too small |
 
+**Deeper website checks.** Our own agents, built in: none of them calls an outside service.
+
+| Agent | What it checks |
+| --- | --- |
+| Keyboard use | Presses Tab through the page: focus stuck in one place, focus that cannot be seen, focused items hidden behind sticky bars, tabindex above 0, clickable things the keyboard cannot reach |
+| Zoom 200% and 400% | Sideways scrolling at 200% zoom (683 px) and 400% zoom (320 px), WCAG 1.4.4 and 1.4.10 |
+| Text spacing | Widens line, letter and word spacing (WCAG 1.4.12) and finds text that gets cut off |
+| Screen reader view | Saves what a screen reader announces on each page (open it from the Pages tab); skipped heading levels, no `<main>`, "Click here" links, same-named links to different pages |
+| Motion and sound | Endless animations that ignore "reduce motion", video or audio that plays sound on its own |
+| Reading comfort | Lines over 120 characters, justified text (WCAG 1.4.8) |
+| Form field limits | Boundary and wrong values (an email without @, -1 as a quantity, letters as a phone number, a field's own min and max, broken patterns, fields marked * that are not required). Values are set and read back; nothing is typed or sent |
+| Monkey testing | 40 random clicks and typing on 3 pages, the same each re-test, with every change blocked (only GET, no leaving the page): crashes, freezes and script errors |
+| Screen sizes (device lab) | 11 more sizes from small Android phones and iPads to full HD; saves a picture of the first page at each size |
+| Cross-browser lab | Up to 5 pages in Firefox and WebKit (Safari's engine) next to Chromium: script errors, failed files, missing parts and sideways scrolling that only one browser has, with screenshots from each |
+| Same-page links, site search, missing-page screen | Links to `#sections` that do not exist; the site's search box with a real word and a made-up word; a 404 page with no way back |
+| Overlapping text, cut-off labels | Text drawn over other text (desktop and phone), labels cut off by their own box on a phone |
+| Bars and pop-ups covering the phone screen | Headers and footers that stay on screen and take over 30% of a phone, pop-ups that cover the page on arrival (cookie and age notices are allowed) |
+| Images | Images sent much bigger than shown, stretched images, a main image held back by lazy loading, many images far down the page loaded at once, large JPEG/PNG/GIF files |
+| Network inspector | Like the browser's Network tab, saved per page as JSON: files without compression or caching, files fetched twice or through a redirect, over 120 requests, weight from other companies' servers |
+| Slow phone connection | The first page like a mid-range phone on slow 4G (Lighthouse's settings: 1.6 Mbit/s, 150 ms, 4x slower processor, nothing cached) |
+| Site structure, thin pages, page addresses | Pages more than 3 clicks from home, internal links that redirect, pages under 150 words, session ids, capitals, underscores and very long addresses |
+| Information leaks | HTML comments with passwords, keys, internal addresses or queries; error messages showing code or the database; public source maps of the site's own scripts |
+| Outdated JavaScript libraries | jQuery, jQuery UI, Bootstrap, AngularJS, Lodash and Moment versions the page really runs, against GLV's own table of known CVEs |
+| Subresource Integrity, sign-in forms | CDN files without an integrity check; passwords sent in the address or to another site, paste and autofill blocked |
+| Page language, prices and dates, other language and time zone | The declared language against the real script (Hindi, Tamil, Arabic...), right-to-left text, garbled characters, UTF-8, hreflang codes; prices in two currencies, US dates on Indian sites; script errors and "Invalid Date" for a visitor set to Arabic in a time zone 14 hours ahead |
+| Site icon and app install | Favicon, the web app manifest phones need to install the site, and offline start when there is a service worker |
+
+A file that many pages load (a script, an image, a comment in the footer) is reported once, on the first page that loads it, instead of on every page. The agents that press keys, zoom or change settings run one at a time after the others on each page and put the page back as it was. The slow-connection agent runs alone at the end, so other work does not slow its numbers.
+
 The crawler and the link checker never open log-out or delete links.
 
 **Checks for one kind of product.** These run on top of the ones above, only for the product they are for:
@@ -203,7 +232,7 @@ To use fewer credits:
 
 ### Faster tests: pages at the same time
 
-A website test opens several pages at the same time (4 by default, up to 16), each in its own browser screen, and all the agents of a page check it together. Site-wide agents (links, exposed files, duplicates) also run together. A website test has 12 to 14 agents per page, so 8 pages at the same time means about 100 agent checks at once. Change it in the owner panel, with `PARALLEL_PAGES` in `.env`, or with `--parallel` on the command line.
+A website test opens several pages at the same time (4 by default, up to 16), each in its own browser screen, and all the agents of a page check it together. Site-wide agents (links, exposed files, duplicates) also run together. A website test has about 50 agents: about 33 check each page and the rest check the whole site, so 8 pages at the same time means over 250 agent checks at once. Change it in the owner panel, with `PARALLEL_PAGES` in `.env`, or with `--parallel` on the command line.
 
 Accuracy stays the same as one page at a time:
 - The first page is tested alone, since it decides where the site lives.
@@ -347,4 +376,5 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
+- iOS, VoiceOver and real Safari through a helper app on a Mac with Xcode
 - More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): a permission step for tools that send changes or attacks, then ZAP active scans, k6 load tests, MobSF for Android and iOS apps, screenshot compare and PDF reports

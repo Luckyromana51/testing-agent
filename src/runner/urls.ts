@@ -66,3 +66,27 @@ export function validateTarget(raw: string): string {
   }
   return u.toString();
 }
+
+/** Second-level names under which each customer gets the third level (example.co.in, example.com.au). */
+const SHARED_SECOND_LEVEL = /^(co|com|net|org|gov|edu|ac|nic|res|gen|firm|ind|ltd|plc|ne|or|go)$/;
+
+/**
+ * The site a host belongs to, for "is this file the site's own?": www.shop.example.co.in and
+ * cdn.example.co.in both give example.co.in. An IP address or localhost is its own site.
+ */
+export function siteOf(host: string): string {
+  const h = host.toLowerCase().replace(/\.$/, "");
+  if (/^[\d.]+$/.test(h) || h.includes(":") || !h.includes(".")) return h;
+  const parts = h.split(".");
+  const take = parts.length >= 3 && parts.at(-1)!.length === 2 && SHARED_SECOND_LEVEL.test(parts.at(-2)!) ? 3 : 2;
+  return parts.slice(-take).join(".");
+}
+
+/** True when the address is on the same site as `host` (any subdomain). */
+export function sameSite(url: string, host: string): boolean {
+  try {
+    return siteOf(new URL(url).hostname) === siteOf(host);
+  } catch {
+    return false;
+  }
+}

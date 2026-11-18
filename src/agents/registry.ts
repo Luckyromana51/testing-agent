@@ -3,7 +3,13 @@ import { API_AGENTS } from "./api/index.js";
 import { CODE_AGENTS } from "./code/index.js";
 import { ANDROID_AGENTS } from "./mobile/android.js";
 import type { AgentInfo, WebAgent } from "./types.js";
+import { keyboardAgent, motionAgent, screenReaderAgent, textSpacingAgent, zoomAgent } from "./web/a11y.js";
+import { browserLabAgent } from "./web/browsers.js";
+import { anchorsAgent, devicesAgent, formFieldsAgent, monkeyAgent, notFoundPageAgent, searchAgent } from "./web/interact.js";
+import { authFormsAgent, infoLeakAgent, jsLibrariesAgent, sriAgent } from "./web/leaks.js";
 import { linksAgent } from "./web/links.js";
+import { formatsAgent, languageAgent, otherLocaleAgent } from "./web/locale.js";
+import { imagesAgent, networkAgent, slowNetworkAgent } from "./web/network.js";
 import {
   accessibilityAgent,
   contentAgent,
@@ -15,6 +21,8 @@ import {
   structuredDataAgent,
 } from "./web/page.js";
 import { PRODUCT_AGENTS } from "./web/products.js";
+import { appInstallAgent } from "./web/pwa.js";
+import { linkGraphAgent, thinContentAgent, urlsAgent } from "./web/seo-site.js";
 import { jsErrorsAgent, mixedContentAgent, resourcesAgent } from "./web/signals.js";
 import {
   crawlabilityAgent,
@@ -25,6 +33,7 @@ import {
   wordpressAgent,
 } from "./web/site.js";
 import { speedAgent } from "./web/speed.js";
+import { coverAgent, cutTextAgent, overlapAgent, overlapPhoneAgent, readabilityAgent } from "./web/ui.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -47,6 +56,44 @@ export const WEB_AGENTS: WebAgent[] = [
   privacyAgent,
   speedAgent,
   mobileAgent,
+  // Keyboard, zoom, screen readers and motion.
+  keyboardAgent,
+  zoomAgent,
+  textSpacingAgent,
+  screenReaderAgent,
+  motionAgent,
+  readabilityAgent,
+  // Using the site: form limits, random clicking, screen sizes, other browsers, search.
+  formFieldsAgent,
+  monkeyAgent,
+  devicesAgent,
+  browserLabAgent,
+  anchorsAgent,
+  searchAgent,
+  notFoundPageAgent,
+  // Layout as drawn.
+  overlapAgent,
+  overlapPhoneAgent,
+  cutTextAgent,
+  coverAgent,
+  // Speed beyond the timing numbers.
+  imagesAgent,
+  networkAgent,
+  slowNetworkAgent,
+  // Search engines across pages.
+  linkGraphAgent,
+  thinContentAgent,
+  urlsAgent,
+  // Security, passive: only what every visitor already gets.
+  infoLeakAgent,
+  jsLibrariesAgent,
+  sriAgent,
+  authFormsAgent,
+  // Language and region.
+  languageAgent,
+  formatsAgent,
+  otherLocaleAgent,
+  appInstallAgent,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
   ...PRODUCT_AGENTS,
 ];
