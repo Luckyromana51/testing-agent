@@ -18,10 +18,11 @@ const shared = new WeakMap<Finding, Shared>();
  * A finding about things that many pages load (a script, an image, a comment in the footer). Every
  * page reports what it saw; the crawler then keeps each thing on the first page, in page order,
  * that has it. The report shows the problem once instead of on every page, and it lands on the
- * same page whatever order the pages finished in.
+ * same page whatever order the pages finished in. The things are listed by address, not in the
+ * order the browser happened to finish loading them, so a re-test shows the same evidence.
  */
 export function sharedFinding(group: string, items: SharedItem[], build: (items: SharedItem[]) => Finding): Finding[] {
-  const unique = [...new Map(items.map((i) => [i.key, i])).values()];
+  const unique = [...new Map(items.map((i) => [i.key, i])).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   if (!unique.length) return [];
   const f = build(unique);
   shared.set(f, { group, items: unique, build });

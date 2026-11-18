@@ -280,6 +280,8 @@ describe("website agent helpers", () => {
       ["/1 a.js\nb.js", "/3 c.js"],
     );
     assert.equal(removed.get("x"), 1);
+    // Files finish loading in a different order on each run; the evidence must not follow it.
+    assert.equal(make("/4", ["shared.png", "hero.png"]).evidence, make("/5", ["hero.png", "shared.png"]).evidence);
   });
 });
 

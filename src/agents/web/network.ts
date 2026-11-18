@@ -305,7 +305,7 @@ export const networkAgent: PageAgent = {
     for (const r of responses) {
       if (STATIC.has(r.type) && r.status === 200 && r.bytes > 0) times.set(r.url, (times.get(r.url) ?? 0) + 1);
     }
-    const twice = [...times].filter(([, n]) => n > 1);
+    const twice = [...times].filter(([, n]) => n > 1).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     if (twice.length) {
       out.push(
         finding({
