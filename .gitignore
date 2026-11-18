@@ -4,3 +4,8 @@ data
 .env
 *.log
 glvtest-report
+# Xcode, when the Mac helper project is opened on a Mac
+DerivedData
+xcuserdata
+*.xcresult
+.DS_Store

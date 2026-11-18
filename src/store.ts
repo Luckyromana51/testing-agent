@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { HelperStore } from "./helpers.js";
 import type { Issue, Project, Role, Run, User } from "./types.js";
 import { Vault } from "./vault.js";
 
@@ -249,6 +250,8 @@ export interface Stores {
   users: UserStore;
   /** Encrypted client logins for logged-in testing. */
   vault: Vault;
+  /** Paired Mac helpers (their tokens are kept hashed). */
+  helpers: HelperStore;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -260,5 +263,6 @@ export function openStores(dataDir: string): Stores {
     settings: new SettingsStore(db),
     users: new UserStore(db),
     vault: new Vault(db, dataDir),
+    helpers: new HelperStore(db),
   };
 }

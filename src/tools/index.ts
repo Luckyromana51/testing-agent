@@ -20,6 +20,7 @@ import { nucleiTool } from "./nuclei.js";
 import { testsslTool } from "./testssl.js";
 import type { Tool, ToolChoice, ToolContext, ToolFinding, ToolInfo, ToolOutput, ToolStat } from "./types.js";
 import { vnuTool } from "./vnu.js";
+import { iosSimulatorTool, safariTool, voiceOverTool } from "./mac.js";
 import { zapActiveTool, zapTool } from "./zap.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
@@ -46,6 +47,10 @@ export const TOOLS: Tool[] = [
   opengrepTool,
   osvTool,
   trivyTool,
+  // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
+  safariTool,
+  voiceOverTool,
+  iosSimulatorTool,
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);
@@ -62,12 +67,17 @@ export function describeTool(t: Tool): ToolInfo {
 
 let cache: { at: number; status: Record<string, string | null> } | undefined;
 
-/** Which tools are installed on this server: null when ready, else why not. Checked once a minute. */
+/**
+ * Which tools are installed on this server: null when ready, else why not. Checked once a minute;
+ * tools on the Mac helper every time, since a Mac comes and goes.
+ */
 export async function toolStatus(fresh = false): Promise<Record<string, string | null>> {
-  if (!fresh && cache && Date.now() - cache.at < 60_000) return cache.status;
-  const entries = await Promise.all(TOOLS.map(async (t) => [t.id, await t.ready().catch((e: Error) => e.message)] as const));
-  cache = { at: Date.now(), status: Object.fromEntries(entries) };
-  return cache.status;
+  const check = async (t: Tool) => [t.id, await t.ready().catch((e: Error) => e.message)] as const;
+  if (fresh || !cache || Date.now() - cache.at >= 60_000) {
+    const entries = await Promise.all(TOOLS.filter((t) => !t.needsMac).map(check));
+    cache = { at: Date.now(), status: Object.fromEntries(entries) };
+  }
+  return { ...cache.status, ...Object.fromEntries(await Promise.all(TOOLS.filter((t) => t.needsMac).map(check))) };
 }
 
 /**
@@ -130,7 +140,7 @@ export async function defaultChoices(product: ProductType): Promise<ToolChoice[]
   if (process.env.DEFAULT_TOOLS === "none") return [];
   const status = await toolStatus();
   return toolsFor(product)
-    .filter((t) => t.safety === "safe" && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
+    .filter((t) => t.safety === "safe" && !t.needsMac && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
     .map((t) => ({ id: t.id }));
 }
 
@@ -211,6 +221,7 @@ function fold(f: ToolFinding, own: Finding[], byKey: Map<string, Finding>, toolN
   const scope = f.sameScope ?? "site";
   const where = (o: Finding) => {
     if (scope === "file") return o.pageUrl === f.pageUrl && (!f.sameText || norm(`${o.title}\n${o.evidence ?? ""}`).includes(norm(f.sameText)));
+    if (scope === "page") return o.pageUrl === f.pageUrl && (!f.sameText || `${o.title}\n${o.evidence ?? ""}`.includes(f.sameText));
     if (host(o.pageUrl) !== host(f.pageUrl)) return false;
     if (scope === "endpoint") return Boolean(f.sameText) && endpointRe(f.sameText!).test(pathOf(o.pageUrl));
     return !f.sameText || `${o.title}\n${o.evidence ?? ""}`.includes(f.sameText);
@@ -356,6 +367,7 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
         ...(merged ? { merged } : {}),
         ...(out.summary?.length ? { summary: out.summary } : {}),
         ...(out.reports?.length ? { reports: out.reports } : {}),
+        ...(out.images?.length ? { images: out.images } : {}),
         ...(out.tested ? { tested: out.tested } : {}),
         ...(out.table ? { table: out.table } : {}),
       });
@@ -378,8 +390,10 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
     });
   }
 
-  // The categories the engine scored stay the same (no search checks for a CRM, for example).
-  const categories = [...new Set([...Object.keys(result.scores), ...Object.keys(result.notTested ?? {})])] as Category[];
+  // The categories the engine scored stay the same (no search checks for a CRM, for example), plus
+  // those of tools that bring their own (Apple's accessibility audit for an iOS app).
+  const ownCategories = input.choices.map((c) => toolById(c.id)).filter((t): t is Tool => Boolean(t?.ownCategory)).map((t) => t.category);
+  const categories = [...new Set([...Object.keys(result.scores), ...Object.keys(result.notTested ?? {}), ...ownCategories])] as Category[];
   const findings = [...own, ...added.filter((f) => categories.includes(f.category))];
   const agentStats = [...(result.agentStats ?? []), ...stats];
   const { notTested, incomplete, ...score } = scoreFindings(findings, result.pages.length, categories, agentStats);

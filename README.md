@@ -2,7 +2,7 @@
 
 An AI testing platform by GLV Infotech Solutions. Pick what you are testing (website, online store, web app, SaaS, CRM, API, source code, Android app or iOS app), give it the address or upload the file, and a team of specialist agents checks it the way a QA engineer would and writes a report: major issues first, each with a fix you can paste. Every problem becomes a tracked issue (like Jira) that re-tests verify as fixed, or reopen when it comes back.
 
-This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). Five engines are built: the browser engine (websites and web apps), the API engine, the source code engine, the Android engine and the iOS engine. Running iOS apps in the Simulator, VoiceOver and real Safari come next, through a helper on a Mac.
+This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). Five engines are built: the browser engine (websites and web apps), the API engine, the source code engine, the Android engine and the iOS engine. A helper on a Mac with Xcode adds what a Linux server cannot do: real Safari on Mac, iPhone and iPad, VoiceOver, and running iOS apps in the Simulator with Apple's accessibility audit (see [Mac helper](#mac-helper-safari-voiceover-ios-simulator)).
 
 ## The dashboard
 
@@ -13,7 +13,7 @@ This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8Mpmf
 - **Issues**: a board (Open, In progress, Fixed, Verified) across projects. Keys look like `GLV-12`. Mark an issue fixed, press Re-test, and the next run either verifies it or moves it back to Open as "Came back". Assign issues and add notes; everything is kept in the history.
 - **Logins**: tick "Sign in first" (websites and apps), "The API needs a key or token" or "The repository is private" on the new-test form, or use the Login card on the project page. See [Logged-in testing](#logged-in-testing-and-the-login-vault).
 - **Tool tabs**: after you pick the product type, the new-test page shows a row of tabs: **GLV checks** (the platform's own agents) first, then one tab per outside tool that fits that type (Lighthouse, W3C HTML checker, OWASP ZAP, Nuclei, testssl.sh). Each tab says what the tool checks, whether it is safe, how long it takes, and has a switch and options. The project page has the same tabs to change the tools for later tests. See [Outside tools](#outside-tools-tool-tabs).
-- **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count, how many pages are tested at the same time, and the Claude summary, and see the login vault's status.
+- **Owner panel**: overview numbers, switch any agent on or off, add team members, pair Macs for the Mac helper and see what each can test, set the default page count, how many pages are tested at the same time, and the Claude summary, and see the login vault's status.
 
 With login on, the first time the dashboard opens it asks you to create the owner account. Do that straight after the first start, before anyone else can reach the server. While GLV is still building the system, Docker starts with login off (see [Login switch](#login-switch-auth_disabled)).
 
@@ -163,6 +163,9 @@ Well-known testing tools run in the same test as the platform's agents. Their fi
 | Gitleaks | Source code | More than 150 kinds of keys and tokens in the code, and optionally in the whole Git history (a deleted key is still in old commits) | Git token, for the history |
 | Opengrep, with GLV's own rules | Source code | Follows request data through the code to SQL, shell commands, file paths, redirects and HTML: 40 rules for JavaScript/TypeScript, Python, PHP, Java, Go and C# | No |
 | OSV-Scanner (Google) | Source code | Every package in the lockfiles against Google's OSV database: npm, pnpm, yarn, pip, Poetry, Composer, Go, Cargo, Maven, Gradle, NuGet, Pub, Gems; malware packages too | No |
+| Real Safari (Mac helper) | Website, store, web app, SaaS, CRM | Each page in real Safari on a Mac, and in Safari on iPhone and iPad in the iOS Simulator, next to Chromium at the same size and user agent: pages that do not open, scroll sideways, lose parts (a script that stops only in Safari) or cannot show images, only in Safari. A screenshot from each device | No |
+| VoiceOver (Mac helper) | Website, store, web app, SaaS, CRM | VoiceOver reads each page item by item the way a blind visitor hears it, saved as a transcript: images, buttons, links and fields it cannot name, file names read aloud, links that all sound the same, pages with no headings | No |
+| iOS Simulator (Mac helper) | iOS app | Installs the app in the iOS Simulator (or a Development or Ad Hoc build on a connected test iPhone), opens it and watches for crashes, with the crash report's reason and code; Apple's accessibility audit (as in Xcode) on the first screen and each tab; screenshots in light, dark and the largest text size | No |
 | Trivy (Aqua Security) | Source code | A second package database, plus unsafe Dockerfile, Kubernetes, Helm, Terraform and Compose settings, and package licences (AGPL, GPL) that may not allow closed-source client delivery | No |
 
 How they are kept safe and accurate:
@@ -182,6 +185,20 @@ Tests started without a tool choice (the API, a quick test, projects made before
 **Installing the tools.** The Docker image includes Lighthouse, Java for the W3C HTML checker, testssl.sh, Schemathesis 4.32.7 (in its own Python folder) and Newman 6.2.3 (in its own Node folder, so its old dependencies never load into the app). Nuclei 3.11.1, Gitleaks 8.30.1, OSV-Scanner 2.7.0 and Trivy 0.76.1 are built from source at those versions; Go checks every module against its public checksum database, which is how Trivy is installed safely after its release binaries were hijacked in March 2026 (v0.69.4 and the Docker tags 0.69.5 and 0.69.6). k6 1.8.2 is built from source the same way. Opengrep 1.30.0's release binary is downloaded and its signature checked with cosign; if it cannot be verified it is left out. Apache JMeter 5.6.3 is downloaded from the Apache archive and checked against its published SHA-512. `docker compose` starts OWASP ZAP 2.17.0 in its own container that only the app can reach; it runs an active scan only for a project with the client's permission. Trivy downloads its vulnerability database on its first run and keeps it in the data volume (`trivy-cache`, about 2 GB unpacked), updating it at most once a day. Without Docker, `npm install` brings Lighthouse and the HTML checker (it needs Java); install the others yourself, run ZAP in daemon mode and set `ZAP_URL` and `ZAP_API_KEY`. The tabs show any tool that is missing as "Not available on this server", with the reason. On a server, set your own random `ZAP_API_KEY` in `.env`.
 
 **SARIF and JUnit.** Every finished test can be downloaded from its report (Download): SARIF for GitHub code scanning, GitLab, Azure DevOps and security dashboards (code findings point at the file and line), and JUnit XML for CI test reports (a failed test per issue, a skipped test for a check that could not run). The command line writes both next to `report.json`. Schemathesis and Newman also attach their own JUnit files.
+
+## Mac helper (Safari, VoiceOver, iOS Simulator)
+
+Safari, VoiceOver and the iOS Simulator only run on macOS, so a small program, `helper/mac/glv-helper.mjs`, runs them on a Mac with Xcode (GLV's own Mac). It needs Node.js 22 and nothing from npm, and only runs Apple's own tools (xcrun, xcodebuild, safaridriver, osascript, ditto) with fixed arguments, never through a shell.
+
+- **Pairing.** Owner panel > Mac helpers: name the Mac, press Make a pairing token, and run the two commands it shows on the Mac. The token is shown once and only its hash is kept; it lets the Mac pick up tests and send back results, and it cannot sign in to the dashboard. Unpair shuts the Mac out at once. The same page has the download (the helper and its Xcode project as one zip) and the one-time setup: `safaridriver --enable`, the VoiceOver Utility AppleScript switch, and an iOS 17 or newer Simulator.
+- **Nothing reaches the Mac.** The Mac asks the server for work over HTTPS (plain http only on the local network), one test at a time, so no port is opened on it. A test waits up to 15 minutes for a free Mac, and is marked not tested if none is online, with the step that fixes it.
+- **The server decides.** The Mac sends back what it saw (Safari's page counts and screenshots, what VoiceOver said, the audit's issues and crash reports); the rules that turn that into findings are on the server, the same for every Mac. Files from the Mac are checked (names, sizes, real PNG, JPEG, JSON or text) before they are kept.
+- **Same problem, shown once.** Safari on Mac confirms the cross-browser lab's WebKit findings on the same page ("Also found by Real Safari"), and VoiceOver's unnamed images, buttons, links and fields fold into axe's findings on the same page.
+- **Never on by default.** The Mac tests are switched on per test in the tool tabs. They test what anyone can reach, without the saved login. VoiceOver speaks and uses the Mac's screen while it runs.
+- **Phones only when allowed.** Development and Ad Hoc builds run on an iPhone connected to the Mac only after `node glv-helper.mjs devices on`, since the app is installed on that phone. App Store copies are encrypted and cannot run outside the App Store; upload a Simulator build (a zip of the .app) instead. The app runs on the Mac, so only test apps from clients you trust.
+- **Apple's audit.** `helper/mac/GLVRunner` is a small Xcode project with one UI test that opens the client's app by its bundle ID and calls `performAccessibilityAudit` (iOS 17+, Xcode 15+) on each screen, collecting every issue without failing. The helper builds it on the first app test.
+
+`test/mac-helper.test.ts` runs the real helper against a stand-in Mac (`test/fixtures/fake-mac.ts`: small programs named like Apple's tools that answer the same way), through pairing, Safari, VoiceOver and an iOS app with a crash, so the whole path is tested on Linux. Its setup steps are in `helper/mac/README.md`.
 
 ## Load and attack tests (client's permission)
 
@@ -328,6 +345,22 @@ On an ARM Linux server (for example AWS Graviton), add `DOCKER_PLATFORM=linux/ar
 
 If you ever see `exec /bin/sh: exec format error` during the build, Docker picked an image your machine cannot run: set `DOCKER_PLATFORM` in `.env` to match `docker version --format '{{.Server.Arch}}'` (or keep the amd64 default) and rebuild with `docker compose build --no-cache`.
 
+### Disk space, and "Build fails with read-only file system"
+
+The first build downloads the Playwright, Go and ZAP images and compiles five Go tools, so leave about 25 GB free for Docker (and on a Mac, on the Mac's own disk too). That is an estimate, not a measurement: the finished images take roughly 6 to 8 GB, and the build needs room for downloads and compiling on top.
+
+If the build stops with `read-only file system` (often next to `curl: (23) Failure writing output to destination` or `metadata_v2.db`), Docker's own disk filled up and Docker switched it to read-only. It is not a problem in this project, and it stays read-only until Docker restarts. On Docker Desktop (Mac or Windows):
+
+1. Check the computer's free disk (`df -h ~` on a Mac) and free space if it is nearly full.
+2. Restart Docker Desktop (whale icon > Restart, or Troubleshoot > Restart Docker Desktop).
+3. See what Docker keeps with `docker system df`, then remove old build steps and unused images: `docker builder prune -af` and `docker image prune -af`. Neither touches the `agent-data` volume (projects and reports) or a running container. Images they remove download again on the next build.
+4. If Docker's disk is still small, raise it in Docker Desktop > Settings > Resources > Advanced > Disk usage limit (64 GB or more), then Apply & restart.
+5. Build again: `docker compose up -d --build`. After a prune it starts from the beginning, so it takes as long as the first build.
+
+Troubleshoot > Clean / Purge data also frees the space, but it deletes every image, container and volume, including `agent-data`. Use it only if the steps above do not help, and only if you do not need the saved projects and reports.
+
+On a Linux server, check `df -h /var/lib/docker` and use the same `docker builder prune -af` and `docker image prune -af`.
+
 ## API
 
 Every route except `/api/health` and the sign-in routes needs a signed-in session (cookie). Writes from other websites are refused.
@@ -355,6 +388,9 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET` | `/api/owner/overview` | Owner numbers |
 | `GET`, `PATCH` | `/api/owner/settings` | Agent switches, default pages, pages at the same time (`parallelPages`), Claude summary |
 | `GET`, `POST`, `DELETE` | `/api/owner/users` | Team accounts |
+| `GET`, `POST`, `DELETE` | `/api/owner/helpers` | Paired Macs, with what each can test; pair one (answers with its token, once); unpair one |
+| `GET` | `/api/owner/helpers/download` | The Mac helper and its Xcode project as a zip |
+| `POST`, `GET` | `/api/helper/*` | The Mac helper's own routes (hello, ping, jobs/next, the app file, progress, files, result), signed in with its token (`Authorization: Bearer glvh_...`), never a user's session |
 | `GET` | `/api/health` | Health check |
 
 Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked by default so the server cannot be used to probe your internal network. This also applies to the server address inside an uploaded API file. Set `ALLOW_PRIVATE_TARGETS=1` to test internal staging sites. The check works on the address as typed; a public hostname that resolves to a private IP is not yet blocked.
@@ -372,7 +408,9 @@ src/
   agents/mobile/            the Android and iOS engines' agents
   engines/                  one runner per engine, plus the OpenAPI, zip, Android binary XML, plist and Mach-O readers
   tools/index.ts            the outside tools (tool tabs); add new ones here. Runs them and merges their findings
-  tools/*.ts                one file per tool: Lighthouse, W3C HTML checker, ZAP, Nuclei, testssl.sh
+  tools/*.ts                one file per tool: Lighthouse, W3C HTML checker, ZAP, Nuclei, testssl.sh, ...
+  tools/mac.ts              the Mac helper's tools (Safari, VoiceOver, iOS Simulator) and their rules
+  helpers.ts                paired Macs and the queue of work for them
   targets.ts                checks what each product type needs (address, repository, upload)
   runner/scan.ts            crawler that runs the agents (Playwright), several pages at the same time
   live.ts                   the live view of a running test (screens, pictures, agents) sent to the dashboard
@@ -391,6 +429,7 @@ src/
   server.ts                 Fastify API, serves the dashboard
   cli.ts                    glvtest command line
 web/                        React dashboard (Vite)
+helper/mac/                 the Mac helper (glv-helper.mjs) and its Xcode audit runner (GLVRunner)
 test/                       tests, plus a demo site, demo CRM behind a login, demo API, demo APK and demo IPA with deliberate bugs
 ```
 
@@ -400,6 +439,7 @@ test/                       tests, plus a demo site, demo CRM behind a login, de
 npm test          # unit tests + full tests of the demo site, demo API, demo code, demo APK and demo IPA
                   # tools.test.ts also runs each installed tool on a demo site; tools that are not installed are skipped
                   # load.test.ts runs real k6 and JMeter tests when they are installed; probes.test.ts attacks a site with planted holes
+                  # mac-helper.test.ts runs the Mac helper against a stand-in Mac
 npm run typecheck
 npm run demo-site # start the demo site on :4100 to try the dashboard
 npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
@@ -412,6 +452,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
-- Running iOS apps in the Simulator, Apple's accessibility audit, VoiceOver and real Safari through a helper on a Mac with Xcode (next)
+- VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
 - More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps, screenshot compare and PDF reports
 - GLV's own SEO audit, and a local copy of the OSV database kept up to date on the server

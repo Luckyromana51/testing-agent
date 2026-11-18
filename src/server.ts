@@ -1,16 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, open, rm } from "node:fs/promises";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
+import { mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { zipSync, type Zippable } from "fflate";
 import { ALL_AGENTS, agentsFor, describeAgent } from "./agents/registry.js";
 import { aiEnabled, summariseWithClaude, summaryKey } from "./ai/triage.js";
 import { Auth, checkPasswordRules, fromOutside, hashPassword, loginTurnedOff, recordFailure, tooManyFailures } from "./auth.js";
 import { groupFindings } from "./group.js";
+import { cleanInfo, HelperError, helperHub, MAX_ARTIFACT_BYTES, type Helper } from "./helpers.js";
 import { ACTIVE, projectKey } from "./issues.js";
 import { buildPermission, permissionStatus, verifyPermission, type PermissionInput } from "./permission.js";
 import { PRODUCTS } from "./products.js";
@@ -29,10 +31,31 @@ export { validateTarget } from "./runner/urls.js";
 declare module "fastify" {
   interface FastifyRequest {
     user?: User;
+    /** The Mac helper making the request (helper routes only). */
+    helper?: Helper;
   }
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+/** Built files Xcode and Finder leave next to the project: never part of the download. */
+const HELPER_SKIP = /^(\.DS_Store|DerivedData|xcuserdata|build|.*\.xcresult)$/;
+
+/** Zips helper/mac (the Mac helper and its Xcode project) under a glv-helper/ folder. */
+export async function helperZip(dir = path.resolve(here, "../helper/mac")): Promise<Uint8Array> {
+  if (!existsSync(dir)) throw new HttpError(404, "The Mac helper files are not on this server.");
+  const files: Zippable = {};
+  const walk = async (from: string, prefix: string) => {
+    for (const e of await readdir(from, { withFileTypes: true })) {
+      if (HELPER_SKIP.test(e.name)) continue;
+      const full = path.join(from, e.name);
+      if (e.isDirectory()) await walk(full, `${prefix}${e.name}/`);
+      else if (e.isFile()) files[`${prefix}${e.name}`] = await readFile(full);
+    }
+  };
+  await walk(dir, "glv-helper/");
+  return zipSync(files, { level: 6 });
+}
 
 /** Largest file that can be uploaded (APKs with native code can be big). */
 const MAX_UPLOAD = 300_000_000;
@@ -119,6 +142,7 @@ export async function createApp(opts: AppOptions) {
   const auth = new Auth(stores.users);
   auth.bootstrapFromEnv();
   const stopScheduler = opts.scheduler ? startScheduler(stores.projects, queue) : () => {};
+  helperHub.attach(stores.helpers);
 
   const app = Fastify({
     logger: opts.logger ? { level: process.env.LOG_LEVEL ?? "info" } : false,
@@ -127,6 +151,7 @@ export async function createApp(opts: AppOptions) {
   });
   app.addHook("onClose", async () => {
     stopScheduler();
+    helperHub.close();
     await queue.shutdown();
   });
 
@@ -155,6 +180,18 @@ export async function createApp(opts: AppOptions) {
         // unreadable origin: refused below
       }
       if (originHost !== req.headers.host) return reply.code(403).send({ error: "Cross-site request refused." });
+    }
+    // The Mac helper signs in with its own token, never a user's session (and works with login off).
+    if (req.url.startsWith("/api/helper/")) {
+      if (tooManyFailures(req.ip)) return reply.code(429).send({ error: "Too many wrong helper tokens. Try again in 15 minutes." });
+      const token = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ""))?.[1];
+      const helper = token ? stores.helpers.byToken(token) : undefined;
+      if (!helper) {
+        recordFailure(req.ip);
+        return reply.code(401).send({ error: "This helper token is not known here. Pair the Mac again from Owner panel > Mac helpers." });
+      }
+      req.helper = helper;
+      return;
     }
     if (loginOff) {
       // Safety net in case the switch is left on by mistake on a server that the internet can reach.
@@ -622,11 +659,13 @@ export async function createApp(opts: AppOptions) {
     const { id, file } = req.params;
     if (!/^[\w-]+$/.test(id) || !/^[\w.-]+\.(jpg|png)$/.test(file)) {
       // Reports written by the outside tools (Lighthouse, ZAP...).
-      if (/^[\w-]+$/.test(id) && /^tool-[\w.-]+\.(html|json|xml)$/.test(file)) {
+      if (/^[\w-]+$/.test(id) && /^tool-[\w.-]+\.(html|json|xml|txt)$/.test(file)) {
         // A tool's HTML report runs in a sandbox: it cannot read the dashboard's login or data.
         reply.header("Content-Security-Policy", "sandbox allow-scripts allow-popups allow-downloads");
         reply.header("X-Content-Type-Options", "nosniff");
         if (file.endsWith(".json")) reply.header("Content-Disposition", `inline; filename="${file}"`);
+        // A transcript from the Mac helper (what VoiceOver said).
+        if (file.endsWith(".txt")) reply.type("text/plain; charset=utf-8");
         // JUnit XML is downloaded, never shown as a page.
         if (file.endsWith(".xml")) {
           reply.header("Content-Disposition", `attachment; filename="${file}"`);
@@ -725,6 +764,107 @@ export async function createApp(opts: AppOptions) {
     if (b.parallelPages !== undefined) patch.parallelPages = parallelPages(Number(b.parallelPages) || 1);
     const saved = stores.settings.update(patch);
     return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL };
+  });
+
+  // ---- Mac helpers ------------------------------------------------------------------------------
+  const helperOf = (req: FastifyRequest) => {
+    if (!req.helper) throw new HttpError(401, "Helper token missing.");
+    return req.helper;
+  };
+  const jobAnswer = (reply: FastifyReply, r: "ok" | "over" | "unknown") =>
+    r === "ok" ? { ok: true } : reply.code(r === "over" ? 409 : 404).send(r === "over" ? { cancelled: true, error: "The test is over or was cancelled." } : { error: "Unknown job." });
+
+  app.post("/api/helper/hello", async (req) => {
+    const h = helperHub.hello(helperOf(req), cleanInfo(req.body));
+    return { name: h.name, wait: 25 };
+  });
+  app.post("/api/helper/ping", async (req) => {
+    helperHub.touch(helperOf(req));
+    return { ok: true };
+  });
+  app.get<{ Querystring: { wait?: string } }>("/api/helper/jobs/next", async (req, reply) => {
+    const h = helperOf(req);
+    const wait = Math.min(30, Math.max(0, Number(req.query.wait ?? 25) || 0)) * 1000;
+    const gone = new AbortController();
+    reply.raw.once("close", () => {
+      if (!reply.raw.writableEnded) gone.abort();
+    });
+    const job = await helperHub.next(h, wait, gone.signal);
+    if (!job) return reply.code(204).send();
+    if (gone.signal.aborted || reply.raw.destroyed) {
+      helperHub.requeue(job.id);
+      return reply.code(204).send();
+    }
+    return { job };
+  });
+  app.get<{ Params: { id: string } }>("/api/helper/jobs/:id/file", async (req, reply) => {
+    const f = helperHub.fileOf(helperOf(req), req.params.id);
+    if (!f || !existsSync(f.path)) throw new HttpError(404, "No file for this job.");
+    reply.header("content-type", "application/octet-stream");
+    reply.header("content-disposition", `attachment; filename="${f.name.replace(/[^\w. ()-]/g, "_")}"`);
+    return reply.send(createReadStream(f.path));
+  });
+  app.post<{ Params: { id: string } }>("/api/helper/jobs/:id/progress", async (req, reply) => {
+    return jobAnswer(reply, helperHub.progress(helperOf(req), req.params.id, String(body<{ message: string }>(req).message ?? "")));
+  });
+  app.post<{ Params: { id: string; name: string } }>("/api/helper/jobs/:id/artifacts/:name", { bodyLimit: MAX_ARTIFACT_BYTES + 1 }, async (req, reply) => {
+    const h = helperOf(req);
+    if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req.body as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > MAX_ARTIFACT_BYTES) throw new HttpError(413, "The file is too big.");
+      chunks.push(chunk);
+    }
+    try {
+      const file = await helperHub.artifact(h, req.params.id, req.params.name, Buffer.concat(chunks));
+      return reply.code(201).send({ file });
+    } catch (err) {
+      if (err instanceof HelperError) throw new HttpError(/over/.test(err.message) ? 409 : 400, err.message);
+      throw err;
+    }
+  });
+  app.post<{ Params: { id: string } }>("/api/helper/jobs/:id/result", { bodyLimit: 3_000_000 }, async (req, reply) => {
+    return jobAnswer(reply, helperHub.result(helperOf(req), req.params.id, body<{ ok: boolean; data: unknown; error: unknown }>(req)));
+  });
+
+  const helperView = (h: Helper) => ({
+    id: h.id,
+    name: h.name,
+    createdAt: h.createdAt,
+    createdBy: h.createdBy,
+    lastSeen: helperHub.lastSeen(h) ? new Date(helperHub.lastSeen(h)).toISOString() : null,
+    online: helperHub.isOnline(h),
+    info: h.info ?? null,
+    busy: helperHub.busy(h) ?? null,
+  });
+  app.get("/api/owner/helpers", async (req) => {
+    ownerOnly(req);
+    return { helpers: stores.helpers.list().map(helperView), queued: helperHub.queued() };
+  });
+  app.post("/api/owner/helpers", async (req, reply) => {
+    ownerOnly(req);
+    const name = String(body<{ name: string }>(req).name ?? "").trim().replace(/[\u0000-\u001f]/g, "").slice(0, 60);
+    if (!name) throw new HttpError(400, "Give the Mac a name, such as \"Lucky's MacBook\".");
+    const { helper, token } = stores.helpers.create(name, req.user!.name || req.user!.email);
+    return reply.code(201).send({ helper: helperView(helper), token });
+  });
+  app.delete<{ Params: { id: string } }>("/api/owner/helpers/:id", async (req, reply) => {
+    ownerOnly(req);
+    if (!stores.helpers.get(req.params.id)) throw new HttpError(404, "Helper not found");
+    helperHub.remove(req.params.id);
+    return reply.code(204).send();
+  });
+  // The Mac helper program and its Xcode audit project, as one zip to unpack on the Mac.
+  app.get("/api/owner/helpers/download", async (req, reply) => {
+    ownerOnly(req);
+    const zip = await helperZip();
+    reply
+      .header("content-type", "application/zip")
+      .header("Content-Disposition", 'attachment; filename="glv-helper.zip"')
+      .header("X-Content-Type-Options", "nosniff");
+    return reply.send(zip);
   });
 
   app.get("/api/owner/users", async (req) => {

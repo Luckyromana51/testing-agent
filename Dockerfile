@@ -9,6 +9,9 @@ ARG TARGETOS TARGETARCH \
     COSIGN_VERSION=v2.6.5 OPENGREP_VERSION=v1.30.0 K6_VERSION=v1.8.2
 # k6 (the "k6 load test" tool tab) is built from source the same way: Go checks it against its public
 # checksum database. k6 v1.8.2 needs Go 1.26 or newer, which this image has.
+# Go's build cache is emptied after each tool and its download cache at the end, so the build needs a
+# few GB less free disk at its peak and the finished step keeps only the built programs (otherwise
+# Docker keeps several GB of Go caches in its build cache). See "Disk space" in the README.
 RUN mkdir -p /tools \
  && for pkg in \
       github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION} \
@@ -17,12 +20,15 @@ RUN mkdir -p /tools \
       github.com/aquasecurity/trivy/cmd/trivy@${TRIVY_VERSION} \
       go.k6.io/k6@${K6_VERSION}; do \
       CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath -ldflags="-s -w" "$pkg" || exit 1; \
+      go clean -cache || exit 1; \
     done \
- && for b in nuclei gitleaks osv-scanner trivy k6; do cp "$(find /go/bin -name "$b" -type f | head -n 1)" /tools/; done
+ && for b in nuclei gitleaks osv-scanner trivy k6; do cp "$(find /go/bin -name "$b" -type f | head -n 1)" /tools/; done \
+ && go clean -modcache
 # Opengrep is not written in Go: its release binary is downloaded and its signature checked with
 # cosign against Opengrep's own GitHub release workflow. If it cannot be verified, it is left out
 # and the Opengrep tab shows "not installed" (the image still builds).
 RUN CGO_ENABLED=0 go install github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_VERSION} \
+ && go clean -cache -modcache \
  && case "$TARGETARCH" in amd64) dist=opengrep_manylinux_x86 ;; arm64) dist=opengrep_manylinux_aarch64 ;; *) dist="" ;; esac \
  && url="https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/$dist" \
  && if [ -n "$dist" ] \
@@ -40,7 +46,7 @@ RUN CGO_ENABLED=0 go install github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_V
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS jmeter
 ARG JMETER_VERSION=5.6.3 \
     JMETER_SHA512=5978a1a35edb5a7d428e270564ff49d2b1b257a65e17a759d259a9283fc17093e522fe46f474a043864aea6910683486340706d745fcdf3db1505fd71e689083
-RUN curl -fsSL -o /tmp/jmeter.tgz "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz" \
+RUN curl -fsSL --retry 3 --retry-delay 5 -o /tmp/jmeter.tgz "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz" \
  && echo "${JMETER_SHA512}  /tmp/jmeter.tgz" | sha512sum -c - \
  && tar -xzf /tmp/jmeter.tgz -C /opt \
  && mv "/opt/apache-jmeter-${JMETER_VERSION}" /opt/jmeter \
@@ -79,6 +85,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist
 # GLV's own Opengrep rules.
 COPY --from=build /app/rules ./rules
+# The Mac helper, which the owner downloads from Owner panel > Mac helpers (it runs on a Mac, not here).
+COPY --from=build /app/helper ./helper
 RUN mkdir -p /data && chown pwuser /data
 USER pwuser
 # Nuclei's community checks, downloaded once when the image is built (signed by ProjectDiscovery).
