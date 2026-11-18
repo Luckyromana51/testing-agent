@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { groupFindings } from "../group.js";
-import type { AiSummary, Finding, ScanResult } from "../types.js";
+import type { AiSummary, Finding, Run, ScanResult } from "../types.js";
 
 const SummarySchema = z.object({
   summary: z
@@ -30,6 +31,37 @@ export function compactFindings(findings: Finding[], limit = 60, unit = "page"):
         }`,
     )
     .join("\n");
+}
+
+/**
+ * A fingerprint of what the summary is written from: each distinct issue and its severity, which
+ * tools ran, and what could not be tested. Page counts and timings are left out, so a re-test that
+ * finds the same issues gets the same fingerprint.
+ */
+export function summaryKey(result: ScanResult): string {
+  const issues = groupFindings(result.findings)
+    .filter((g) => g.severity !== "info")
+    .map((g) => `${g.severity}|${g.key}`)
+    .sort();
+  const tools = (result.tools ?? []).map((t) => `${t.id}:${t.status}`).sort();
+  const untested = (result.agentStats ?? [])
+    .filter((a) => a.untested)
+    .map((a) => a.id)
+    .sort();
+  return createHash("sha256")
+    .update(JSON.stringify({ start: result.startUrl, issues, tools, untested, incomplete: result.incomplete ?? [] }))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+/**
+ * The summary of the project's last summarised test, when it was written from the same issues:
+ * reusing it costs no credits and says the same thing. Runs are newest first.
+ */
+export function reusableSummary(earlier: Run[], key: string): { run: Run; ai: AiSummary } | undefined {
+  const last = earlier.find((r) => r.ai);
+  if (!last?.ai || last.ai.key !== key) return undefined;
+  return { run: last, ai: last.ai };
 }
 
 export function aiEnabled(): boolean {
@@ -66,12 +98,14 @@ ${compactFindings(result.findings, 60, unit) || "- none"}
 
 Write a summary for the product owner and pick the fixes (for packages, name the version to upgrade to) with the biggest impact on users, security${kind === "web" ? " and search ranking" : " and release readiness"}. Ignore info-level items unless nothing else exists. Base everything only on the findings above; do not invent issues.`;
 
+  // Medium suits a summary of a list; CLAUDE_EFFORT=low spends fewer credits, high thinks longer.
+  const effort = (["low", "medium", "high"] as const).find((e) => e === process.env.CLAUDE_EFFORT) ?? "medium";
   const response = await client.beta.messages.parse({
     model,
     max_tokens: 16000,
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",
-    output_config: { effort: "medium", format: betaZodOutputFormat(SummarySchema) },
+    output_config: { effort, format: betaZodOutputFormat(SummarySchema) },
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -80,5 +114,10 @@ Write a summary for the product owner and pick the fixes (for packages, name the
   }
   const parsed = response.parsed_output;
   if (!parsed) throw new Error("Claude returned a summary that did not match the expected format.");
-  return { model: response.model, ...parsed };
+  return {
+    model: response.model,
+    ...parsed,
+    key: summaryKey(result),
+    tokens: { input: response.usage.input_tokens, output: response.usage.output_tokens },
+  };
 }

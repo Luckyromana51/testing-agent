@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { agentsFor } from "./agents/registry.js";
-import { aiEnabled, summariseWithClaude } from "./ai/triage.js";
+import { aiEnabled, reusableSummary, summariseWithClaude, summaryKey } from "./ai/triage.js";
 import { syncIssues } from "./issues.js";
 import { runEngine } from "./engines/index.js";
+import { LiveHub } from "./live.js";
 import { defaultChoices, runTools, toolById } from "./tools/index.js";
 import { secretsOf } from "./vault.js";
 import type { Stores } from "./store.js";
@@ -30,6 +31,8 @@ export class ScanQueue {
   /** Running run id -> how to stop it, and the promise that settles once it has stopped. */
   private running = new Map<string, { stop: AbortController; done: Promise<void> }>();
   private stopping = false;
+  /** What running tests show live in the dashboard. */
+  readonly live = new LiveHub();
 
   constructor(
     private stores: Stores,
@@ -129,6 +132,7 @@ export class ScanQueue {
       this.active.set(run.id, run.projectId);
       const stop = new AbortController();
       const done = this.execute(run, stop.signal).finally(() => {
+        this.live.close(run.id, run.status);
         this.active.delete(run.id);
         this.running.delete(run.id);
         this.pump();
@@ -143,9 +147,11 @@ export class ScanQueue {
       Object.assign(run, patch);
       runs.save(run);
     };
+    const live = this.live.open(run.id);
     const log = (msg: string) => {
       run.progress = [...run.progress, msg].slice(-200);
       runs.save(run);
+      live.log(msg);
     };
 
     update({ status: "running", startedAt: new Date().toISOString() });
@@ -174,6 +180,8 @@ export class ScanQueue {
             if (!signal.aborted) log(m);
           },
           onSession: (c) => (cookie = c),
+          parallel: settings.get().parallelPages,
+          live,
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
@@ -226,11 +234,23 @@ export class ScanQueue {
       );
 
       if (aiEnabled() && settings.get().aiSummary) {
-        log("Asking Claude to summarise the findings");
-        try {
-          update({ ai: await summariseWithClaude(result) });
-        } catch (err) {
-          update({ aiError: (err as Error).message });
+        // Same issues as the last summarised test: its summary still fits, and costs no credits.
+        const earlier = runs.list(20, project.id).filter((r) => r.id !== run.id);
+        const same = reusableSummary(earlier, summaryKey(result));
+        if (same) {
+          log("Same issues as the last test: reusing its Claude summary (no credits used)");
+          // A summary reused before keeps pointing at the test it was written for.
+          const from = same.ai.reusedFrom ?? { runId: same.run.id, at: same.run.finishedAt ?? same.run.createdAt };
+          update({ ai: { ...same.ai, tokens: undefined, reusedFrom: from } });
+        } else {
+          log("Asking Claude to summarise the findings");
+          try {
+            const ai = await summariseWithClaude(result);
+            update({ ai });
+            if (ai.tokens) log(`Claude summary used ${(ai.tokens.input + ai.tokens.output).toLocaleString("en-IN")} tokens`);
+          } catch (err) {
+            update({ aiError: (err as Error).message });
+          }
         }
       } else {
         update({

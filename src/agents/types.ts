@@ -76,6 +76,11 @@ export interface PageAgent extends AgentInfo {
   stage: "page" | "mobile" | "end";
   /** Skip pages that answered 4xx/5xx (they are already reported once). */
   skipErrorPages?: boolean;
+  /**
+   * The agent changes the page while it checks (presses keys, zooms, clicks). Such agents run one
+   * at a time after the others; agents that only read the page all run at the same time.
+   */
+  interacts?: boolean;
   run(ctx: PageContext): Promise<Finding[]> | Finding[];
 }
 

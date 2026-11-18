@@ -123,22 +123,24 @@ describe("login vault", () => {
 describe("signed-in testing of a web app", () => {
   let app: DemoApp;
   let result: ScanResult;
+  /** The same site tested 4 pages at a time, on its own copy of the demo app. */
+  let parallelApp: DemoApp;
+  let parallel: ScanResult;
   let dir: string;
   before(async () => {
     process.env.ALLOW_PRIVATE_TARGETS = "1";
     app = await startDemoApp(4231);
+    parallelApp = await startDemoApp(4232);
     dir = await mkdtemp(path.join(tmpdir(), "glvlogin-"));
-    result = await scanSite({
-      url: `${app.base}/`,
-      maxPages: 10,
-      product: "crm",
-      agents: ["web.links", "web.forms", "web.content"],
-      artifactsDir: dir,
-      login: WEB_LOGIN,
-    });
+    const options = { maxPages: 10, product: "crm" as const, agents: ["web.links", "web.forms", "web.content"], artifactsDir: dir };
+    [result, parallel] = await Promise.all([
+      scanSite({ ...options, url: `${app.base}/`, login: WEB_LOGIN, parallel: 1 }),
+      scanSite({ ...options, url: `${parallelApp.base}/`, login: { ...WEB_LOGIN, loginUrl: `${parallelApp.base}/login` }, parallel: 4 }),
+    ]);
   });
   after(async () => {
     app.server.close();
+    parallelApp.server.close();
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -153,6 +155,19 @@ describe("signed-in testing of a web app", () => {
   it("signs in again when the site ends the session", () => {
     assert.equal(app.logins(), 2);
     assert.ok(result.notes?.some((n) => n.includes("signed the agent out once")));
+  });
+
+  it("gives the same pages and problems when several pages are tested at once, even though the site signs it out", () => {
+    // Pages are listed in the order they were found, which can differ when several load at once.
+    const pagesOf = (r: ScanResult) => r.pages.map((p) => new URL(p.url).pathname).sort();
+    const problemsOf = (r: ScanResult) => r.findings.map((f) => `${f.rule} ${new URL(f.pageUrl).pathname}`).sort();
+    assert.deepEqual(pagesOf(parallel), pagesOf(result));
+    assert.deepEqual(problemsOf(parallel), problemsOf(result));
+    // The pages open while the session ended were tested again one at a time, which opened the
+    // page that ends the session once more: one more sign-in than one page at a time.
+    assert.ok(parallelApp.logins() >= 2 && parallelApp.logins() <= 3, String(parallelApp.logins()));
+    assert.ok(parallel.notes?.some((n) => n.includes("tested again one at a time")));
+    for (const p of parallelApp.requested) assert.ok(!p.startsWith("/logout") && !p.endsWith("/cancel") && !p.includes("action="), p);
   });
 
   it("never opens links that log out or change data", () => {

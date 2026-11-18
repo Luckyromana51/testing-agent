@@ -7,12 +7,13 @@ This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8Mpmf
 ## The dashboard
 
 - **New test**: pick the product type first, then enter its details: a web address; an OpenAPI file address or upload for an API; a Git repository or a zip for source code; an APK upload for an Android app. iOS shows as "Coming soon".
+- **Live view**: while a website test runs, its report page shows the test browser's screens live, side by side, next to what each agent is doing on each screen. Show 1 to 4 screens, pick a shape (side by side, stacked, one big, grid), drag the lines between them to resize, drag a screen's grip onto another to swap them, make one big, or change which screen each place shows. The layout is remembered in that browser. Pictures are only sent while someone watches, so a test nobody watches runs at full speed, and nothing is recorded.
 - **Report**: score per category, then the major issues (critical and high) as cards with a fix suggestion and ready-to-paste code for Apache/LiteSpeed (Hostinger), Nginx, WordPress or PHP. Everything else is in a filterable list. The Agents tab shows what each agent found and how long it took; the Tools tab shows each outside tool's scores, findings and its own report to open.
 - **Projects**: each site, API, codebase or app you test, with its score trend, open issues, test history and an automatic re-test schedule (daily or weekly). For an app, upload the next build on the project page and press Re-test to see what was fixed and what came back.
 - **Issues**: a board (Open, In progress, Fixed, Verified) across projects. Keys look like `GLV-12`. Mark an issue fixed, press Re-test, and the next run either verifies it or moves it back to Open as "Came back". Assign issues and add notes; everything is kept in the history.
 - **Logins**: tick "Sign in first" (websites and apps), "The API needs a key or token" or "The repository is private" on the new-test form, or use the Login card on the project page. See [Logged-in testing](#logged-in-testing-and-the-login-vault).
 - **Tool tabs**: after you pick the product type, the new-test page shows a row of tabs: **GLV checks** (the platform's own agents) first, then one tab per outside tool that fits that type (Lighthouse, W3C HTML checker, OWASP ZAP, Nuclei, testssl.sh). Each tab says what the tool checks, whether it is safe, how long it takes, and has a switch and options. The project page has the same tabs to change the tools for later tests. See [Outside tools](#outside-tools-tool-tabs).
-- **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count and the Claude summary, and see the login vault's status.
+- **Owner panel**: overview numbers, switch any agent on or off, add team members, set the default page count, how many pages are tested at the same time, and the Claude summary, and see the login vault's status.
 
 With login on, the first time the dashboard opens it asks you to create the owner account. Do that straight after the first start, before anyone else can reach the server. While GLV is still building the system, Docker starts with login off (see [Login switch](#login-switch-auth_disabled)).
 
@@ -195,10 +196,27 @@ For development with hot reload: `npm run dev` (API on :4000, dashboard on :5173
 
 Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Each finished scan then gets a short summary and the top 3 to 5 fixes, written by Claude (`claude-opus-5-5` by default; change it with `CLAUDE_MODEL`). Without a key, scans still run; only the summary is skipped.
 
+To use fewer credits:
+- A re-test that finds exactly the same issues as the last summarised test of that project reuses its summary, and the report says so ("summary reused, no credits used").
+- Each report shows how many tokens its summary used. `CLAUDE_EFFORT` (low, medium, high, max; medium by default) sets how hard Claude thinks.
+- A report made while the summary was off, or before the key was set, has a **Write summary** button.
+
+### Faster tests: pages at the same time
+
+A website test opens several pages at the same time (4 by default, up to 16), each in its own browser screen, and all the agents of a page check it together. Site-wide agents (links, exposed files, duplicates) also run together. A website test has 12 to 14 agents per page, so 8 pages at the same time means about 100 agent checks at once. Change it in the owner panel, with `PARALLEL_PAGES` in `.env`, or with `--parallel` on the command line.
+
+Accuracy stays the same as one page at a time:
+- The first page is tested alone, since it decides where the site lives.
+- A site that answers 429 (too many requests) is tested one page at a time from then on.
+- When a site signs the agent out while several pages are open, the pages of that session are tested again one at a time.
+- Pages still load one at a time, so the site's speed is measured as one visitor sees it. Only the checks, which take most of the time, overlap.
+- Links are followed in the order one page at a time would find them, so the same pages are tested when the site has more pages than the limit.
+
 ### Command line (offline and CI)
 
 ```bash
 npm run scan -- scan https://example.com --pages 20 --product ecommerce
+npm run scan -- scan https://example.com --parallel 8   # 8 pages at the same time
 npm run scan -- api https://api.example.com/openapi.json
 npm run scan -- code .                      # the folder you are in (or a repo URL or a zip)
 npm run scan -- apk app-release.apk
@@ -262,13 +280,15 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), `tools` (the tool tabs for later tests; `null` goes back to the default), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner; a queued or running test is cancelled first) |
 | `POST` | `/api/projects/:id/runs` | Re-test now |
 | `GET` | `/api/runs/:id` | Full report, with live progress while it runs |
+| `GET` | `/api/runs/:id/live` | The live view while a website test runs, as server-sent events: `screens` (how many), `screen` (address, desktop or phone, what it is doing, which agents are checking it), `frame` (a JPEG picture), `log` and `end`. Pictures are only made while a viewer is connected |
+| `POST` | `/api/runs/:id/summary` | Write the Claude summary for a finished test that has none |
 | `GET` | `/api/runs/:id/artifacts/:file` | Screenshots, and each tool's own report (`tool-*.html` opens in a sandbox, `tool-*.json` is the raw results) |
 | `POST` | `/api/runs/:id/cancel` | Cancel a queued or running test (its browser or clone is stopped; issues are not changed) |
 | `POST` | `/api/runs` | Quick test by address (reuses the website project for that site) |
 | `GET` | `/api/issues?projectId=` | Tracked issues |
 | `GET`, `PATCH` | `/api/issues/:id` | One issue with history; change status, assignee, or add a note |
 | `GET` | `/api/owner/overview` | Owner numbers |
-| `GET`, `PATCH` | `/api/owner/settings` | Agent switches, default pages, Claude summary |
+| `GET`, `PATCH` | `/api/owner/settings` | Agent switches, default pages, pages at the same time (`parallelPages`), Claude summary |
 | `GET`, `POST`, `DELETE` | `/api/owner/users` | Team accounts |
 | `GET` | `/api/health` | Health check |
 
@@ -289,7 +309,8 @@ src/
   tools/index.ts            the outside tools (tool tabs); add new ones here. Runs them and merges their findings
   tools/*.ts                one file per tool: Lighthouse, W3C HTML checker, ZAP, Nuclei, testssl.sh
   targets.ts                checks what each product type needs (address, repository, upload)
-  runner/scan.ts            crawler that runs the agents (Playwright)
+  runner/scan.ts            crawler that runs the agents (Playwright), several pages at the same time
+  live.ts                   the live view of a running test (screens, pictures, agents) sent to the dashboard
   runner/checks/            seo, security, accessibility rules used by agents
   runner/score.ts           category and overall scores
   group.ts                  groups findings into distinct issues
