@@ -1,3 +1,4 @@
+import { WEB_AGENT_FIXES } from "./fixes-web.js";
 import type { Finding } from "./types.js";
 
 /** How to fix an issue, written for the developer who will do it. */
@@ -605,7 +606,7 @@ const SCHEMATHESIS_SAME: Record<string, string> = {
   ST401: "api:auth-bypass",
 };
 
-const written = (rule: string): Fix | undefined => FIXES[rule] ?? ENGINE_FIXES[rule];
+const written = (rule: string): Fix | undefined => FIXES[rule] ?? ENGINE_FIXES[rule] ?? WEB_AGENT_FIXES[rule];
 
 /** The written fix for an outside tool's finding, when the platform has one for the same problem. */
 function toolFix(rule: string, detail: string): Fix | undefined {
@@ -636,7 +637,7 @@ function toolFix(rule: string, detail: string): Fix | undefined {
 
 /** The fix for a finding, or a general one built from the finding's own text. */
 export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
-  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule];
+  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule] ?? WEB_AGENT_FIXES[f.rule];
   if (known) return known;
   if (/^(code|android):secret-/.test(f.rule)) return ROTATE_SECRET;
   const tool = toolFix(f.rule, f.detail);
@@ -652,4 +653,4 @@ export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
 }
 
 /** Rules that have a written fix (used by tests to keep the list complete). */
-export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES)];
+export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES), ...Object.keys(WEB_AGENT_FIXES)];

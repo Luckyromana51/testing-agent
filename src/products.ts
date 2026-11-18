@@ -12,7 +12,16 @@ export interface ProductInfo {
   tests: string[];
 }
 
-const WEB_TESTS = ["Broken pages and links", "JavaScript errors", "Accessibility (WCAG 2.2)", "SEO", "Security headers", "Speed", "Phone layout"];
+const WEB_TESTS = [
+  "Broken pages and links",
+  "JavaScript errors",
+  "Accessibility (WCAG 2.2), keyboard and screen readers",
+  "SEO",
+  "Security headers, leaks and old libraries",
+  "Speed, images and network",
+  "Phones, 11 screen sizes, Firefox and Safari's engine",
+  "Forms, search and random clicking",
+];
 
 export const PRODUCTS: ProductInfo[] = [
   {

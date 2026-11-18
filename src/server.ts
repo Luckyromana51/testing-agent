@@ -575,6 +575,13 @@ export async function createApp(opts: AppOptions) {
         }
         return reply.sendFile(file, queue.artifactsDir(id));
       }
+      // What agents saved about a page: the screen reader's view (text) and the network log (JSON).
+      if (/^[\w-]+$/.test(id) && /^page-\d+-[a-z-]+\.(txt|json)$/.test(file)) {
+        reply.header("Content-Security-Policy", "sandbox");
+        reply.header("X-Content-Type-Options", "nosniff");
+        if (file.endsWith(".txt")) reply.type("text/plain; charset=utf-8");
+        return reply.sendFile(file, queue.artifactsDir(id));
+      }
       return reply.code(400).send({ error: "Bad file name" });
     }
     return reply.sendFile(file, queue.artifactsDir(id));

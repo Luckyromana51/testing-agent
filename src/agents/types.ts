@@ -27,6 +27,24 @@ export interface PageSignals {
   insecure: string[];
   /** Every URL the page requested (for third-party and tracker checks). */
   requests: string[];
+  /** Every answer the page got, with the headers and size the network inspector reads. */
+  responses: NetResponse[];
+}
+
+/** One answer the browser received while loading a page. */
+export interface NetResponse {
+  url: string;
+  status: number;
+  /** "document", "script", "stylesheet", "image", "font", "fetch", "xhr"... */
+  type: string;
+  /** Lower-case header names. */
+  headers: Record<string, string>;
+  /** Bytes received for the body (compressed), when the browser knows it. */
+  bytes: number;
+  /** It came from a redirect (3xx) and was followed. */
+  redirected: boolean;
+  /** The address first asked for, when it was redirected. */
+  redirectedFrom?: string;
 }
 
 /** Shared notes that page agents leave for site agents. */
@@ -51,6 +69,9 @@ export interface PageContext {
   product: ProductType;
   result: PageResult;
   site: SiteState;
+  /** The page's number in the report, and the folder for files an agent saves about it. */
+  index: number;
+  artifactsDir: string;
 }
 
 export interface SiteContext {
@@ -64,6 +85,10 @@ export interface SiteContext {
   product: ProductType;
   site: SiteState;
   log: (message: string) => void;
+  /** Every tested page's links (normalised), by the page's address. */
+  pageLinks: Map<string, string[]>;
+  /** Folder for files an agent saves (screenshots from other browsers...). */
+  artifactsDir: string;
 }
 
 /**
@@ -87,6 +112,12 @@ export interface PageAgent extends AgentInfo {
 /** Runs once per scan, after every page has been visited. */
 export interface SiteAgent extends AgentInfo {
   stage: "site";
+  /**
+   * Runs after the other site agents, one at a time: it measures speed (other work would slow
+   * its numbers), or, with "signed-in", it opens the session in other browsers, which some sites
+   * answer by ending it.
+   */
+  runsLast?: boolean | "signed-in";
   run(ctx: SiteContext): Promise<Finding[]> | Finding[];
 }
 

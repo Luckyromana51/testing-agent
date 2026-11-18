@@ -6,7 +6,8 @@ import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../
 import { listen } from "../agents/web/signals.js";
 import type { LiveSink } from "../live.js";
 import type { AgentStat, Finding, PageResult, ScanOptions, ScanResult } from "../types.js";
-import { CouldNotTestError, explainLoadError, refusedStatus } from "./coverage.js";
+import { keepFirstSightings } from "../agents/web/once.js";
+import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
 import { categoriesFor } from "../products.js";
@@ -43,6 +44,7 @@ export function selectAgents(opts: ScanOptions): WebAgent[] {
 class AgentRunner {
   stats = new Map<string, AgentStat>();
   private lastError = new Map<string, string>();
+  private notTested = new Map<string, string>();
   private agents: WebAgent[];
   /** Agents left out on purpose, with the reason shown in the report. */
   skipped: AgentStat[];
@@ -63,6 +65,8 @@ class AgentRunner {
   /** Every agent's numbers. An agent that failed everywhere it ran, or never got to run, is "not tested". */
   finalStats(): AgentStat[] {
     const out = [...this.stats.values()].map((s) => {
+      const why = this.notTested.get(s.id);
+      if (why) return { ...s, untested: why };
       if (!s.runs) return { ...s, untested: "No page it could check loaded." };
       if (s.errors >= s.runs) return { ...s, untested: `Stopped with an error every time: ${this.lastError.get(s.id) ?? "unknown error"}` };
       return s;
@@ -78,6 +82,12 @@ class AgentRunner {
     return this.agents.filter((a): a is SiteAgent => a.stage === "site");
   }
 
+  /** Findings an agent made that the report shows on another page instead. */
+  uncount(agentId: string, n: number): void {
+    const stat = this.stats.get(agentId);
+    if (stat) stat.findings = Math.max(0, stat.findings - n);
+  }
+
   async run(agent: WebAgent, pageUrl: string, fn: () => Promise<Finding[]> | Finding[]): Promise<Finding[]> {
     const stat = this.stats.get(agent.id)!;
     const started = Date.now();
@@ -88,6 +98,13 @@ class AgentRunner {
       stat.findings += out.length;
       return out;
     } catch (err) {
+      if (err instanceof NotTestedError) {
+        // The check could not be done here (a browser it needs is missing...): "not tested", never "passed".
+        this.notTested.set(agent.id, err.message);
+        for (const f of err.partial) f.agent ??= agent.id;
+        stat.findings += err.partial.length;
+        return err.partial;
+      }
       stat.errors++;
       this.lastError.set(agent.id, (err as Error).message.split("\n")[0]);
       return [
@@ -200,6 +217,8 @@ async function scanPage(
     product: opts.product ?? "website",
     result,
     site,
+    index,
+    artifactsDir: opts.artifactsDir,
   });
   const runAgent = async (agent: PageAgent) => {
     busy.add(agent.name);
@@ -365,6 +384,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const queue = [startUrl];
   const seen = new Set(queue);
   const linkSources = new Map<string, string>();
+  const pageLinks = new Map<string, string[]>();
   /** Tested pages with their findings, by the order they were started in (the report keeps that order). */
   const done: { index: number; requested: string; gen: number; result: PageResult; findings: Finding[] }[] = [];
   const findings: Finding[] = [];
@@ -511,6 +531,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       }
     }
     const links: string[] = [];
+    pageLinks.set(r.result.url, links);
     for (const raw of r.links) {
       try {
         const link = normaliseUrl(raw);
@@ -583,33 +604,38 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     const order = new Map(done.map((d, i) => [d.result.url, i]));
     site.seo = new Map([...site.seo].sort((a, b) => (order.get(a[0]) ?? done.length) - (order.get(b[0]) ?? done.length)));
     for (const d of done) findings.push(...d.findings);
+    // A script or image that every page loads is reported once, on the first page that has it.
+    for (const [agent, n] of keepFirstSightings(findings)) runner.uncount(agent, n);
     pages.push(...done.map((d) => d.result));
-
-    // Site-wide agents (links, exposed files, duplicates...) all run at the same time.
-    const siteAgents = runner.siteAgents();
-    if (siteAgents.length) log(`Site-wide checks: ${siteAgents.map((a) => a.name).join(", ")}`);
-    const siteFindings = await Promise.all(
-      siteAgents.map((agent) =>
-        runner.run(agent, startUrl, () =>
-          agent.run({
-            browser: context,
-            origin,
-            startUrl: pages[0]?.url ?? startUrl,
-            pages,
-            linkSources,
-            product: opts.product ?? "website",
-            site,
-            log,
-          }),
-        ),
-      ),
-    );
-    findings.push(...siteFindings.flat());
     if (signedIn && opts.onSession) {
-      // The outside tools (Lighthouse, ZAP...) test the signed-in pages with the same session.
+      // The outside tools (Lighthouse, ZAP...) test the signed-in pages with the same session,
+      // taken before the site agents open it in other browsers.
       const cookies = await context.cookies(pages[0]?.url ?? startUrl);
       if (cookies.length) opts.onSession(cookies.map((c) => `${c.name}=${c.value}`).join("; "));
     }
+
+    // Site-wide agents (links, exposed files, duplicates...) run at the same time, except those
+    // that measure speed or could end the session: they run afterwards, one at a time.
+    const siteAgents = runner.siteAgents();
+    if (siteAgents.length) log(`Site-wide checks: ${siteAgents.map((a) => a.name).join(", ")}`);
+    const last = (a: SiteAgent) => a.runsLast === true || (a.runsLast === "signed-in" && Boolean(signedIn));
+    const runSite = (agent: SiteAgent) =>
+      runner.run(agent, startUrl, () =>
+        agent.run({
+          browser: context,
+          origin,
+          startUrl: pages[0]?.url ?? startUrl,
+          pages,
+          linkSources,
+          product: opts.product ?? "website",
+          site,
+          log,
+          pageLinks,
+          artifactsDir: opts.artifactsDir,
+        }),
+      );
+    findings.push(...(await Promise.all(siteAgents.filter((a) => !last(a)).map(runSite))).flat());
+    for (const agent of siteAgents.filter(last)) findings.push(...(await runSite(agent)));
   } finally {
     opts.signal?.removeEventListener("abort", stop);
     await browser.close().catch(() => {});

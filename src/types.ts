@@ -50,6 +50,8 @@ export interface PageResult {
   };
   screenshot?: string;
   mobileScreenshot?: string;
+  /** More files about the page that agents saved (the screen reader view, the network log...). */
+  files?: { label: string; file: string }[];
   error?: string;
 }
 

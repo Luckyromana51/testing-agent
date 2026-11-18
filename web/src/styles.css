@@ -334,6 +334,13 @@ button {
   color: var(--muted);
   font-weight: 600;
 }
+/* The report's address and summary line wrap on narrow screens instead of widening the page. */
+.run-header > div:first-child {
+  min-width: 0;
+}
+.run-header .run-sub {
+  white-space: normal;
+}
 .run-title {
   font-size: 22px;
   margin: 4px 0;
@@ -728,6 +735,13 @@ button {
 }
 .page-stats .bad {
   color: var(--bad);
+}
+.page-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  margin-top: 6px;
 }
 .sev-summary .sev-count {
   background: none;
