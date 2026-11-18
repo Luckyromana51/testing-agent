@@ -140,7 +140,9 @@ function planted(port: number): (path: string) => Page | Buffer | null {
     "/spacing": () => ({
       body: shell(
         "Spacing",
-        `<main><h1>Spacing</h1><div style="width:400px;overflow:hidden;white-space:nowrap;font:20px monospace">Free-delivery-on-all-orders-now</div></main>`,
+        // A box with a fixed height: the text fits at line height 1.2 and is cut at 1.5, whatever font
+        // the machine has (a box sized for the text's width depends on how wide its font is).
+        `<main><h1>Spacing</h1><div style="height:24px;overflow:hidden;font:20px/24px sans-serif">Free delivery on all orders now</div></main>`,
       ),
     }),
     "/reader": () => ({
