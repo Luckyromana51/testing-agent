@@ -1,6 +1,7 @@
 import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
+import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   Issue,
   IssueStatus,
@@ -35,7 +36,31 @@ export type ProjectSummary = Project & {
   waiting: boolean;
   /** The saved login, without its secrets. */
   login: LoginSummary | null;
+  permissions: PermissionView[];
 };
+
+/** A client's permission for load and attack tests, with where it stands today. */
+export type PermissionView = Permission & { status: PermissionStatus };
+
+export interface PermissionDraft {
+  hosts: string[];
+  kinds: PermissionKind[];
+  grantedBy: string;
+  reference: string;
+  writes: boolean;
+  maxUsers: number;
+  maxMinutes: number;
+  from: string;
+  until: string;
+  confirm: boolean;
+}
+
+export interface ProofCheck {
+  host: string;
+  ok: boolean;
+  method?: "file" | "dns";
+  error?: string;
+}
 
 export interface ProjectDetail {
   project: ProjectSummary;
@@ -165,6 +190,10 @@ export const api = {
     }),
   deleteProject: (id: string) => call("DELETE", `/api/projects/${id}`),
   retest: (id: string) => call<Run>("POST", `/api/projects/${id}/runs`, { trigger: "retest" }),
+  addPermission: (id: string, b: PermissionDraft) =>
+    call<{ project: ProjectSummary; permissionId: string; checks: ProofCheck[] }>("POST", `/api/projects/${id}/permissions`, b),
+  checkPermission: (id: string, pid: string) => call<{ project: ProjectSummary; checks: ProofCheck[] }>("POST", `/api/projects/${id}/permissions/${pid}/check`, {}),
+  revokePermission: (id: string, pid: string) => call<ProjectSummary>("POST", `/api/projects/${id}/permissions/${pid}/revoke`, {}),
 
   run: (id: string) => call<Run>("GET", `/api/runs/${id}`),
   deleteRun: (id: string) => call("DELETE", `/api/runs/${id}`),

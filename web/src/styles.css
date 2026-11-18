@@ -2529,3 +2529,142 @@ body.dragging-rows * {
 .live-body.phone .live-panel {
   overflow: visible;
 }
+
+/* Load and attack tests: the client's permission */
+.permission-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.permission-intro {
+  margin: 0;
+  line-height: 1.5;
+}
+.permission {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.permission.revoked,
+.permission.expired {
+  opacity: 0.7;
+}
+.permission-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.permit-status {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  color: var(--muted);
+}
+.permit-status.active {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+.permit-status.waiting-proof,
+.permit-status.scheduled {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.permission-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.permission-facts dt {
+  color: var(--muted);
+}
+.permission-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.proof-host {
+  display: inline-block;
+  margin-right: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.proof-host.ok {
+  color: var(--good);
+}
+.proof-host.missing {
+  color: var(--bad);
+}
+.proof-steps {
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.proof-steps code {
+  overflow-wrap: anywhere;
+}
+.proof-token {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.proof-token code {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.proof-results {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.proof-results .ok {
+  color: var(--good);
+}
+.proof-results .bad {
+  color: var(--bad);
+  overflow-wrap: anywhere;
+}
+.permission-form .form-row {
+  flex-wrap: wrap;
+}
+.confirm-line {
+  font-weight: 600;
+}
+.permit-note {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.permit-note.ok {
+  background: color-mix(in srgb, var(--good) 10%, transparent);
+}
+.tool-table-wrap {
+  overflow-x: auto;
+}
+.tool-table {
+  font-size: 13px;
+  margin-top: 6px;
+}
+.tool-table td,
+.tool-table th {
+  white-space: nowrap;
+}

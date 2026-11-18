@@ -402,4 +402,59 @@ export const WEB_AGENT_FIXES: Record<string, Fix> = {
     code: [{ label: "Service worker", snippet: "self.addEventListener('install', (e) => e.waitUntil(caches.open('v1').then((c) => c.addAll(['/', '/offline.html']))));\nself.addEventListener('fetch', (e) => {\n  if (e.request.mode === 'navigate') {\n    e.respondWith(fetch(e.request).catch(() => caches.match('/offline.html')));\n  }\n});" }],
     effort: "hours",
   },
+
+  // Load tests (k6, JMeter)
+  "load:errors": {
+    steps: "Open the server's error log and monitoring for the test window and find what failed first: the web server's worker limit, PHP-FPM or Node processes, database connections, or memory. Raise the limit that ran out, cache pages that are the same for everyone, and move slow work (emails, reports) to a background queue. Then run the same load test again.",
+    code: [
+      { label: "Nginx: cache pages for 60 s", snippet: "proxy_cache_path /var/cache/nginx keys_zone=pages:10m max_size=1g;\nlocation / {\n  proxy_cache pages;\n  proxy_cache_valid 200 60s;\n  proxy_cache_use_stale error timeout updating;\n  proxy_pass http://app;\n}" },
+      { label: "PHP-FPM (www.conf)", snippet: "pm = dynamic\npm.max_children = 40      ; about (RAM for PHP) / (memory per process)\npm.start_servers = 8\npm.min_spare_servers = 4\npm.max_spare_servers = 12" },
+    ],
+    effort: "days",
+  },
+  "load:slow": {
+    steps: "Profile the slowest addresses listed in the finding under load: look for database queries without indexes, the same query run once per item (N+1), and work done on every request that could be cached. Add indexes, cache results, and serve images and scripts from a CDN or with long cache times.",
+    code: [{ label: "SQL: find slow queries (MySQL)", snippet: "SET GLOBAL slow_query_log = 'ON';\nSET GLOBAL long_query_time = 0.5;\n-- then run the load test again and read the slow query log" }],
+    effort: "days",
+  },
+  "load:breaking-point": {
+    steps: "Compare the expected peak (a sale, a campaign, exam results day) with the breaking point. If the peak is higher, find what runs out first in the server's monitoring at that moment (CPU, memory, database connections, worker processes), then add caching, a bigger server or more servers behind a load balancer, and test again until the breaking point is well above the peak.",
+    effort: "days",
+  },
+  "load:spike-recovery": {
+    steps: "Make the site recover by itself after a rush: set timeouts so stuck requests are dropped instead of queued, let worker processes restart quickly, and make sure caches refill without every request hitting the database at once (cache stampede protection).",
+    effort: "days",
+  },
+  "load:degrades": {
+    steps: "Watch memory and open database connections during a long test. Memory that only grows means a leak (objects kept in a global cache or list); connections that only grow mean they are not closed or returned to the pool. Fix the leak, or as a stopgap restart workers after a number of requests.",
+    code: [{ label: "PHP-FPM: restart workers regularly", snippet: "pm.max_requests = 500" }, { label: "Node (PM2)", snippet: "pm2 start app.js --max-memory-restart 600M" }],
+    effort: "days",
+  },
+  // Attack probes
+  "probe:xss": {
+    steps: "Escape every value before putting it into HTML, in the right way for where it goes (HTML text, an attribute, JavaScript or a URL). Use the template engine's automatic escaping instead of building HTML by joining strings, and add a Content Security Policy that blocks inline scripts.",
+    code: [
+      { label: "PHP", snippet: "<p>Results for <?= htmlspecialchars($_GET['q'] ?? '', ENT_QUOTES, 'UTF-8') ?></p>" },
+      { label: "Header (CSP)", snippet: "Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'" },
+    ],
+    effort: "hours",
+  },
+  "probe:sql-injection": {
+    steps: "Never put request values into SQL text. Use parameterised queries (prepared statements) for every value, check that ids are numbers, and turn off database error messages for visitors. Then check the database logs for signs that the hole was already used.",
+    code: [
+      { label: "PHP (PDO)", snippet: "$stmt = $pdo->prepare('SELECT name, price FROM products WHERE id = ?');\n$stmt->execute([(int) $_GET['id']]);" },
+      { label: "Node (mysql2)", snippet: "const [rows] = await db.execute('SELECT name FROM users WHERE name = ?', [req.query.name]);" },
+    ],
+    effort: "hours",
+  },
+  "probe:open-redirect": {
+    steps: "Only redirect to the site's own paths: accept a value that starts with a single / (not //), or look the target up in a list of allowed addresses. Otherwise send the visitor to the home page.",
+    code: [{ label: "PHP", snippet: "$next = $_GET['next'] ?? '/';\nif (!preg_match('#^/(?!/)#', $next)) $next = '/';\nheader('Location: ' . $next);" }],
+    effort: "minutes",
+  },
+  "probe:path-traversal": {
+    steps: "Never use a request value as a file path. Map allowed names to files, or take only the base name and check that the final path is still inside the documents folder. Then check the server logs for earlier reads of system files, and change any password or key stored in files the site can read.",
+    code: [{ label: "PHP", snippet: "$name = basename($_GET['file'] ?? '');\n$path = realpath(__DIR__ . '/docs/' . $name);\nif (!$path || !str_starts_with($path, __DIR__ . '/docs/')) { http_response_code(404); exit; }\nreadfile($path);" }],
+    effort: "hours",
+  },
 };

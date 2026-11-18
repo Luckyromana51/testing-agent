@@ -1,5 +1,6 @@
 import type { LiveSink } from "./live.js";
 import type { ToolChoice, ToolStat } from "./tools/types.js";
+import type { Permission } from "./permission.js";
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
@@ -242,6 +243,8 @@ export interface Project {
   issueSeq: number;
   /** Outside tools turned on for this project's tests. Unset: every safe tool installed on the server. */
   tools?: ToolChoice[];
+  /** The client's written permissions for load and attack tests, newest last (withdrawn ones are kept). */
+  permissions?: Permission[];
 }
 
 export type IssueStatus = "open" | "in_progress" | "fixed" | "verified" | "reopened" | "wont_fix";

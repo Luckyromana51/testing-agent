@@ -33,8 +33,9 @@ services:
     # Chromium needs more shared memory than Docker's 64 MB default.
     shm_size: "1gb"
 
-  # OWASP ZAP for the "ZAP (passive)" tool tab. The app only asks it to look at pages the test
-  # already opened (GET requests); it never starts a spider or an active (attack) scan.
+  # OWASP ZAP for the "ZAP (passive)" and "ZAP (active)" tool tabs. The app only asks it to look at
+  # pages the test already opened (GET requests) and never starts a spider. An active (attack) scan
+  # runs only for a project with the client's written permission, on those pages, GET only.
   # No ports are published, so nothing outside this compose network can use it.
   zap:
     image: zaproxy/zap-stable:2.17.0

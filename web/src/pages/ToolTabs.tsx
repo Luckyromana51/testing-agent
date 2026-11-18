@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { AgentInfo } from "../../../src/agents/types.ts";
 import type { ToolChoice } from "../../../src/tools/types.ts";
 import type { ProductType } from "../../../src/types.ts";
-import { api, type Meta, type MetaTool } from "../api.ts";
+import { api, type Meta, type MetaTool, type PermissionView } from "../api.ts";
 import { CATEGORY_LABEL } from "../lib.ts";
 
 const WEB_PRODUCTS: ProductType[] = ["website", "ecommerce", "webapp", "saas", "crm"];
@@ -50,18 +50,32 @@ export function toolChoices(meta: Meta, draft: ToolDraft): ToolChoice[] {
  * One tab for the platform's own checks, then one tab per outside tool that fits the product
  * type: what it checks, whether it is safe, its options, and a switch to run it.
  */
+/** The client's permission a load or attack tool can use: not withdrawn and not over (the server checks the proof again before each test). */
+export function usablePermission(permissions: PermissionView[] | undefined, tool: MetaTool): PermissionView | undefined {
+  if (tool.safety !== "permission") return undefined;
+  const now = Date.now();
+  return (permissions ?? [])
+    .filter((p) => p.kinds.includes(tool.permission ?? "attack") && !p.revokedAt && Date.parse(p.until) >= now)
+    .sort((a, b) => b.maxUsers - a.maxUsers)[0];
+}
+
+const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
 export function ToolTabs({
   meta,
   type,
   agents,
   draft,
   onChange,
+  permissions,
 }: {
   meta: Meta;
   type: ProductType;
   agents: AgentInfo[];
   draft: ToolDraft;
   onChange: (d: ToolDraft) => void;
+  /** The project's permissions for load and attack tests; undefined before the project exists. */
+  permissions?: PermissionView[];
 }) {
   const tools = toolsForType(meta, type);
   const [active, setActive] = useState("glv");
@@ -70,6 +84,10 @@ export function ToolTabs({
   const [uploading, setUploading] = useState<string>();
   const [uploadError, setUploadError] = useState<string>();
   const missingFile = tool ? (tool.options ?? []).some((o) => o.required && !draft[tool.id]?.options[o.id]) : false;
+  const permit = tool ? usablePermission(permissions, tool) : undefined;
+  const needsPermit = tool?.safety === "permission" && !permit;
+  const overLimit = (o: { id: string }, value: string) =>
+    Boolean(permit && tool && ((tool.limits?.users === o.id && Number(value) > permit.maxUsers) || (tool.limits?.minutes === o.id && Number(value) > permit.maxMinutes)));
   const loginNote = (t: MetaTool) =>
     WEB_PRODUCTS.includes(type)
       ? t.signedIn === "uses-login"
@@ -159,7 +177,7 @@ export function ToolTabs({
                           type="file"
                           accept={o.accept}
                           hidden
-                          disabled={!tool.ready || uploading === o.id}
+                          disabled={!tool.ready || needsPermit || uploading === o.id}
                           onChange={async (e) => {
                             const file = e.target.files?.[0];
                             e.target.value = "";
@@ -199,8 +217,9 @@ export function ToolTabs({
                       onChange={(e) => set(tool.id, { options: { ...draft[tool.id].options, [o.id]: e.target.value } })}
                     >
                       {o.choices.map((c) => (
-                        <option key={c.value} value={c.value}>
+                        <option key={c.value} value={c.value} disabled={overLimit(o, c.value)}>
                           {c.label}
+                          {overLimit(o, c.value) ? " (over the client's limit)" : ""}
                         </option>
                       ))}
                     </select>
@@ -210,13 +229,32 @@ export function ToolTabs({
                 )}
               </div>
             )}
+            {tool.safety === "permission" &&
+              (permit ? (
+                <div className={`permit-note ${permit.status === "active" ? "ok" : ""}`}>
+                  <strong>Allowed by {permit.grantedBy}</strong> until {day(permit.until)}: up to {permit.maxUsers} users, {permit.maxMinutes} minutes.{" "}
+                  {permit.status === "active"
+                    ? "The proof is in place; it is checked again before each test."
+                    : permit.status === "scheduled"
+                      ? `It starts on ${day(permit.from)}.`
+                      : "Waiting for the client's proof file: the test will not run until it is in place."}{" "}
+                  Runs only when someone starts a test, never on the schedule.
+                </div>
+              ) : (
+                <div className="tool-missing">
+                  Needs the client's written permission for {tool.permission === "load" ? "load tests" : "attack tests"}.{" "}
+                  {permissions === undefined
+                    ? "Create the project first; then the owner adds the permission on the project page."
+                    : "The owner adds it under \"Load and attack tests\" on this page."}
+                </div>
+              ))}
             {!tool.ready && <div className="tool-missing">Not available on this server: {tool.notReady}</div>}
             <div className="tool-foot">
               <label className="check dark">
                 <input
                   type="checkbox"
                   checked={Boolean(draft[tool.id]?.on)}
-                  disabled={(!tool.ready || missingFile) && !draft[tool.id]?.on}
+                  disabled={(!tool.ready || missingFile || needsPermit) && !draft[tool.id]?.on}
                   onChange={(e) => set(tool.id, { on: e.target.checked })}
                 />{" "}
                 Run {tool.name} in this test{missingFile && !draft[tool.id]?.on ? " (upload the file first)" : ""}

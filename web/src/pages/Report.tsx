@@ -648,6 +648,35 @@ function Tools({ run }: { run: Run }) {
               ))}
             </ul>
           )}
+          {t.table && t.table.rows.length > 0 && (
+            <div className="tool-table-wrap">
+              <div className="stat-label">{t.table.title}</div>
+              <table className="table tool-table">
+                <thead>
+                  <tr>
+                    {t.table.columns.map((c) => (
+                      <th key={c}>{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.table.rows.map((row, i) => (
+                    <tr key={i}>
+                      {row.map((cell, j) => (
+                        <td key={j}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {t.permit && (
+            <div className="permit-note ok small">
+              Ran with the written permission of <strong>{t.permit.grantedBy}</strong> ({t.permit.reference}) for {t.permit.hosts.join(", ")}, valid until{" "}
+              {new Date(t.permit.until).toLocaleDateString()}, recorded by {t.permit.recordedBy}.
+            </div>
+          )}
           {t.merged ? (
             <div className="muted small">
               {plural(t.merged, "problem")} {t.merged === 1 ? "was" : "were"} already found by the platform's own checks, so {t.merged === 1 ? "it is" : "they are"} shown once.
