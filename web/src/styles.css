@@ -514,16 +514,21 @@ button {
 .tabs {
   display: flex;
   gap: 4px;
-  border-bottom: 1px solid var(--border);
+  /* The line under the tabs is a shadow, so the active tab's underline covers it inside the scroll box. */
+  box-shadow: inset 0 -1px 0 var(--border);
+  /* On a phone, more tabs than fit scroll sideways inside the bar, not the page. */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 .tabs button {
+  flex: none;
+  white-space: nowrap;
   background: none;
   border: 0;
   padding: 10px 14px;
   color: var(--muted);
   font-weight: 600;
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
 }
 .tabs button.active {
   color: var(--text);
@@ -2005,6 +2010,96 @@ a.brand {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.safety.mac {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* Screenshots a tool sent back (Safari on each device, the iOS Simulator's screens) */
+.tool-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.tool-image {
+  display: grid;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.tool-image img {
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+  /* Desktop screenshots are wide: show their top left, where the page starts. */
+  object-position: top left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.tool-image:hover img {
+  border-color: var(--accent);
+}
+
+/* Owner panel > Mac helpers */
+.helper-list li {
+  align-items: flex-start;
+}
+.helper-list .grow {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.helper-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  vertical-align: middle;
+}
+.helper-dot.on {
+  background: var(--good);
+}
+.helper-kinds {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 2px 0;
+}
+.helper-kind {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+}
+.helper-kind.ok {
+  color: var(--good);
+}
+.helper-kind.bad {
+  color: var(--warn);
+}
+.helper-token {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.helper-token pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.helper-setup {
+  margin-top: 16px;
+}
+.helper-setup ol {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 /* Report downloads (SARIF, JUnit) */

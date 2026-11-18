@@ -1,6 +1,7 @@
 import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
+import type { HelperInfo } from "../../src/helpers.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   Issue,
@@ -132,6 +133,18 @@ export interface Overview {
   products: { type: ProductType; name: string; available: boolean; projects: number }[];
 }
 
+/** A Mac paired with this server, as the owner panel shows it. */
+export interface HelperView {
+  id: string;
+  name: string;
+  createdAt: string;
+  createdBy: string;
+  lastSeen: string | null;
+  online: boolean;
+  info: HelperInfo | null;
+  busy: { label: string; since: string } | null;
+}
+
 /** Fired when the server says the session is gone, so the app can show the sign-in screen. */
 export const UNAUTHORIZED = "glv:unauthorized";
 
@@ -213,4 +226,8 @@ export const api = {
   addUser: (b: { name: string; email: string; password: string; role: "owner" | "member" }) =>
     call<User>("POST", "/api/owner/users", b),
   removeUser: (id: string) => call("DELETE", `/api/owner/users/${id}`),
+  helpers: () => call<{ helpers: HelperView[]; queued: number }>("GET", "/api/owner/helpers"),
+  addHelper: (name: string) => call<{ helper: HelperView; token: string }>("POST", "/api/owner/helpers", { name }),
+  removeHelper: (id: string) => call("DELETE", `/api/owner/helpers/${id}`),
+  helperDownload: "/api/owner/helpers/download",
 };

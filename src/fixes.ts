@@ -676,6 +676,103 @@ const SCHEMATHESIS_SAME: Record<string, string> = {
 
 const written = (rule: string): Fix | undefined => FIXES[rule] ?? ENGINE_FIXES[rule] ?? WEB_AGENT_FIXES[rule];
 
+/** What the Mac helper finds that the platform's own rules do not cover. */
+const MAC_FIXES: Record<string, Fix> = {
+  "voiceover:vague-links": {
+    steps: "Put the subject in the link text. If the design needs the short text, add the subject for screen readers only.",
+    code: [
+      { label: "HTML", snippet: '<a href="/blog/fast-checkout">Read more<span class="sr-only"> about fast checkout</span></a>' },
+      { label: "CSS", snippet: ".sr-only {\n  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;\n  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;\n}" },
+    ],
+    effort: "minutes",
+  },
+  "voiceover:no-headings": {
+    steps: "Mark the page title as h1 and each section title as h2 (sub-sections h3), instead of bold or large text. Keep the look with CSS.",
+    code: [{ label: "HTML", snippet: '<h1>Summer sale</h1>\n<section>\n  <h2>New arrivals</h2>\n  ...\n</section>' }],
+    effort: "minutes",
+  },
+  "safari:images-fail": {
+    steps: "Serve a format every Safari can show, with the new format as an option the browser picks when it can. Check that the server sends the right Content-Type for each image.",
+    code: [{ label: "HTML", snippet: '<picture>\n  <source srcset="/img/hero.avif" type="image/avif">\n  <source srcset="/img/hero.webp" type="image/webp">\n  <img src="/img/hero.jpg" alt="Summer sale" width="1200" height="600">\n</picture>' }],
+    effort: "minutes",
+  },
+  "ios-run:install-fails": {
+    steps: "Build for the Simulator from Xcode (Product > Build with a Simulator selected), then zip the .app from the build folder (Product > Show Build Folder in Finder > Products > Debug-iphonesimulator). For a phone, export a Development or Ad Hoc IPA whose profile includes that phone.",
+    effort: "minutes",
+  },
+  "ios-run:crash-on-launch": {
+    steps: "Run the app from Xcode on the same iOS version with the debugger attached; it stops on the line that crashes. The crash report's first lines in your own code (below) show where to look. Common causes: a missing Info.plist key, a force-unwrapped value that is nil, a file missing from Copy Bundle Resources.",
+    code: [{ label: "Swift", snippet: "// Instead of crashing when a value is missing:\nguard let url = Bundle.main.url(forResource: \"config\", withExtension: \"json\") else {\n    assertionFailure(\"config.json is not in the app\")\n    return\n}" }],
+    effort: "hours",
+  },
+  "ios-run:crash": {
+    steps: "Open the same tabs one by one with Xcode's debugger attached to reproduce it, then fix the line it stops on. The crash report below names the code it stopped in.",
+    effort: "hours",
+  },
+  "ios-a11y:sufficientElementDescription": {
+    steps: "Give each control and meaningful image a label that says what it does; hide decorative images from VoiceOver.",
+    code: [
+      { label: "SwiftUI", snippet: 'Button(action: openCart) {\n    Image(systemName: "cart.fill")\n}\n.accessibilityLabel("Cart")\n\nImage("divider").accessibilityHidden(true)' },
+      { label: "UIKit", snippet: 'cartButton.accessibilityLabel = "Cart"\ndividerImageView.isAccessibilityElement = false' },
+    ],
+    effort: "minutes",
+  },
+  "ios-a11y:hitRegion": {
+    steps: "Make each tappable area at least 44 by 44 points, even when the icon stays small.",
+    code: [
+      { label: "SwiftUI", snippet: "Button(action: remove) { Image(systemName: \"xmark\") }\n    .frame(minWidth: 44, minHeight: 44)\n    .contentShape(Rectangle())" },
+      { label: "UIKit", snippet: "// In a UIButton subclass:\noverride func point(inside point: CGPoint, with event: UIEvent?) -> Bool {\n    bounds.insetBy(dx: min(0, (bounds.width - 44) / 2), dy: min(0, (bounds.height - 44) / 2)).contains(point)\n}" },
+    ],
+    effort: "minutes",
+  },
+  "ios-a11y:contrast": {
+    steps: "Use colours with a contrast of at least 4.5:1 for text (3:1 for large text and controls), in light and dark mode. Asset catalog colours can have a separate dark and high-contrast version.",
+    code: [{ label: "SwiftUI", snippet: "Text(\"Sale\")\n    .foregroundStyle(.primary) // system colours adapt to dark mode and Increase Contrast" }],
+    effort: "minutes",
+  },
+  "ios-a11y:dynamicType": {
+    steps: "Use text styles instead of fixed point sizes, so text follows the size set in Settings > Accessibility > Display & Text Size.",
+    code: [
+      { label: "SwiftUI", snippet: 'Text("Total").font(.body)\n// A custom font that still scales:\nText("Total").font(.custom("Avenir", size: 17, relativeTo: .body))' },
+      { label: "UIKit", snippet: 'label.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: UIFont(name: "Avenir", size: 17)!)\nlabel.adjustsFontForContentSizeCategory = true' },
+    ],
+    effort: "minutes",
+  },
+  "ios-a11y:textClipped": {
+    steps: "Let labels wrap onto more lines at large text sizes, and avoid fixed heights around text. Check the large-text screenshot.",
+    code: [
+      { label: "SwiftUI", snippet: 'Text(product.name)\n    .lineLimit(nil)\n    .fixedSize(horizontal: false, vertical: true)' },
+      { label: "UIKit", snippet: "label.numberOfLines = 0" },
+    ],
+    effort: "minutes",
+  },
+  "ios-a11y:trait": {
+    steps: "Tell VoiceOver what each element is: buttons as buttons, section titles as headers.",
+    code: [
+      { label: "SwiftUI", snippet: 'Text("Your orders").accessibilityAddTraits(.isHeader)\nview.onTapGesture(perform: open).accessibilityAddTraits(.isButton)' },
+      { label: "UIKit", snippet: "titleLabel.accessibilityTraits = .header" },
+    ],
+    effort: "minutes",
+  },
+  "ios-a11y:elementDetection": {
+    steps: "Expose text drawn in images, and each control inside a custom view, as its own accessibility element, or combine a group into one element with a single label.",
+    code: [{ label: "SwiftUI", snippet: 'HStack {\n    Image(systemName: "star.fill")\n    Text("4.5")\n}\n.accessibilityElement(children: .combine)\n.accessibilityLabel("Rated 4.5 out of 5")' }],
+    effort: "hours",
+  },
+};
+
+/** VoiceOver and Safari findings that are the platform's own problems, seen in Apple's software. */
+const MAC_SAME: Record<string, string> = {
+  "voiceover:unnamed-image": "axe:image-alt",
+  "voiceover:file-names": "axe:image-alt",
+  "voiceover:unnamed-button": "axe:button-name",
+  "voiceover:unnamed-link": "axe:link-name",
+  "voiceover:unnamed-field": "axe:label",
+  "safari:page-fails": "browser:page-fails",
+  "safari:sideways": "browser:sideways",
+  "safari:missing-parts": "browser:missing-parts",
+};
+
 /** The written fix for an outside tool's finding, when the platform has one for the same problem. */
 function toolFix(rule: string, detail: string): Fix | undefined {
   const [tool, id = ""] = rule.split(/:(.*)/s);
@@ -699,6 +796,11 @@ function toolFix(rule: string, detail: string): Fix | undefined {
       return written(SCHEMATHESIS_SAME[id] ?? "");
     case "newman":
       return id === "test-failed" ? POSTMAN_TEST : written("api:no-answer");
+    case "voiceover":
+    case "safari":
+    case "ios-run":
+    case "ios-a11y":
+      return MAC_FIXES[rule] ?? written(MAC_SAME[rule] ?? "");
   }
   return undefined;
 }

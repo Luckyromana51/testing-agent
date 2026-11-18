@@ -79,6 +79,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist
 # GLV's own Opengrep rules.
 COPY --from=build /app/rules ./rules
+# The Mac helper, which the owner downloads from Owner panel > Mac helpers (it runs on a Mac, not here).
+COPY --from=build /app/helper ./helper
 RUN mkdir -p /data && chown pwuser /data
 USER pwuser
 # Nuclei's community checks, downloaded once when the image is built (signed by ProjectDiscovery).

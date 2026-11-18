@@ -44,6 +44,16 @@ export interface ToolInfo {
   /** How it treats a saved login: tests the signed-in pages too, or only what a visitor sees. */
   signedIn: "uses-login" | "public";
   options?: ToolOption[];
+  /**
+   * Runs on GLV's Mac helper (Safari, VoiceOver, the iOS Simulator): ready only while a paired Mac is
+   * connected, so its status is checked on every request, and it is never switched on by default.
+   */
+  needsMac?: boolean;
+  /**
+   * Its category is scored even when the engine does not score it (Apple's accessibility audit for an
+   * iOS app). When it cannot run, the category shows as not tested rather than as a free 100.
+   */
+  ownCategory?: boolean;
 }
 
 /** A tool the tester turned on for a project, with its options. */
@@ -95,10 +105,10 @@ export interface ToolReport {
 export type ToolFinding = Omit<Finding, "id" | "agent"> & {
   sameAs?: string[];
   /**
-   * Where the platform's finding must be: on the same site (the default), in the same file (code),
-   * or on the same API endpoint (sameText then holds its path, such as "/users/{id}").
+   * Where the platform's finding must be: on the same site (the default), on the same page, in the
+   * same file (code), or on the same API endpoint (sameText then holds its path, such as "/users/{id}").
    */
-  sameScope?: "site" | "file" | "endpoint";
+  sameScope?: "site" | "page" | "file" | "endpoint";
   /** Text the platform's finding must also hold, such as "lodash@4.17.15" or "line 12:". */
   sameText?: string;
   /**
@@ -108,8 +118,16 @@ export type ToolFinding = Omit<Finding, "id" | "agent"> & {
   key?: string;
 };
 
+/** A picture a tool took (Safari on an iPhone, an app screen), shown in the report. */
+export interface ToolImage {
+  /** File name in the run's artifacts folder. */
+  file: string;
+  label: string;
+}
+
 export interface ToolOutput {
   findings: ToolFinding[];
+  images?: ToolImage[];
   /** Short result lines shown in the tool's section, e.g. "Performance 72". */
   summary?: string[];
   reports?: ToolReport[];
@@ -142,6 +160,7 @@ export interface ToolStat {
   untested?: string;
   summary?: string[];
   reports?: ToolReport[];
+  images?: ToolImage[];
   tested?: string;
   /** Findings dropped because a platform check already reported the same problem. */
   merged?: number;

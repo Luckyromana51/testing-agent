@@ -5,3 +5,6 @@ data
 .git
 .env
 glvtest-report
+helper/mac/GLVRunner/DerivedData
+**/xcuserdata
+**/.DS_Store

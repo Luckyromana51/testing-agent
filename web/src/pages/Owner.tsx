@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Category, User } from "../../../src/types.ts";
-import { api, type Meta } from "../api.ts";
-import { CATEGORY_LABEL, go, plural, usePoll } from "../lib.ts";
+import { api, type HelperView, type Meta } from "../api.ts";
+import { CATEGORY_LABEL, go, plural, timeAgo, usePoll } from "../lib.ts";
 import { OpenCounts, Toggle } from "../ui.tsx";
 
-type Tab = "overview" | "agents" | "team" | "settings";
+type Tab = "overview" | "agents" | "team" | "macs" | "settings";
 const TABS: [Tab, string][] = [
   ["overview", "Overview"],
   ["agents", "Agents"],
   ["team", "Team"],
+  ["macs", "Mac helpers"],
   ["settings", "Settings"],
 ];
 
@@ -52,6 +53,7 @@ export function Owner({
       {current === "overview" && <OverviewTab />}
       {current === "agents" && <AgentsTab meta={meta} reloadMeta={reloadMeta} />}
       {current === "team" && <TeamTab me={user} />}
+      {current === "macs" && <MacsTab />}
       {current === "settings" && <SettingsTab meta={meta} reloadMeta={reloadMeta} loginOff={loginOff} />}
     </div>
   );
@@ -276,6 +278,192 @@ function TeamTab({ me }: { me: User }) {
         {err && <div className="error">{err}</div>}
       </form>
     </div>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = { safari: "Safari", voiceover: "VoiceOver", "ios-app": "iOS apps" };
+
+function MacsTab() {
+  const { data, error, reload } = usePoll(() => api.helpers(), [], 10_000);
+  const [name, setName] = useState("");
+  const [paired, setPaired] = useState<{ name: string; token: string } | null>(null);
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState(false);
+  const commands = paired ? `cd glv-helper\nnode glv-helper.mjs pair ${window.location.origin} ${paired.token}\ncaffeinate -i node glv-helper.mjs` : "";
+
+  return (
+    <>
+      <p className="muted">
+        A Mac helper lets tests use a real Mac: Safari on the Mac and in the iPhone and iPad Simulator, VoiceOver reading pages
+        aloud, and the iOS Simulator to install an app and run Apple's accessibility audit. The Mac asks this server for work, so
+        nothing has to be opened on the Mac's network. Turn these tests on per test, in the Tools step.
+      </p>
+      {error && <div className="error">{error}</div>}
+      <div className="two-col">
+        <div className="card">
+          <div className="stat-label">
+            Paired Macs{" "}
+            {data && data.queued > 0 && <span className="muted">· {plural(data.queued, "test")} waiting for a Mac</span>}
+          </div>
+          {data && !data.helpers.length && <p className="muted small">No Mac is paired yet. Pair one with the form on the right.</p>}
+          <ul className="user-list helper-list">
+            {data?.helpers.map((h) => (
+              <HelperRow
+                key={h.id}
+                h={h}
+                onRemove={async () => {
+                  if (!window.confirm(`Unpair ${h.name}? It stops getting tests; pair it again to use it.`)) return;
+                  await api.removeHelper(h.id).catch((e: Error) => setErr(e.message));
+                  reload();
+                }}
+              />
+            ))}
+          </ul>
+        </div>
+        <form
+          className="card form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setErr("");
+            setCopied(false);
+            try {
+              const r = await api.addHelper(name);
+              setPaired({ name: r.helper.name, token: r.token });
+              setName("");
+              reload();
+            } catch (e2) {
+              setErr((e2 as Error).message);
+            }
+          }}
+        >
+          <div className="stat-label">Pair a Mac</div>
+          <label className="form-field">
+            <span>Name of the Mac</span>
+            <input className="input" required maxLength={60} placeholder="Lucky's MacBook" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <button className="btn primary">Make a pairing token</button>
+          {err && <div className="error">{err}</div>}
+          {paired && (
+            <div className="helper-token">
+              <div className="strong">Run this in Terminal on {paired.name}, in the folder where you unzipped the helper:</div>
+              <div className="code-block">
+                <div className="code-label">
+                  Terminal
+                  <button
+                    type="button"
+                    className="copy"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(commands);
+                      setCopied(true);
+                    }}
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <pre>{commands}</pre>
+              </div>
+              <div className="muted small">
+                The token is shown only this once. It lets the Mac pick up tests and send back what it saw; it cannot sign in to
+                the dashboard. <code>caffeinate -i</code> keeps the Mac awake while the helper runs.
+              </div>
+            </div>
+          )}
+        </form>
+      </div>
+      <div className="card helper-setup">
+        <div className="stat-label">Set up the Mac (once)</div>
+        <ol>
+          <li>
+            <a href={api.helperDownload} download>
+              Download the Mac helper
+            </a>{" "}
+            and unzip it. It needs Node.js 22 or newer on the Mac (check with <code>node -v</code>).
+          </li>
+          <li>
+            <strong>Safari:</strong> run <code>safaridriver --enable</code> in Terminal once (it asks for the Mac's password). For
+            iPhone and iPad Safari, the iOS Simulator from Xcode is used.
+          </li>
+          <li>
+            <strong>VoiceOver:</strong> open VoiceOver Utility &gt; General and tick "Allow VoiceOver to be controlled with
+            AppleScript". On the first test, macOS asks to let Terminal control VoiceOver and Safari: allow it (System Settings &gt;
+            Privacy &amp; Security &gt; Automation).
+          </li>
+          <li>
+            <strong>iOS apps:</strong> install Xcode from the App Store, open it once, and add an iOS 17 or newer Simulator in
+            Xcode &gt; Settings &gt; Components. The first app test builds GLV's audit runner, which takes a few minutes.
+          </li>
+          <li>
+            Optional: <code>node glv-helper.mjs devices on</code> also uses iPhones and iPads connected by cable, for Development
+            and Ad Hoc builds. The app is installed on that phone, so use a test phone.
+          </li>
+          <li>
+            <code>node glv-helper.mjs check</code> shows what the Mac can do, with the step that fixes anything missing. The same
+            appears here once the Mac connects.
+          </li>
+        </ol>
+      </div>
+    </>
+  );
+}
+
+function HelperRow({ h, onRemove }: { h: HelperView; onRemove: () => void }) {
+  const info = h.info;
+  const versions = [
+    info?.macos && `macOS ${info.macos}`,
+    info?.xcode && `Xcode ${info.xcode}`,
+    info?.safari && `Safari ${info.safari}`,
+    info && `helper ${info.version}`,
+  ].filter(Boolean);
+  const sims = info?.simulators ?? [];
+  const devices = info?.devices ?? [];
+  return (
+    <li>
+      <div className="grow">
+        <div className="strong">
+          <span className={`helper-dot ${h.online ? "on" : ""}`} aria-hidden /> {h.name}{" "}
+          <span className="muted small">
+            · {h.online ? "Online" : h.lastSeen ? `Offline, last seen ${timeAgo(h.lastSeen)}` : "Not connected yet"}
+          </span>
+        </div>
+        {h.busy && (
+          <div className="small">
+            Running {h.busy.label}, since {timeAgo(h.busy.since)}
+          </div>
+        )}
+        {versions.length > 0 && <div className="muted small">{versions.join(" · ")}</div>}
+        {info && (
+          <div className="helper-kinds">
+            {(["safari", "voiceover", "ios-app"] as const).map((k) => {
+              const ok = info.kinds.includes(k);
+              return (
+                <span key={k} className={`helper-kind ${ok ? "ok" : "bad"}`} title={info.problems?.[k] ?? ""}>
+                  {ok ? "✓" : "✗"} {KIND_LABEL[k]}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {info?.problems &&
+          Object.entries(info.problems).map(([k, why]) => (
+            <div key={k} className="muted small">
+              {KIND_LABEL[k] ?? k}: {why}
+            </div>
+          ))}
+        {info && (sims.length > 0 || devices.length > 0) && (
+          <div className="muted small">
+            {plural(sims.filter((s) => s.type === "iphone").length, "iPhone simulator")} ·{" "}
+            {plural(sims.filter((s) => s.type === "ipad").length, "iPad simulator")}
+            {devices.length > 0 && ` · connected: ${devices.map((d) => d.name).join(", ")}`}
+          </div>
+        )}
+        <div className="muted small">
+          Paired by {h.createdBy} {timeAgo(h.createdAt)}
+        </div>
+      </div>
+      <button className="btn small ghost" onClick={onRemove}>
+        Unpair
+      </button>
+    </li>
   );
 }
 

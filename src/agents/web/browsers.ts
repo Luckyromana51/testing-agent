@@ -28,7 +28,8 @@ export interface BrowserView {
   counts: Record<string, number>;
 }
 
-const VIEW_JS = `(function () {
+/** Counts what is visible on the page, and how far it scrolls sideways (also run in real Safari by the Mac helper). */
+export const VIEW_JS = `(function () {
   var kinds = { images: "img, picture, svg[role=img]", buttons: "button, [role=button], input[type=submit]", links: "a[href]", fields: "input:not([type=hidden]), select, textarea", headings: "h1, h2, h3", videos: "video, iframe" };
   var counts = {};
   for (var k in kinds) {

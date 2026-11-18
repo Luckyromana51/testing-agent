@@ -72,12 +72,11 @@ export function findFrameworks(entries: ZipEntry[], appDir: string): IosFramewor
 /** Config and code files whose text can hold keys and server addresses. */
 const SEARCHABLE = /\.(json|plist|js|jsbundle|txt|env|cfg|conf|ini|xcconfig|properties|strings|html)$/i;
 
-export async function scanIpa(opts: IpaScanOptions): Promise<ScanResult> {
-  const startedAt = new Date().toISOString();
-  const log = (m: string) => opts.onProgress?.(m);
-  const notes: string[] = [];
-  log("Unpacking the iOS app");
-  const ipa = await readFile(opts.ipaFile);
+/**
+ * Opens an IPA (or a zipped .app): the app folder, Info.plist, the main program's headers and the
+ * provisioning profile. The Mac helper's iOS tool uses it too, to know what it is installing.
+ */
+export function readIpa(ipa: Buffer) {
   const entries = listZip(ipa);
   const found = findAppDir(entries);
   if (!found) {
@@ -124,6 +123,16 @@ export async function scanIpa(opts: IpaScanOptions): Promise<ScanResult> {
 
   const profileBuf = read(`${found.dir}embedded.mobileprovision`);
   const profile = profileBuf ? profilePlist(profileBuf) : undefined;
+  return { entries, found, byName, read, info, exe, executable, exeEntry, binary, binaryBuf, slices, facts, profile };
+}
+
+export async function scanIpa(opts: IpaScanOptions): Promise<ScanResult> {
+  const startedAt = new Date().toISOString();
+  const log = (m: string) => opts.onProgress?.(m);
+  const notes: string[] = [];
+  log("Unpacking the iOS app");
+  const ipa = await readFile(opts.ipaFile);
+  const { entries, found, byName, read, info, executable, exeEntry, binary, binaryBuf, slices, facts, profile } = readIpa(ipa);
   let privacy: PlistDict | undefined;
   const privacyBuf = read(`${found.dir}PrivacyInfo.xcprivacy`);
   if (privacyBuf) {

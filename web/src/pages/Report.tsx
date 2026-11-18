@@ -682,6 +682,16 @@ function Tools({ run }: { run: Run }) {
               {plural(t.merged, "problem")} {t.merged === 1 ? "was" : "were"} already found by the platform's own checks, so {t.merged === 1 ? "it is" : "they are"} shown once.
             </div>
           ) : null}
+          {t.images && t.images.length > 0 && (
+            <div className="tool-images">
+              {t.images.map((im) => (
+                <a key={im.file} href={api.artifact(run.id, im.file)} target="_blank" rel="noreferrer" className="tool-image">
+                  <img src={api.artifact(run.id, im.file)} alt={im.label} loading="lazy" />
+                  <span className="muted small">{im.label}</span>
+                </a>
+              ))}
+            </div>
+          )}
           {t.reports && t.reports.length > 0 && (
             <div className="tool-reports">
               {t.reports.map((r) => (
