@@ -345,6 +345,22 @@ On an ARM Linux server (for example AWS Graviton), add `DOCKER_PLATFORM=linux/ar
 
 If you ever see `exec /bin/sh: exec format error` during the build, Docker picked an image your machine cannot run: set `DOCKER_PLATFORM` in `.env` to match `docker version --format '{{.Server.Arch}}'` (or keep the amd64 default) and rebuild with `docker compose build --no-cache`.
 
+### Disk space, and "Build fails with read-only file system"
+
+The first build downloads the Playwright, Go and ZAP images and compiles five Go tools, so leave about 25 GB free for Docker (and on a Mac, on the Mac's own disk too). That is an estimate, not a measurement: the finished images take roughly 6 to 8 GB, and the build needs room for downloads and compiling on top.
+
+If the build stops with `read-only file system` (often next to `curl: (23) Failure writing output to destination` or `metadata_v2.db`), Docker's own disk filled up and Docker switched it to read-only. It is not a problem in this project, and it stays read-only until Docker restarts. On Docker Desktop (Mac or Windows):
+
+1. Check the computer's free disk (`df -h ~` on a Mac) and free space if it is nearly full.
+2. Restart Docker Desktop (whale icon > Restart, or Troubleshoot > Restart Docker Desktop).
+3. See what Docker keeps with `docker system df`, then remove old build steps and unused images: `docker builder prune -af` and `docker image prune -af`. Neither touches the `agent-data` volume (projects and reports) or a running container. Images they remove download again on the next build.
+4. If Docker's disk is still small, raise it in Docker Desktop > Settings > Resources > Advanced > Disk usage limit (64 GB or more), then Apply & restart.
+5. Build again: `docker compose up -d --build`. After a prune it starts from the beginning, so it takes as long as the first build.
+
+Troubleshoot > Clean / Purge data also frees the space, but it deletes every image, container and volume, including `agent-data`. Use it only if the steps above do not help, and only if you do not need the saved projects and reports.
+
+On a Linux server, check `df -h /var/lib/docker` and use the same `docker builder prune -af` and `docker image prune -af`.
+
 ## API
 
 Every route except `/api/health` and the sign-in routes needs a signed-in session (cookie). Writes from other websites are refused.
