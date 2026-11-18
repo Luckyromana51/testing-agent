@@ -199,3 +199,205 @@ async function scan(ctx: ToolContext): Promise<ToolOutput> {
     await call("/JSON/core/action/newSession/", { overwrite: "true" }).catch(() => {});
   }
 }
+
+// ---- Active scan (needs the client's permission for attack tests) ------------------------------
+
+/** ZAP's active rules that GLV's own probes also run: the same problem is shown once. */
+const ZAP_KEYS: Record<string, string> = {
+  "40012": "xss",
+  "40018": "sqli",
+  "40019": "sqli",
+  "40020": "sqli",
+  "40021": "sqli",
+  "40022": "sqli",
+  "40024": "sqli",
+  "40027": "sqli",
+  "20019": "redirect",
+  "6": "traversal",
+};
+
+/**
+ * Rules left out of every active scan: Log4Shell (40043), server-side request forgery (40046) and
+ * out-of-band XSS (40031) wait for calls to ZAP's outside callback servers (GLV keeps everything
+ * in-house), and exponential entity expansion (40044) is made to exhaust the server's memory.
+ */
+export const ZAP_ACTIVE_OFF = ["40043", "40044", "40046", "40031"];
+
+/** Addresses the active scan never touches: signing out and anything that looks like it deletes or cancels. */
+export const ZAP_EXCLUDE = ".*(logout|log-out|signout|sign-out|logoff|delete|remove|destroy|unsubscribe|cancel|deactivate|reset).*";
+
+const POLICY = "glv-attack";
+
+/** Turns the active scan's alerts into findings: one per rule, page and parameter. */
+export function readZapActive(alerts: ZapAlert[]): ToolFinding[] {
+  const groups = new Map<string, ZapAlert>();
+  for (const a of alerts) {
+    if (!RISK[a.risk] || a.confidence === "Low" || a.confidence === "False Positive") continue;
+    const page = a.url.split(/[?#]/)[0];
+    const key = `${a.pluginId}|${page}|${a.param ?? ""}`;
+    if (!groups.has(key)) groups.set(key, a);
+  }
+  return [...groups.values()].map((a) => {
+    const page = a.url.split(/[?#]/)[0];
+    const kind = ZAP_KEYS[a.pluginId];
+    return {
+      category: "security",
+      rule: `zap:${a.pluginId}`,
+      severity: RISK[a.risk],
+      title: `${a.name || a.alert || `ZAP rule ${a.pluginId}`}${a.param ? ` (${a.param})` : ""}`,
+      detail: [
+        a.description?.trim(),
+        a.solution ? `How to fix: ${a.solution.trim()}` : "",
+        a.cweid && a.cweid !== "-1" && a.cweid !== "0" ? `(CWE-${a.cweid}, OWASP ZAP active rule ${a.pluginId})` : `(OWASP ZAP active rule ${a.pluginId})`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      pageUrl: page,
+      evidence: [a.method && a.url ? `${a.method} ${a.url}` : a.url, a.param ? `parameter: ${a.param}` : "", a.evidence ? `seen: ${a.evidence}` : ""].filter(Boolean).join("\n").slice(0, 1000),
+      ...(kind && a.param ? { key: `${kind}:${page}:${a.param}` } : {}),
+    };
+  });
+}
+
+export const zapActiveTool: Tool = {
+  id: "zap-active",
+  name: "OWASP ZAP (active)",
+  maker: "OWASP / ZAP by Checkmarx",
+  description:
+    "ZAP's active scan attacks the pages this test found: SQL injection, cross-site scripting, command injection, path traversal and more. Only the pages already opened (GET), no form posts, and never the sign-out or delete links.",
+  checks: [
+    "Over 40 attack rules: injection (SQL, command, code), XSS, path traversal, remote file inclusion",
+    "Server-side request forgery, CRLF and header injection, buffer overflows",
+    "Each alert rated by OWASP risk and confidence; low-confidence guesses are left out",
+    "Rules that call outside servers or exhaust memory are switched off",
+  ],
+  products: [...WEB_PRODUCTS, "api"],
+  category: "security",
+  safety: "permission",
+  permission: "attack",
+  limits: { minutes: "minutes" },
+  takes: "5 to 30 minutes",
+  licence: "Apache-2.0, free",
+  homepage: "https://www.zaproxy.org/docs/desktop/start/features/ascan/",
+  signedIn: "uses-login",
+  options: [
+    {
+      id: "strength",
+      label: "Attack strength",
+      choices: [
+        { value: "LOW", label: "Low: fewer requests" },
+        { value: "MEDIUM", label: "Medium (ZAP's default)" },
+        { value: "HIGH", label: "High: more requests, finds more" },
+      ],
+      default: "MEDIUM",
+    },
+    {
+      id: "minutes",
+      label: "Longest time",
+      choices: ["5", "10", "20", "30", "60"].map((v) => ({ value: v, label: `${v} minutes` })),
+      default: "20",
+    },
+  ],
+
+  ready: () => zapTool.ready(),
+
+  async run(ctx: ToolContext): Promise<ToolOutput> {
+    if (!ctx.permit) throw new Error("ZAP's active scan runs only with the client's permission for attack tests.");
+    const mine = turn.then(() => activeScan(ctx));
+    turn = mine.catch(() => {});
+    return mine;
+  },
+};
+
+async function activeScan(ctx: ToolContext): Promise<ToolOutput> {
+  const { signal } = ctx;
+  signal.throwIfAborted();
+  const minutes = Math.min(Number(ctx.options.minutes) || 20, ctx.permit!.maxMinutes);
+  const strength = ["LOW", "MEDIUM", "HIGH"].includes(ctx.options.strength) ? ctx.options.strength : "MEDIUM";
+  const urls = [...new Set([ctx.startUrl, ...ctx.urls])].filter((u) => /^https?:/.test(u) && !new RegExp(ZAP_EXCLUDE, "i").test(u)).slice(0, MAX_URLS);
+  const origins = [...new Set(urls.map((u) => new URL(u).origin))];
+  const rule = `glv-session-${Date.now()}`;
+  await call("/JSON/core/action/newSession/", { overwrite: "true" }, signal);
+  const scans: string[] = [];
+  try {
+    if (ctx.cookie) {
+      await call(
+        "/JSON/replacer/action/addRule/",
+        { description: rule, enabled: "true", matchType: "REQ_HEADER", matchRegex: "false", matchString: "Cookie", replacement: ctx.cookie, initiators: "" },
+        signal,
+      );
+    }
+    // GLV's scan policy: the chosen strength, medium alert threshold, and the outside-callback and memory rules off.
+    await call("/JSON/ascan/action/removeScanPolicy/", { scanPolicyName: POLICY }).catch(() => {});
+    await call("/JSON/ascan/action/addScanPolicy/", { scanPolicyName: POLICY, alertThreshold: "MEDIUM", attackStrength: strength }, signal);
+    // No catch: if ZAP will not switch these rules off, the scan must not start with them on.
+    await call("/JSON/ascan/action/disableScanners/", { ids: ZAP_ACTIVE_OFF.join(","), scanPolicyName: POLICY }, signal);
+    // Polite and bounded: two threads per host, a short pause between requests, and a time limit.
+    await call("/JSON/ascan/action/setOptionThreadPerHost/", { Integer: "2" }, signal);
+    await call("/JSON/ascan/action/setOptionDelayInMs/", { Integer: "100" }, signal);
+    await call("/JSON/ascan/action/setOptionMaxScanDurationInMins/", { Integer: String(minutes) }, signal);
+    await call("/JSON/ascan/action/setOptionMaxRuleDurationInMins/", { Integer: String(Math.max(1, Math.ceil(minutes / 4))) }, signal);
+    // Every attack request names ZAP's rule in a header, so the client's logs show what it was.
+    await call("/JSON/ascan/action/setOptionInjectPluginIdInHeader/", { Boolean: "true" }, signal).catch(() => {});
+    await call("/JSON/ascan/action/excludeFromScan/", { regex: ZAP_EXCLUDE }, signal);
+    ctx.log(`OWASP ZAP: active scan of ${urls.length} page${urls.length === 1 ? "" : "s"} (attack strength ${strength.toLowerCase()}, at most ${minutes} minutes)`);
+    // The pages the test already opened, GET only: no spider and no form posts.
+    for (const url of urls) {
+      signal.throwIfAborted();
+      await call("/JSON/core/action/accessUrl/", { url, followRedirects: "false" }, signal).catch((err) => {
+        if (signal.aborted) throw err;
+      });
+    }
+    for (const origin of origins) {
+      const { scan } = await call<{ scan: string }>(
+        "/JSON/ascan/action/scan/",
+        { url: `${origin}/`, recurse: "true", inScopeOnly: "false", scanPolicyName: POLICY, method: "GET" },
+        signal,
+      );
+      scans.push(scan);
+      const started = Date.now();
+      let shown = -1;
+      for (;;) {
+        const { status } = await call<{ status: string }>("/JSON/ascan/view/status/", { scanId: scan }, signal);
+        const pct = Number(status);
+        if (pct >= 100) break;
+        if (Math.floor(pct / 25) !== shown) {
+          shown = Math.floor(pct / 25);
+          ctx.log(`OWASP ZAP: active scan ${pct}% done`);
+        }
+        if (Date.now() - started > (minutes + 2) * 60_000) {
+          await call("/JSON/ascan/action/stop/", { scanId: scan }).catch(() => {});
+          break;
+        }
+        await wait(3000, signal);
+      }
+    }
+    // Only this scan's own alerts (the passive rules also add some while it runs).
+    const alerts: ZapAlert[] = [];
+    for (const scan of scans) {
+      const { alertsIds } = await call<{ alertsIds: string[] }>("/JSON/ascan/view/alertsIds/", { scanId: scan }, signal);
+      for (const id of alertsIds.slice(0, 2000)) {
+        const { alert } = await call<{ alert: ZapAlert }>("/JSON/alert/view/alert/", { id }, signal);
+        alerts.push(alert);
+      }
+    }
+    const slim = alerts.map(({ pluginId, name, risk, confidence, url, param, evidence, cweid, method }) => ({ pluginId, name, risk, confidence, url, param, evidence, cweid, method }));
+    await writeFile(path.join(ctx.outDir, "tool-zap-active.json"), JSON.stringify(slim, null, 2));
+    const findings = readZapActive(alerts);
+    return {
+      findings,
+      summary: [
+        `${findings.length} problem${findings.length === 1 ? "" : "s"} rated low or worse`,
+        `Attack strength ${strength.toLowerCase()}, ${ZAP_ACTIVE_OFF.length} rules that call outside servers or exhaust memory switched off`,
+      ],
+      reports: [{ file: "tool-zap-active.json", label: "ZAP active scan alerts (JSON)" }],
+      tested: `Active scan of ${urls.length} page${urls.length === 1 ? "" : "s"}${ctx.cookie ? ", signed in" : ""}`,
+    };
+  } finally {
+    // Stop anything still running and leave nothing behind.
+    if (signal.aborted) for (const scan of scans) await call("/JSON/ascan/action/stop/", { scanId: scan }).catch(() => {});
+    if (ctx.cookie) await call("/JSON/replacer/action/removeRule/", { description: rule }).catch(() => {});
+    await call("/JSON/ascan/action/removeScanPolicy/", { scanPolicyName: POLICY }).catch(() => {});
+    await call("/JSON/core/action/newSession/", { overwrite: "true" }).catch(() => {});
+  }
+}

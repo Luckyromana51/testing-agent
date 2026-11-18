@@ -12,6 +12,7 @@ import { aiEnabled, summariseWithClaude, summaryKey } from "./ai/triage.js";
 import { Auth, checkPasswordRules, fromOutside, hashPassword, loginTurnedOff, recordFailure, tooManyFailures } from "./auth.js";
 import { groupFindings } from "./group.js";
 import { ACTIVE, projectKey } from "./issues.js";
+import { buildPermission, permissionStatus, verifyPermission, type PermissionInput } from "./permission.js";
 import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
 import { startScheduler } from "./scheduler.js";
@@ -257,6 +258,7 @@ export async function createApp(opts: AppOptions) {
       waiting: queue.waitingFor(p.id),
       // Never the secrets themselves: only whether they are saved.
       login: stores.vault.summary(p.id) ?? null,
+      permissions: (p.permissions ?? []).map((x) => ({ ...x, status: permissionStatus(x) })),
     };
   };
 
@@ -302,8 +304,8 @@ export async function createApp(opts: AppOptions) {
   app.addContentTypeParser("application/octet-stream", (_req, payload, done) => done(null, payload));
   app.post("/api/uploads", { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
     const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? "")).replace(/[^\w. ()-]/g, "_").slice(0, 200);
-    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml)$/i)?.[0]?.toLowerCase();
-    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, or an OpenAPI file (.json or .yaml).");
+    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx)$/i)?.[0]?.toLowerCase();
+    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an OpenAPI file (.json or .yaml) or a JMeter plan (.jmx).");
     if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
     await mkdir(queue.uploadsDir(), { recursive: true });
     const file = `${randomUUID()}${ext}`;
@@ -359,7 +361,7 @@ export async function createApp(opts: AppOptions) {
     let login: Login | undefined;
     try {
       if (toolsInput === null) delete next.tools;
-      else if (toolsInput !== undefined) next.tools = cleanChoices(p.type, toolsInput);
+      else if (toolsInput !== undefined) next.tools = cleanChoices(p.type, toolsInput, p.permissions ?? []);
       if (Object.keys(targetInput).length) {
         next.target = buildTarget(p.type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages, p.target);
       }
@@ -374,6 +376,63 @@ export async function createApp(opts: AppOptions) {
       next.schedule = b.schedule;
     }
     if (p.target.file && p.target.file !== next.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
+    stores.projects.save(next);
+    return projectSummary(next);
+  });
+
+  // ---- The client's permission for load and attack tests ------------------------------------
+  // Only the owner records or withdraws one. Anyone can check its proof again.
+  app.post<{ Params: { id: string } }>("/api/projects/:id/permissions", async (req, reply) => {
+    ownerOnly(req);
+    const p = getProject(req.params.id);
+    let permission;
+    try {
+      permission = buildPermission(body<PermissionInput>(req), req.user?.name || req.user?.email || "Owner");
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+    // The proof may already be in place (a renewal): look for it straight away.
+    const checked = await verifyPermission(permission);
+    const next = { ...(stores.projects.get(p.id) ?? p) };
+    next.permissions = [...(next.permissions ?? []), checked.permission];
+    stores.projects.save(next);
+    return reply.code(201).send({ project: projectSummary(next), permissionId: permission.id, checks: checked.checks });
+  });
+
+  app.post<{ Params: { id: string; pid: string } }>("/api/projects/:id/permissions/:pid/check", async (req) => {
+    const p = getProject(req.params.id);
+    const found = (p.permissions ?? []).find((x) => x.id === req.params.pid);
+    if (!found) throw new HttpError(404, "Permission not found");
+    if (found.revokedAt) throw new HttpError(400, "This permission was withdrawn.");
+    const checked = await verifyPermission(found);
+    const latest = stores.projects.get(p.id) ?? p;
+    const next = { ...latest, permissions: (latest.permissions ?? []).map((x) => (x.id === found.id ? { ...x, proofs: checked.permission.proofs } : x)) };
+    stores.projects.save(next);
+    return { project: projectSummary(next), checks: checked.checks };
+  });
+
+  app.post<{ Params: { id: string; pid: string } }>("/api/projects/:id/permissions/:pid/revoke", async (req) => {
+    ownerOnly(req);
+    const p = getProject(req.params.id);
+    const found = (p.permissions ?? []).find((x) => x.id === req.params.pid);
+    if (!found) throw new HttpError(404, "Permission not found");
+    if (found.revokedAt) return projectSummary(p);
+    const permissions = (p.permissions ?? []).map((x) =>
+      x.id === found.id ? { ...x, revokedAt: new Date().toISOString(), revokedBy: req.user?.name || req.user?.email || "Owner" } : x,
+    );
+    // Tools that no other permission covers are turned off, so the next tests do not try them.
+    let tools = p.tools;
+    if (tools) {
+      tools = tools.filter((c) => {
+        try {
+          cleanChoices(p.type, [c], permissions);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
+    const next = { ...p, permissions, ...(tools ? { tools } : {}) };
     stores.projects.save(next);
     return projectSummary(next);
   });

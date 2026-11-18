@@ -1,6 +1,7 @@
+import type { PermissionKind } from "../permission.js";
 import type { Category, Finding, Login, ProductType, ProjectTarget } from "../types.js";
 
-/** Safe tools behave like a normal visitor. Permission tools attack or load a site (phase 3). */
+/** Safe tools behave like a normal visitor. Permission tools load or attack a site, only with the client's written permission. */
 export type ToolSafety = "safe" | "permission";
 
 export interface ToolOption {
@@ -32,6 +33,10 @@ export interface ToolInfo {
   /** The score category its findings count towards. */
   category: Category;
   safety: ToolSafety;
+  /** For a permission tool: which kind of permission it needs. */
+  permission?: PermissionKind;
+  /** For a permission tool: the option that sets how many users it simulates, and how many minutes it runs, checked against the permission. */
+  limits?: { users?: string; minutes?: string };
   /** Roughly how long it takes, e.g. "about 1 minute". */
   takes: string;
   licence: string;
@@ -72,6 +77,8 @@ export interface ToolContext {
   workDir: string;
   signal: AbortSignal;
   log: (message: string) => void;
+  /** For a permission tool: the limits of the client's permission it runs under. */
+  permit?: { hosts: string[]; maxUsers: number; maxMinutes: number; writes: boolean };
 }
 
 export interface ToolReport {
@@ -108,6 +115,14 @@ export interface ToolOutput {
   reports?: ToolReport[];
   /** What was tested, e.g. "Checked 12 pages". */
   tested?: string;
+  /** A small table for the report, such as a load test's steps. */
+  table?: ToolTable;
+}
+
+export interface ToolTable {
+  title: string;
+  columns: string[];
+  rows: string[][];
 }
 
 export interface Tool extends ToolInfo {
@@ -130,4 +145,7 @@ export interface ToolStat {
   tested?: string;
   /** Findings dropped because a platform check already reported the same problem. */
   merged?: number;
+  table?: ToolTable;
+  /** For a load or attack test: the client's permission it ran under. */
+  permit?: { id: string; grantedBy: string; reference: string; recordedBy: string; until: string; hosts: string[] };
 }

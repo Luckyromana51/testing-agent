@@ -1,22 +1,26 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { checkProof, hasPermission, permitFor, PERMISSION_KINDS, type Permission } from "../permission.js";
 import { finding } from "../runner/finding.js";
 import { scoreFindings } from "../runner/score.js";
 import type { AgentStat, Category, Finding, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
 import { redact } from "../vault.js";
 import { gitleaksTool } from "./gitleaks.js";
+import { jmeterTool } from "./jmeter.js";
+import { k6Tool } from "./k6.js";
 import { lighthouseTool } from "./lighthouse.js";
 import { newmanTool } from "./newman.js";
 import { opengrepTool } from "./opengrep.js";
 import { osvTool } from "./osv.js";
+import { probesTool } from "./probes.js";
 import { schemathesisTool } from "./schemathesis.js";
 import { sourceDirFor, specFileFor } from "./source.js";
 import { trivyTool } from "./trivy.js";
 import { nucleiTool } from "./nuclei.js";
 import { testsslTool } from "./testssl.js";
-import type { Tool, ToolChoice, ToolFinding, ToolInfo, ToolOutput, ToolStat } from "./types.js";
+import type { Tool, ToolChoice, ToolContext, ToolFinding, ToolInfo, ToolOutput, ToolStat } from "./types.js";
 import { vnuTool } from "./vnu.js";
-import { zapTool } from "./zap.js";
+import { zapActiveTool, zapTool } from "./zap.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -28,6 +32,12 @@ export const TOOLS: Tool[] = [
   zapTool,
   nucleiTool,
   testsslTool,
+  // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
+  // copies of the same holes fold into them).
+  probesTool,
+  zapActiveTool,
+  k6Tool,
+  jmeterTool,
   // APIs
   schemathesisTool,
   newmanTool,
@@ -62,9 +72,10 @@ export async function toolStatus(fresh = false): Promise<Record<string, string |
 
 /**
  * Checks the tools a tester chose: known, fitting the product, and with valid options. Tools that
- * need permission are refused until the permission step exists (phase 3).
+ * load or attack a site need the client's written permission on the project (permissions), within
+ * its limits; a new project has none yet.
  */
-export function cleanChoices(product: ProductType, input: unknown): ToolChoice[] {
+export function cleanChoices(product: ProductType, input: unknown, permissions?: Permission[]): ToolChoice[] {
   if (!Array.isArray(input)) throw new Error("tools must be a list.");
   const out: ToolChoice[] = [];
   for (const raw of input) {
@@ -72,14 +83,23 @@ export function cleanChoices(product: ProductType, input: unknown): ToolChoice[]
     const tool = c && typeof c.id === "string" ? toolById(c.id) : undefined;
     if (!tool) throw new Error(`Unknown tool: ${String(c?.id ?? raw)}.`);
     if (!tool.products.includes(product)) throw new Error(`${tool.name} does not test this kind of product.`);
-    if (tool.safety !== "safe") throw new Error(`${tool.name} needs the client's permission, which is not available yet.`);
+    const permit = tool.safety === "permission" ? hasPermission(permissions, tool.permission ?? "attack") : undefined;
+    if (tool.safety === "permission" && !permit) {
+      const kind = PERMISSION_KINDS[tool.permission ?? "attack"].split(" (")[0].toLowerCase();
+      throw new Error(
+        permissions === undefined
+          ? `${tool.name} needs the client's written permission for ${kind}. Create the project first, then the owner adds the permission on its page.`
+          : `${tool.name} needs the client's written permission for ${kind}. The owner adds it on the project page.`,
+      );
+    }
     if (out.some((o) => o.id === tool.id)) continue;
     const options: Record<string, string> = {};
     for (const opt of tool.options ?? []) {
       const v = c.options?.[opt.id];
       if (opt.kind === "file") {
         // An upload's stored name (from POST /api/uploads), and the name the tester knows it by.
-        if (v && !/^[0-9a-f-]{36}\.json$/.test(v)) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
+        const ext = (opt.accept ?? ".json").replace(/^\./, "");
+        if (v && !(/^[a-z]+$/.test(ext) && new RegExp(`^[0-9a-f-]{36}\\.${ext}$`).test(v))) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
         if (!v && opt.required) throw new Error(`${tool.name}: upload the ${opt.label} first, or turn ${tool.name} off.`);
         if (v) {
           options[opt.id] = v;
@@ -91,6 +111,11 @@ export function cleanChoices(product: ProductType, input: unknown): ToolChoice[]
       if (v === undefined) continue;
       if (!opt.choices.some((ch) => ch.value === v)) throw new Error(`${tool.name}: "${v}" is not a choice for ${opt.label}.`);
       options[opt.id] = v;
+    }
+    if (permit && tool.limits) {
+      const value = (id?: string) => Number(id ? (options[id] ?? tool.options?.find((o) => o.id === id)?.default) : NaN);
+      if (value(tool.limits.users) > permit.maxUsers) throw new Error(`${tool.name}: the client allows at most ${permit.maxUsers} users at once.`);
+      if (value(tool.limits.minutes) > permit.maxMinutes) throw new Error(`${tool.name}: the client allows tests of at most ${permit.maxMinutes} minutes.`);
     }
     out.push({ id: tool.id, ...(Object.keys(options).length ? { options } : {}) });
   }
@@ -127,6 +152,33 @@ export interface ToolRunInput {
   /** The command line's local folder of code, or its local OpenAPI file, instead of the project's. */
   sourceDir?: string;
   specFile?: string;
+  /** The client's permissions for load and attack tests (the project's). */
+  permissions?: Permission[];
+}
+
+/** Load and attack tests run one at a time on this server, so two never compete for it (or for the client's site). */
+let heavyTurn: Promise<unknown> = Promise.resolve();
+
+/**
+ * The permission a load or attack tool runs under, checked again just before it starts: still
+ * active, covering the pages it would use, and with the client's proof still on each host.
+ */
+async function permitForTool(tool: Tool, startUrl: string, urls: string[], input: ToolRunInput): Promise<{ ctx: NonNullable<ToolContext["permit"]>; stat: NonNullable<ToolStat["permit"]>; startUrl: string; urls: string[] } | string> {
+  const permit = permitFor(input.permissions, tool.permission ?? "attack", [startUrl, ...urls]);
+  if (typeof permit === "string") return permit;
+  const p = permit.permission;
+  const used = [...new Set(permit.urls.map((u) => new URL(u).host.toLowerCase()))];
+  const checks = await Promise.all(used.map((h) => checkProof(h, p.token, input.signal)));
+  const gone = checks.find((c) => !c.ok);
+  if (gone) return `The client's proof is no longer on ${gone.host}, so the test did not run (${gone.error}).`;
+  if (permit.outside.length) input.log(`${tool.name}: leaving out ${permit.outside.join(", ")}, which the permission does not cover`);
+  const allowedStart = permit.urls.includes(startUrl) ? startUrl : permit.urls[0];
+  return {
+    ctx: { hosts: p.hosts, maxUsers: p.maxUsers, maxMinutes: p.maxMinutes, writes: p.writes },
+    stat: { id: p.id, grantedBy: p.grantedBy, reference: p.reference, recordedBy: p.createdBy, until: p.until, hosts: p.hosts },
+    startUrl: allowedStart,
+    urls: permit.urls.filter((u) => u !== allowedStart),
+  };
 }
 
 const host = (u: string) => {
@@ -230,28 +282,58 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
     const why = await tool.ready().catch((e: Error) => e.message);
     if (why) untested = why;
     else {
-      log(`Tool: ${tool.name}`);
       const options = Object.fromEntries((tool.options ?? []).map((o) => [o.id, choice.options?.[o.id] ?? o.default]));
-      try {
-        out = await tool.run({
-          product: input.product,
-          target,
-          startUrl,
-          urls,
-          ...(input.cookie && tool.signedIn === "uses-login" ? { cookie: input.cookie } : {}),
-          ...(input.login && tool.signedIn === "uses-login" ? { login: input.login } : {}),
-          ...(sourceDir ? { sourceDir } : {}),
-          ...(specFile ? { specFile } : {}),
-          uploadsDir: input.uploadsDir,
-          options,
-          outDir: input.artifactsDir,
-          workDir: input.workDir,
-          signal,
-          log,
-        });
-      } catch (err) {
-        if (signal.aborted) throw signal.reason;
-        untested = (err as Error).message.split("\n")[0].slice(0, 400);
+      const notes: string[] = [];
+      let place = { startUrl, urls };
+      let permit: Awaited<ReturnType<typeof permitForTool>> | undefined;
+      if (tool.safety === "permission") {
+        permit = await permitForTool(tool, startUrl, urls, input);
+        if (typeof permit === "string") untested = permit;
+        else {
+          place = { startUrl: permit.startUrl, urls: permit.urls };
+          stat.permit = permit.stat;
+          // A permission narrowed since the tool was chosen: run within it, and say so.
+          for (const [id, max, unit] of [[tool.limits?.users, permit.ctx.maxUsers, "users"], [tool.limits?.minutes, permit.ctx.maxMinutes, "minutes"]] as const) {
+            if (id && Number(options[id]) > max) {
+              options[id] = String(max);
+              notes.push(`Limited to ${max} ${unit} by the client's permission`);
+            }
+          }
+        }
+      }
+      if (!untested) {
+        log(`Tool: ${tool.name}`);
+        const go = () => {
+          signal.throwIfAborted();
+          return tool.run({
+            product: input.product,
+            target,
+            startUrl: place.startUrl,
+            urls: place.urls,
+            ...(input.cookie && tool.signedIn === "uses-login" ? { cookie: input.cookie } : {}),
+            ...(input.login && tool.signedIn === "uses-login" ? { login: input.login } : {}),
+            ...(sourceDir ? { sourceDir } : {}),
+            ...(specFile ? { specFile } : {}),
+            ...(permit && typeof permit !== "string" ? { permit: permit.ctx } : {}),
+            uploadsDir: input.uploadsDir,
+            options,
+            outDir: input.artifactsDir,
+            workDir: input.workDir,
+            signal,
+            log,
+          });
+        };
+        try {
+          if (tool.safety === "permission") {
+            const mine = heavyTurn.then(go);
+            heavyTurn = mine.catch(() => {});
+            out = await mine;
+          } else out = await go();
+          if (out && notes.length) out = { ...out, summary: [...notes, ...(out.summary ?? [])] };
+        } catch (err) {
+          if (signal.aborted) throw signal.reason;
+          untested = (err as Error).message.split("\n")[0].slice(0, 400);
+        }
       }
     }
     stat.ms = Date.now() - started;
@@ -275,6 +357,7 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
         ...(out.summary?.length ? { summary: out.summary } : {}),
         ...(out.reports?.length ? { reports: out.reports } : {}),
         ...(out.tested ? { tested: out.tested } : {}),
+        ...(out.table ? { table: out.table } : {}),
       });
       log(`${tool.name}: ${stat.findings} findings${merged ? `, ${merged} already found by the platform's checks` : ""}`);
     } else {

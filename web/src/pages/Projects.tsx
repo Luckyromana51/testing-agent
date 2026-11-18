@@ -5,6 +5,7 @@ import { api, type Meta, type ProjectDetail, type ProjectSummary } from "../api.
 import { go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts";
 import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
+import { PermissionCard } from "./Permission.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
@@ -249,7 +250,14 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
       </div>
 
       <h2 className="section-title">What runs in each test</h2>
-      <ProjectTools meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
+      <ProjectTools key={JSON.stringify(p.tools ?? null)} meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
+
+      {meta.tools.some((t) => t.safety === "permission" && t.products.includes(p.type)) && (
+        <>
+          <h2 className="section-title">Load and attack tests</h2>
+          <PermissionCard project={p} isOwner={user.role === "owner"} onChanged={reload} />
+        </>
+      )}
 
       {user.role === "owner" && (
         <div className="danger-zone">
@@ -291,7 +299,7 @@ function ProjectTools({
   const changed = JSON.stringify(toolChoices(meta, draft)) !== before;
   return (
     <div className="card form">
-      <ToolTabs meta={meta} type={project.type} agents={agents} draft={draft} onChange={setDraft} />
+      <ToolTabs meta={meta} type={project.type} agents={agents} draft={draft} onChange={setDraft} permissions={project.permissions ?? []} />
       {changed && (
         <div className="form-actions">
           <button

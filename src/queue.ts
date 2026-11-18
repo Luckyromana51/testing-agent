@@ -193,7 +193,12 @@ export class ScanQueue {
           }),
         ]);
         // Then the outside tools the project uses (Lighthouse, ZAP...), merged into the same report.
-        const choices = (project.tools ?? (await defaultChoices(project.type))).filter((c) => toolById(c.id)?.products.includes(project.type));
+        let choices = (project.tools ?? (await defaultChoices(project.type))).filter((c) => toolById(c.id)?.products.includes(project.type));
+        // Load and attack tests run only when someone starts the test, never on the schedule.
+        if (run.trigger === "schedule" && choices.some((c) => toolById(c.id)?.safety === "permission")) {
+          choices = choices.filter((c) => toolById(c.id)?.safety !== "permission");
+          log("Load and attack tools are left out of scheduled tests: start a test by hand to run them");
+        }
         if (choices.length) {
           update({ tools: choices });
           const cookieValues = (cookie ?? "").split(/;\s*/).map((p) => p.slice(p.indexOf("=") + 1));
@@ -211,6 +216,8 @@ export class ScanQueue {
             log: (m) => {
               if (!signal.aborted) log(m);
             },
+            // The newest copy: a permission withdrawn while this test waited no longer counts.
+            permissions: (projects.get(project.id) ?? project).permissions,
           });
         }
       } finally {
