@@ -12,6 +12,11 @@ export interface ZipEntry {
   offset: number;
 }
 
+/** "4 KB" or "12.3 MB", for notes about file sizes. */
+export function sizeText(bytes: number): string {
+  return bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} KB` : `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
 export function listZip(buf: Buffer): ZipEntry[] {
   // The end-of-central-directory record is in the last 64 KB (after an optional comment).
   let eocd = -1;

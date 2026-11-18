@@ -6,7 +6,7 @@ import { scoreFindings } from "../runner/score.js";
 import type { Category, PageResult, ScanResult } from "../types.js";
 import { runEngineAgents } from "./agents.js";
 import { attrBool, attrNumber, parseAxml, type XmlNode } from "./axml.js";
-import { listZip, readEntry, type ZipEntry } from "./zip.js";
+import { listZip, readEntry, sizeText, type ZipEntry } from "./zip.js";
 
 export const APK_CATEGORIES: Category[] = ["security", "functional"];
 const MAX_CODE_BYTES = 250_000_000;
@@ -116,7 +116,7 @@ export async function scanApk(opts: ApkScanOptions): Promise<ScanResult> {
   }
   log(`${facts.packageName} ${facts.versionName ?? ""} (target API ${facts.targetSdk ?? "?"}, min API ${facts.minSdk ?? "?"})`);
   notes.push(
-    `${facts.packageName} version ${facts.versionName ?? "?"} (${facts.versionCode ?? "?"}), target API ${facts.targetSdk ?? "?"}, min API ${facts.minSdk ?? "?"}, ${(apk.length / 1e6).toFixed(1)} MB${
+    `${facts.packageName} version ${facts.versionName ?? "?"} (${facts.versionCode ?? "?"}), target API ${facts.targetSdk ?? "?"}, min API ${facts.minSdk ?? "?"}, ${sizeText(apk.length)}${
       opts.fileName ? `, from ${opts.fileName}` : ""
     }.`,
   );

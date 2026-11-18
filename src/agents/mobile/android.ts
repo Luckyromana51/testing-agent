@@ -5,6 +5,7 @@ import type { Category, Finding, Severity } from "../../types.js";
 import { SECRET_PATTERNS } from "../code/secrets.js";
 import type { EngineAgent } from "../types.js";
 import type { AndroidComponent, ApkContext } from "./context.js";
+import { openFirebaseFindings } from "./firebase.js";
 
 type ApkAgent = EngineAgent<ApkContext>;
 const base = { engine: "mobile" as const, products: ["android" as const] };
@@ -355,7 +356,7 @@ export const androidSecretsAgent: ApkAgent = {
           `The app contains ${p.what}`,
           google
             ? "Google keys in apps are visible to anyone who unpacks the APK. That is normal for Firebase and Maps, but restrict the key to your package name and signing certificate (SHA-1) in Google Cloud console."
-            : `Anyone can unpack the APK and read it. ${p.fix} Apps should get secrets from your server after the user logs in, never carry them.`,
+            : `Anyone can unpack the APK and read it, so treat it as leaked: revoke it and make a new one now. Keep the new one on your server; apps should get what they need from your server after the user signs in, never carry keys.`,
           s.file,
           p.id === "private-key" ? "-----BEGIN ... PRIVATE KEY-----" : `${value.slice(0, 4)}***${value.slice(-2)}`,
         );
@@ -420,35 +421,8 @@ export const androidBackendAgent: ApkAgent = {
   name: "Firebase database",
   description: "Finds the app's Firebase Realtime Database and checks it does not let anyone read it.",
   category: "security",
-  async run({ strings, request }) {
-    const out: Finding[] = [];
-    const urls = new Set<string>();
-    for (const s of strings) {
-      for (const m of s.text.matchAll(/https:\/\/[a-z0-9-]+\.(?:firebaseio\.com|[a-z0-9-]+\.firebasedatabase\.app)/gi)) urls.add(m[0].toLowerCase());
-    }
-    for (const url of [...urls].slice(0, 3)) {
-      try {
-        const res = await request.get(`${url}/.json?shallow=true`, { timeout: 15_000, failOnStatusCode: false });
-        const body = (await res.text()).trim();
-        if (res.status() === 200) {
-          const hasData = body !== "null" && body !== "{}";
-          add(
-            out,
-            "android:firebase-open",
-            hasData ? "critical" : "medium",
-            "The Firebase database can be read by anyone",
-            hasData
-              ? `${url} answered a request with no login with data. Anyone who unpacks the app finds this address. Change the database rules so reads need auth (".read": "auth != null") and check the data is not already copied.`
-              : `${url} allows reads with no login (it is empty right now). Change the rules so reads need auth.`,
-            url,
-            `GET /.json -> 200${hasData ? ", data returned" : ", empty"}`,
-          );
-        }
-      } catch {
-        /* unreachable from here: nothing to report */
-      }
-    }
-    return out;
+  run({ strings, request }) {
+    return openFirebaseFindings(strings, request, "android:firebase-open", "unpacks the app");
   },
 };
 
