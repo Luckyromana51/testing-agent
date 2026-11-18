@@ -259,6 +259,16 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
           </>
         )}
 
+        {type === "ios" && (
+          <>
+            <FilePicker accept=".ipa,.zip" label="The app's IPA file" hint="exported from Xcode (Development or Ad Hoc), or a zip of the .app" value={upload} onChange={setUpload} />
+            <div className="note">
+              The app is unpacked and read on GLV's server; it is never installed or run. An IPA downloaded from the App Store has
+              its code encrypted, so export one from Xcode's Organizer for a full test.
+            </div>
+          </>
+        )}
+
         <label className="form-field">
           <span>Project name (optional)</span>
           <input className="input" placeholder="Client or product name" value={name} onChange={(e) => setName(e.target.value)} />

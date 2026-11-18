@@ -91,10 +91,10 @@ export const PRODUCTS: ProductInfo[] = [
   {
     type: "ios",
     name: "iOS app",
-    description: "Upload an IPA file (needs a Mac runner)",
+    description: "Upload an IPA, or a zip of the .app",
     input: "ipa",
-    available: false,
-    tests: ["Permissions", "App Transport Security", "Hard-coded secrets"],
+    available: true,
+    tests: ["App Transport Security and plain HTTP", "Permissions and their purpose texts", "Privacy manifest (App Store rule)", "UIWebView, 64-bit and signing", "Hard-coded keys and open Firebase", "Debug and expired builds"],
   },
 ];
 

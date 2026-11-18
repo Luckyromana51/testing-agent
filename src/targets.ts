@@ -21,7 +21,7 @@ export const UPLOAD_TYPES: Record<string, RegExp> = {
   api: /\.(json|ya?ml)$/i,
   code: /\.zip$/i,
   android: /\.apk$/i,
-  ios: /\.ipa$/i,
+  ios: /\.(ipa|zip)$/i,
 };
 
 const clean = (v: unknown) => (typeof v === "string" ? v.trim() : "");
@@ -89,7 +89,7 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
   }
 
   if (type === "android" || type === "ios") {
-    if (!t.file) throw new Error(`Upload the ${type === "android" ? "APK" : "IPA"} file to test.`);
+    if (!t.file) throw new Error(type === "android" ? "Upload the APK file to test." : "Upload the IPA file (or a zip of the .app) to test.");
     return t;
   }
   return t;

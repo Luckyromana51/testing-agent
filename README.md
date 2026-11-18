@@ -1,12 +1,12 @@
 # GLV Testing Agent
 
-An AI testing platform by GLV Infotech Solutions. Pick what you are testing (website, online store, web app, SaaS, CRM, API, source code or Android app), give it the address or upload the file, and a team of specialist agents checks it the way a QA engineer would and writes a report: major issues first, each with a fix you can paste. Every problem becomes a tracked issue (like Jira) that re-tests verify as fixed, or reopen when it comes back.
+An AI testing platform by GLV Infotech Solutions. Pick what you are testing (website, online store, web app, SaaS, CRM, API, source code, Android app or iOS app), give it the address or upload the file, and a team of specialist agents checks it the way a QA engineer would and writes a report: major issues first, each with a fix you can paste. Every problem becomes a tracked issue (like Jira) that re-tests verify as fixed, or reopen when it comes back.
 
-This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). Four engines are built: the browser engine (websites and web apps), the API engine, the source code engine and the Android engine. iOS comes later.
+This follows the [architecture plan](https://claude.ai/artifact/PWZA5PZ8vKN8MpmfSUXJmE). Five engines are built: the browser engine (websites and web apps), the API engine, the source code engine, the Android engine and the iOS engine. Running iOS apps in the Simulator, VoiceOver and real Safari come next, through a helper on a Mac.
 
 ## The dashboard
 
-- **New test**: pick the product type first, then enter its details: a web address; an OpenAPI file address or upload for an API; a Git repository or a zip for source code; an APK upload for an Android app. iOS shows as "Coming soon".
+- **New test**: pick the product type first, then enter its details: a web address; an OpenAPI file address or upload for an API; a Git repository or a zip for source code; an APK upload for an Android app; an IPA (or a zip of the .app) for an iOS app.
 - **Live view**: while a website test runs, its report page shows the test browser's screens live, side by side, next to what each agent is doing on each screen. Show 1 to 4 screens, pick a shape (side by side, stacked, one big, grid), drag the lines between them to resize, drag a screen's grip onto another to swap them, make one big, or change which screen each place shows. The layout is remembered in that browser. Pictures are only sent while someone watches, so a test nobody watches runs at full speed, and nothing is recorded.
 - **Report**: score per category, then the major issues (critical and high) as cards with a fix suggestion and ready-to-paste code for Apache/LiteSpeed (Hostinger), Nginx, WordPress or PHP. Everything else is in a filterable list. The Agents tab shows what each agent found and how long it took; the Tools tab shows each outside tool's scores, findings and its own report to open.
 - **Projects**: each site, API, codebase or app you test, with its score trend, open issues, test history and an automatic re-test schedule (daily or weekly). For an app, upload the next build on the project page and press Re-test to see what was fixed and what came back.
@@ -126,6 +126,22 @@ The APK is unpacked and read on the server; it is never installed or run.
 | Hard-coded secrets and servers | Keys in the code, React Native bundle and Flutter library; the app's own servers called over plain HTTP |
 | Firebase database | A Realtime Database that anyone can read |
 | Native libraries | Missing 64-bit code, libraries not ready for 16 KB memory pages |
+
+### iOS engine (IPA)
+
+The IPA (or a zip of the .app, such as a Simulator build) is unpacked and read on the server; it is never installed or run, and no Mac is needed. It reads Info.plist in either format (XML or binary), the program's headers (Mach-O, including fat files with several processors), the embedded provisioning profile and the privacy manifests. An IPA downloaded from the App Store has its code encrypted: the settings are still checked, and the report lists the checks that could not read the code, so export the IPA from Xcode's Organizer (Development or Ad Hoc) for a full test.
+
+| Agent | What it checks |
+| --- | --- |
+| App settings | App Transport Security switched off, or allowed over plain HTTP or old TLS for some servers (following iOS's rule that some settings make it ignore NSAllowsArbitraryLoads); Documents folder shown in Files; custom URL schemes other apps can open; the export compliance answer (ITSAppUsesNonExemptEncryption) |
+| Permissions and purpose texts | Code that asks for the camera, location, contacts, tracking and more without the Info.plist purpose text (iOS closes the app; App Store Connect rejects it with ITMS-90683); purpose texts that do not say why |
+| Privacy manifest | Apple's "required reason" APIs used with no PrivacyInfo.xcprivacy, or without a reason for each one (ITMS-91053); SDKs from Apple's list without their own manifest; tracking without tracking domains |
+| App binary | No 64-bit (arm64) code, not built as PIE, unsigned, UIWebView still in the app or its frameworks (ITMS-90809) |
+| Hard-coded secrets and servers | Keys in the program, its config files, the React Native bundle and Flutter's App.framework; the app's own servers called over plain HTTP |
+| Firebase database | A Realtime Database that anyone can read |
+| Signing and provisioning | Debug builds (get-task-allow), expired or soon-expiring profiles, Enterprise distribution, push notifications set to the sandbox server |
+
+Symbols are matched as whole names in the program's symbol and selector tables, so `_status` is not read as the file-date function `_stat`. App extensions (widgets, share extensions) are listed in the report but their own settings are not tested yet.
 
 ## Outside tools (tool tabs)
 
@@ -266,6 +282,7 @@ npm run scan -- scan https://example.com --parallel 8   # 8 pages at the same ti
 npm run scan -- api https://api.example.com/openapi.json
 npm run scan -- code .                      # the folder you are in (or a repo URL or a zip)
 npm run scan -- apk app-release.apk
+npm run scan -- ipa GLVShop.ipa          # or a zip of the .app
 # or after npm run build:
 node dist/cli.js code . --fail-on high
 # add outside tools (a list, or all for every installed one):
@@ -321,7 +338,7 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `POST` | `/api/auth/setup` | Create the owner account (first start only) |
 | `POST` | `/api/auth/login`, `/api/auth/logout` | Sign in and out |
 | `GET` | `/api/meta` | Product types, agents with on/off state, and the outside tools with whether each is installed on this server |
-| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android: `file`. Optional `login`: `{ "loginUrl", "username", "password" }` for web, `{ "authType": "bearer" \| "header" \| "query" \| "basic", "token", "paramName", "username", "password" }` for an API, `{ "token", "username" }` for code. Optional `tools`: `[{ "id": "lighthouse", "options": { "device": "desktop", "pages": "3" } }, { "id": "zap" }]` (left out: every installed safe tool). Answers show only whether a secret is saved |
+| `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android and iOS: `file`. Optional `login`: `{ "loginUrl", "username", "password" }` for web, `{ "authType": "bearer" \| "header" \| "query" \| "basic", "token", "paramName", "username", "password" }` for an API, `{ "token", "username" }` for code. Optional `tools`: `[{ "id": "lighthouse", "options": { "device": "desktop", "pages": "3" } }, { "id": "zap" }]` (left out: every installed safe tool). Answers show only whether a secret is saved |
 | `POST` | `/api/uploads` | Upload an APK, a zip of code or an OpenAPI file as the raw body (`content-type: application/octet-stream`, file name in `x-file-name`, up to 300 MB). Returns the `file` to put in the project |
 | `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), `tools` (the tool tabs for later tests; `null` goes back to the default), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner; a queued or running test is cancelled first) |
 | `POST` | `/api/projects/:id/runs` | Re-test now |
@@ -352,8 +369,8 @@ src/
   agents/web/               the browser engine's agents
   agents/api/               the API engine's agents
   agents/code/              the source code engine's agents
-  agents/mobile/            the Android engine's agents
-  engines/                  one runner per engine, plus the OpenAPI, zip and Android binary XML readers
+  agents/mobile/            the Android and iOS engines' agents
+  engines/                  one runner per engine, plus the OpenAPI, zip, Android binary XML, plist and Mach-O readers
   tools/index.ts            the outside tools (tool tabs); add new ones here. Runs them and merges their findings
   tools/*.ts                one file per tool: Lighthouse, W3C HTML checker, ZAP, Nuclei, testssl.sh
   targets.ts                checks what each product type needs (address, repository, upload)
@@ -374,13 +391,13 @@ src/
   server.ts                 Fastify API, serves the dashboard
   cli.ts                    glvtest command line
 web/                        React dashboard (Vite)
-test/                       tests, plus a demo site, demo CRM behind a login, demo API and demo APK with deliberate bugs
+test/                       tests, plus a demo site, demo CRM behind a login, demo API, demo APK and demo IPA with deliberate bugs
 ```
 
 ## Testing
 
 ```bash
-npm test          # unit tests + full tests of the demo site, demo API, demo code and demo APK
+npm test          # unit tests + full tests of the demo site, demo API, demo code, demo APK and demo IPA
                   # tools.test.ts also runs each installed tool on a demo site; tools that are not installed are skipped
                   # load.test.ts runs real k6 and JMeter tests when they are installed; probes.test.ts attacks a site with planted holes
 npm run typecheck
@@ -392,10 +409,9 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 
 - Claude exploring flows while signed in (sign-up, checkout, forms), on a test copy of the client's system
 - Sign-in with a one-time code (TOTP) for test accounts that need two-step verification
-- iOS app checks (IPA)
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
-- iOS, VoiceOver and real Safari through a helper app on a Mac with Xcode
+- Running iOS apps in the Simulator, Apple's accessibility audit, VoiceOver and real Safari through a helper on a Mac with Xcode (next)
 - More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps, screenshot compare and PDF reports
 - GLV's own SEO audit, and a local copy of the OSV database kept up to date on the server

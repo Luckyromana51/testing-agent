@@ -18,6 +18,7 @@ import { createApp } from "../src/server.js";
 import type { Project, Run, ScanResult } from "../src/types.js";
 import { startDemoApi, type DemoApi } from "./fixtures/demo-api.js";
 import { buildDemoApk, elfWithAlign, encodeAxml, FAKE_AWS_KEY } from "./fixtures/demo-apk.js";
+import { plantedIpa, simulatorAppZip } from "./fixtures/demo-ipa.js";
 
 process.env.ALLOW_PRIVATE_TARGETS = "1";
 // The outside tools have their own tests (tools.test.ts); here tests run only the platform's checks.
@@ -445,6 +446,24 @@ describe("API, code and app projects through the server", () => {
     assert.ok(run.result?.findings.some((f) => f.rule === "android:debuggable"));
   });
 
+  it("uploads an iOS app (an IPA or a zipped .app) and tests it", async () => {
+    const up = await call("POST", "/api/uploads", plantedIpa(), { "content-type": "application/octet-stream", "x-file-name": "GLV Shop.ipa" });
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    const created = await call("POST", "/api/projects", { type: "ios", file: up.body.file, fileName: up.body.fileName });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.equal(created.body.project.name, "GLV Shop");
+    const run = await waitForRun(created.body.run.id);
+    assert.equal(run.status, "done", run.error);
+    assert.ok(run.result?.findings.some((f) => f.rule === "ios:debug-build"));
+    const issues = await call("GET", `/api/issues?projectId=${created.body.project.id}`);
+    assert.ok(issues.body.some((i: { rule: string }) => i.rule === "ios:no-privacy-manifest"));
+    // A zipped Simulator build is taken too; an APK is not an iOS app.
+    const zip = await call("POST", "/api/uploads", simulatorAppZip(), { "content-type": "application/octet-stream", "x-file-name": "GLV Shop.zip" });
+    assert.equal((await call("POST", "/api/projects", { type: "ios", file: zip.body.file, fileName: zip.body.fileName })).status, 201);
+    const apk = await call("POST", "/api/uploads", buildDemoApk(), { "content-type": "application/octet-stream", "x-file-name": "demo.apk" });
+    assert.match((await call("POST", "/api/projects", { type: "ios", file: apk.body.file })).body.error, /does not fit/);
+  });
+
   it("checks what each product needs", async () => {
     const noSpec = await call("POST", "/api/projects", { type: "api" });
     assert.equal(noSpec.status, 400);
@@ -456,6 +475,6 @@ describe("API, code and app projects through the server", () => {
     const badBranch = await call("POST", "/api/projects", { type: "code", repoUrl: "https://github.com/a/b", branch: "--upload-pack=x" });
     assert.match(badBranch.body.error, /branch/);
     const ios = await call("POST", "/api/projects", { type: "ios" });
-    assert.match(ios.body.error, /later update/);
+    assert.match(ios.body.error, /IPA/);
   });
 });

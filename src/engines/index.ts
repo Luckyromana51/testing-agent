@@ -82,8 +82,11 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
       const { scanApk } = await import("./apk.js");
       return scanApk({ apkFile: uploadedPath(input.uploadsDir, target.file), fileName: target.fileName, agents, onProgress });
     }
-    case "ios":
-      throw new Error("iOS app testing is not available yet.");
+    case "ios": {
+      if (!target.file) throw new Error("Upload the iOS app (.ipa, or a zip of the .app) to test.");
+      const { scanIpa } = await import("./ipa.js");
+      return scanIpa({ ipaFile: uploadedPath(input.uploadsDir, target.file), fileName: target.fileName, agents, onProgress });
+    }
     default:
       return scanSite({
         url: target.url ?? "",

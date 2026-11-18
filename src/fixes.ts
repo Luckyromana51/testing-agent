@@ -437,6 +437,50 @@ const ROTATE_SECRET: Fix = {
   effort: "hours",
 };
 
+/** A key found inside an Android or iOS app: anyone with the app can unpack it, so it moves to a server. */
+const MOBILE_SECRET: Fix = {
+  steps:
+    "1. Revoke the key now and make a new one: anyone who has the app can unpack it and read the key, and builds already on phones keep it. 2. Do not put the new key in the app. Move the call that needs it to your server: the app calls your server with the user's sign-in, and the server adds the key. 3. Keys that are meant to live in apps (Google Maps, Firebase) stay, but restrict them to your app's bundle ID or package name in their console.",
+  code: [
+    { label: "Swift", snippet: 'var req = URLRequest(url: URL(string: "https://api.example.com/payments")!)\nreq.setValue("Bearer \\(session.token)", forHTTPHeaderField: "Authorization")' },
+    { label: "Kotlin", snippet: 'val req = Request.Builder().url("https://api.example.com/payments")\n    .header("Authorization", "Bearer ${session.token}").build()' },
+    { label: "Server (Node.js)", snippet: "// The key lives only on the server.\nconst key = process.env.PAYMENT_API_KEY;" },
+  ],
+  effort: "hours",
+};
+
+/** An example purpose text for each Info.plist key, so the fix shows the key that is missing. */
+const PURPOSE_EXAMPLES: Record<string, string> = {
+  NSCameraUsageDescription: "Your camera is used to scan the bar code on your order.",
+  NSMicrophoneUsageDescription: "Your microphone is used to record voice notes for the seller.",
+  NSLocationWhenInUseUsageDescription: "Your location is used to show the stores near you.",
+  NSLocationAlwaysAndWhenInUseUsageDescription: "Your location is used to tell you when you are near a store with your order, even when the app is closed.",
+  NSContactsUsageDescription: "Your contacts are used so you can invite the friends you pick.",
+  NSCalendarsUsageDescription: "Your calendar is used to add the delivery date you choose.",
+  NSCalendarsFullAccessUsageDescription: "Your calendar is used to add the delivery date you choose.",
+  NSRemindersUsageDescription: "Reminders are used to remind you when your order arrives.",
+  NSPhotoLibraryUsageDescription: "Your photos are used so you can add a picture to your review.",
+  NSPhotoLibraryAddUsageDescription: "This lets the app save your receipt to your photos.",
+  NSSpeechRecognitionUsageDescription: "Speech recognition lets you search the shop by voice.",
+  NSBluetoothAlwaysUsageDescription: "Bluetooth is used to connect to your receipt printer.",
+  NSMotionUsageDescription: "Motion data is used to count your steps for fitness rewards.",
+  NSUserTrackingUsageDescription: "This lets us show you offers from shops you like in other apps.",
+  NSHealthShareUsageDescription: "Health data is used to show your workouts in the app.",
+  NSHealthUpdateUsageDescription: "This lets the app save your workouts to Health.",
+  NSHomeKitUsageDescription: "HomeKit is used to control the lights you add to the app.",
+  NFCReaderUsageDescription: "NFC is used to read the tag on your loyalty card.",
+  NSAppleMusicUsageDescription: "Your music library is used to pick songs for your videos.",
+  NSFaceIDUsageDescription: "Face ID is used to sign you in without your password.",
+};
+
+function missingPurposeFix(detail: string): Fix {
+  const base = ENGINE_FIXES["ios:missing-purpose"];
+  const key = detail.match(/Info\.plist has no (\w+)/)?.[1];
+  if (!key) return base;
+  const text = PURPOSE_EXAMPLES[key] ?? "Say here what the app uses it for.";
+  return { ...base, code: [{ label: "Info.plist", snippet: `<key>${key}</key>\n<string>${text}</string>` }] };
+}
+
 /** Fixes for the API, source code and Android engines. */
 const ENGINE_FIXES: Record<string, Fix> = {
   // API
@@ -518,6 +562,30 @@ const ENGINE_FIXES: Record<string, Fix> = {
   "android:open-activity": { steps: "Set android:exported=\"false\" on screens that are not entry points, and check the login state in onCreate of screens that are.", effort: "minutes" },
   "android:http-backend": { steps: "Move the app's servers to HTTPS and update the addresses in the app.", effort: "hours" },
   "android:firebase-open": { steps: "Lock the database rules in Firebase console > Realtime Database > Rules, then check what was exposed.", code: [{ label: "database.rules.json", snippet: '{\n  "rules": { ".read": "auth != null", ".write": "auth != null" }\n}' }], effort: "hours" },
+  "ios:ats-off": { steps: "Remove NSAllowsArbitraryLoads and allow plain HTTP only for the servers that still need it, until they move to HTTPS.", code: [{ label: "Info.plist", snippet: "<key>NSAppTransportSecurity</key>\n<dict>\n  <key>NSExceptionDomains</key>\n  <dict>\n    <key>legacy.example.com</key>\n    <dict>\n      <key>NSExceptionAllowsInsecureHTTPLoads</key>\n      <true/>\n    </dict>\n  </dict>\n</dict>" }], effort: "hours" },
+  "ios:ats-web-content": { steps: "Remove NSAllowsArbitraryLoadsInWebContent unless the app must show other people's websites, and load your own pages over https.", effort: "minutes" },
+  "ios:ats-http-domains": { steps: "Move each listed server to HTTPS (a free Let's Encrypt certificate is enough), then delete its NSExceptionAllowsInsecureHTTPLoads entry.", effort: "hours" },
+  "ios:ats-old-tls": { steps: "Turn on TLS 1.2 and 1.3 on the listed servers, then remove NSExceptionMinimumTLSVersion from Info.plist.", effort: "hours" },
+  "ios:file-sharing": { steps: "Turn file sharing off, or keep private data out of Documents: databases and caches in Application Support, tokens in the Keychain.", code: [{ label: "Swift", snippet: "let dir = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)" }], effort: "hours" },
+  "ios:url-schemes": { steps: "Check every parameter the app reads from these links, ask the user before any sign-in, payment or delete a link starts, and move sensitive links to Universal Links (apple-app-site-association).", effort: "hours" },
+  "ios:export-compliance": { steps: "If the app only uses HTTPS and Apple's own encryption, say so in Info.plist.", code: [{ label: "Info.plist", snippet: "<key>ITSAppUsesNonExemptEncryption</key>\n<false/>" }], effort: "minutes" },
+  "ios:vague-purpose": { steps: "Rewrite each purpose text to say what the app does with it, in one sentence the user understands.", code: [{ label: "Info.plist", snippet: "<key>NSCameraUsageDescription</key>\n<string>Your camera is used to scan the bar code on your order.</string>" }], effort: "minutes" },
+  "ios:missing-purpose": { steps: "Add the missing purpose key to Info.plist with a sentence that says why. If an SDK asks for something the app does not use, turn that part off in the SDK's settings (for Flutter's permission_handler, the PERMISSION_ macros in the Podfile).", code: [{ label: "Info.plist", snippet: "<key>NSLocationWhenInUseUsageDescription</key>\n<string>Your location is used to show the stores near you.</string>" }], effort: "minutes" },
+  "ios:no-privacy-manifest": { steps: "In Xcode choose File > New > File > App Privacy, add it to the app target, and declare each listed API category with the reason code that fits (Apple's list of approved reasons).", code: [{ label: "PrivacyInfo.xcprivacy", snippet: "<key>NSPrivacyAccessedAPITypes</key>\n<array>\n  <dict>\n    <key>NSPrivacyAccessedAPIType</key>\n    <string>NSPrivacyAccessedAPICategoryUserDefaults</string>\n    <key>NSPrivacyAccessedAPITypeReasons</key>\n    <array><string>CA92.1</string></array>\n  </dict>\n</array>" }], effort: "hours" },
+  "ios:privacy-manifest-reasons": { steps: "Add each listed category to NSPrivacyAccessedAPITypes in PrivacyInfo.xcprivacy, with the reason code that fits from Apple's list.", effort: "hours" },
+  "ios:sdk-privacy-manifest": { steps: "Update the listed SDKs (pod update, or the package versions in Xcode or pubspec.yaml) to versions that ship a privacy manifest, then build and check again.", effort: "hours" },
+  "ios:tracking-domains": { steps: "List the servers the app or its SDKs use for tracking under NSPrivacyTrackingDomains, or set NSPrivacyTracking to NO if the app does not track.", effort: "hours" },
+  "ios:no-arm64": { steps: "Open the project in a current Xcode, set Architectures to Standard Architectures, and archive again.", effort: "hours" },
+  "ios:no-pie": { steps: "Remove -no_pie and old linker flags from Other Linker Flags, then build again with a current Xcode.", effort: "minutes" },
+  "ios:unsigned": { steps: "Export the app from Xcode: Product > Archive, then Distribute App > Ad Hoc or Development. Xcode signs it with your team's profile.", effort: "minutes" },
+  "ios:uiwebview": { steps: "Replace UIWebView with WKWebView in the app, and update the SDKs listed (old Cordova, Facebook and ad SDKs often bring it).", code: [{ label: "Swift", snippet: "import WebKit\nlet webView = WKWebView(frame: view.bounds)\nwebView.load(URLRequest(url: url))" }], effort: "days" },
+  "ios:http-backend": { steps: "Move the app's servers to HTTPS and update the addresses in the app.", effort: "hours" },
+  "ios:firebase-open": { steps: "Lock the database rules in Firebase console > Realtime Database > Rules, then check what was exposed.", code: [{ label: "database.rules.json", snippet: '{\n  "rules": { ".read": "auth != null", ".write": "auth != null" }\n}' }], effort: "hours" },
+  "ios:debug-build": { steps: "Send a release build: Product > Archive, then Distribute App > Ad Hoc (for named devices) or App Store Connect (for TestFlight).", effort: "minutes" },
+  "ios:profile-expired": { steps: "Renew the provisioning profile in the Apple Developer account (Certificates, Identifiers & Profiles), or let Xcode manage signing, then export and send the app again.", effort: "minutes" },
+  "ios:profile-expiring": { steps: "Renew the provisioning profile before it expires and send a new build to everyone who has the app.", effort: "minutes" },
+  "ios:enterprise-build": { steps: "Give clients and testers the app through TestFlight or an Ad Hoc build instead of the Enterprise certificate.", effort: "hours" },
+  "ios:push-sandbox": { steps: "Turn on Push Notifications for the App ID, export with a distribution profile (Ad Hoc or App Store), and check aps-environment is production.", effort: "minutes" },
   "android:unsigned": { steps: "Sign the APK with your release key: Build > Generate Signed Bundle / APK, or apksigner sign.", effort: "minutes" },
   "android:debug-signed": { steps: "Make a release key once (keytool), keep it safe, and sign release builds with it; or upload an app bundle and let Play App Signing manage the key.", code: [{ label: "Terminal", snippet: "keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias release" }], effort: "hours" },
   "android:v1-only": { steps: "Sign with apksigner (Android build tools), which adds the v2 and v3 signatures.", code: [{ label: "Terminal", snippet: "apksigner sign --ks release.jks app.apk" }], effort: "minutes" },
@@ -637,9 +705,11 @@ function toolFix(rule: string, detail: string): Fix | undefined {
 
 /** The fix for a finding, or a general one built from the finding's own text. */
 export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
+  if (f.rule === "ios:missing-purpose") return missingPurposeFix(f.detail);
   const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule] ?? WEB_AGENT_FIXES[f.rule];
   if (known) return known;
-  if (/^(code|android):secret-/.test(f.rule)) return ROTATE_SECRET;
+  if (/^(android|ios):secret-/.test(f.rule)) return MOBILE_SECRET;
+  if (/^code:secret-/.test(f.rule)) return ROTATE_SECRET;
   const tool = toolFix(f.rule, f.detail);
   if (tool) return tool;
   if (f.rule.startsWith("axe:")) {

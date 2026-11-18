@@ -197,8 +197,8 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
           ) : (
             p.target.file && (
               <FilePicker
-                accept={p.type === "android" ? ".apk" : p.type === "code" ? ".zip" : ".json,.yaml,.yml"}
-                label={p.type === "android" ? "New build to test" : "Replace the file"}
+                accept={p.type === "android" ? ".apk" : p.type === "ios" ? ".ipa,.zip" : p.type === "code" ? ".zip" : ".json,.yaml,.yml"}
+                label={p.type === "android" || p.type === "ios" ? "New build to test" : "Replace the file"}
                 hint="then press Re-test"
                 value={{ file: p.target.file, fileName: p.target.fileName ?? p.target.file, size: 0 }}
                 onChange={(u) => u && save({ file: u.file, fileName: u.fileName })}

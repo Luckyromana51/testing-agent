@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { aiEnabled, summariseWithClaude } from "./ai/triage.js";
 import { scanApi } from "./engines/api.js";
 import { scanApk } from "./engines/apk.js";
+import { scanIpa } from "./engines/ipa.js";
 import { scanCode } from "./engines/code.js";
 import { scanSite } from "./runner/scan.js";
 import { toJunit, toSarif } from "./export.js";
@@ -21,6 +22,7 @@ Usage:
   glvtest api <openapi-url|file>      Test a REST API from its OpenAPI (Swagger) file
   glvtest code <repo-url|zip|folder>  Test source code offline
   glvtest apk <file.apk>              Test an Android app
+  glvtest ipa <file.ipa>              Test an iOS app (.ipa, or a zip of the .app)
   glvtest tools                       List the outside tools and whether they are installed
 
 Options:
@@ -65,7 +67,7 @@ async function main() {
     }
     return;
   }
-  if (values.help || !["scan", "api", "code", "apk"].includes(command) || !url) {
+  if (values.help || !["scan", "api", "code", "apk", "ipa"].includes(command) || !url) {
     console.log(HELP);
     process.exit(values.help ? 0 : 1);
   }
@@ -102,6 +104,8 @@ async function test(
         : await scanCode({ folder: path.resolve(url), workDir, onProgress });
   } else if (command === "apk") {
     result = await scanApk({ apkFile: path.resolve(url), fileName: path.basename(url), onProgress });
+  } else if (command === "ipa") {
+    result = await scanIpa({ ipaFile: path.resolve(url), fileName: path.basename(url), onProgress });
   } else {
     result = await scanSite({
       url: url.includes("://") ? url : `https://${url}`,
@@ -116,7 +120,7 @@ async function test(
   }
 
   // Outside tools, merged into the same report.
-  if (values.tools && command !== "apk") {
+  if (values.tools && command !== "apk" && command !== "ipa") {
     const product = (command === "api" ? "api" : command === "code" ? "code" : values.product) as ProductType;
     const status = await toolStatus(true);
     const ids = values.tools === "all" ? toolsFor(product).filter((t) => status[t.id] === null && t.safety === "safe" && !(t.options ?? []).some((o) => o.required)).map((t) => t.id) : values.tools.split(",").map((s) => s.trim());
