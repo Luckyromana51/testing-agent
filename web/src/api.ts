@@ -77,6 +77,9 @@ export interface Meta {
   ai: boolean;
   aiSummary: boolean;
   defaultMaxPages: number;
+  /** Pages a web test opens at the same time, and the most the server allows. */
+  parallelPages: number;
+  maxParallel: number;
   /** Where the login vault's key comes from, and how many logins it holds. */
   vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
 }
@@ -85,6 +88,9 @@ export interface Settings {
   agents: Record<string, boolean>;
   defaultMaxPages: number;
   aiSummary: boolean;
+  /** Pages a web test opens at the same time. */
+  parallelPages: number;
+  maxParallel: number;
 }
 
 export interface Overview {
@@ -163,6 +169,7 @@ export const api = {
   run: (id: string) => call<Run>("GET", `/api/runs/${id}`),
   deleteRun: (id: string) => call("DELETE", `/api/runs/${id}`),
   cancelRun: (id: string) => call<Run>("POST", `/api/runs/${id}/cancel`),
+  summarise: (id: string) => call<Run>("POST", `/api/runs/${id}/summary`),
   artifact: (id: string, file: string) => `/api/runs/${id}/artifacts/${file}`,
 
   issues: (projectId?: string) => call<IssueSummary[]>("GET", `/api/issues${projectId ? `?projectId=${projectId}` : ""}`),

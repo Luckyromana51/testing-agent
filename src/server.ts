@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { ALL_AGENTS, agentsFor, describeAgent } from "./agents/registry.js";
-import { aiEnabled } from "./ai/triage.js";
+import { aiEnabled, summariseWithClaude, summaryKey } from "./ai/triage.js";
 import { Auth, checkPasswordRules, fromOutside, hashPassword, loginTurnedOff, recordFailure, tooManyFailures } from "./auth.js";
 import { groupFindings } from "./group.js";
 import { ACTIVE, projectKey } from "./issues.js";
@@ -20,6 +20,7 @@ import { toJunit, toSarif } from "./export.js";
 import { openStores, type Settings, type Stores } from "./store.js";
 import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
 import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
+import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
 import { validateTarget } from "./runner/urls.js";
 
 export { validateTarget } from "./runner/urls.js";
@@ -239,6 +240,8 @@ export async function createApp(opts: AppOptions) {
       ai: aiEnabled(),
       aiSummary: settings.aiSummary,
       defaultMaxPages: settings.defaultMaxPages,
+      parallelPages: parallelPages(settings.parallelPages),
+      maxParallel: MAX_PARALLEL,
       vault: stores.vault.status(),
     };
   });
@@ -443,6 +446,43 @@ export async function createApp(opts: AppOptions) {
     return run ?? reply.code(404).send({ error: "Run not found" });
   });
 
+  /**
+   * The live view of a running test, as server-sent events: "screens" (how many), "screen" (what
+   * one screen shows and which agents are checking it), "frame" (a JPEG picture), "log" and "end".
+   * Pictures are only made while someone is connected here.
+   */
+  app.get<{ Params: { id: string } }>("/api/runs/:id/live", async (req, reply) => {
+    const run = stores.runs.get(req.params.id);
+    if (!run) return reply.code(404).send({ error: "Run not found" });
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      // Nginx would otherwise hold the stream back.
+      "x-accel-buffering": "no",
+    });
+    const write = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const live = queue.live.get(run.id);
+    if (!live) {
+      write("end", { status: queue.live.endedAs(run.id) ?? run.status });
+      res.end();
+      return;
+    }
+    // A viewer on a slow connection skips pictures instead of falling further and further behind.
+    const send = (event: string, data: unknown) => {
+      if (event === "frame" && res.writableLength > 1_000_000) return;
+      write(event, data);
+    };
+    const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
+    const off = live.subscribe(send, () => res.end());
+    req.raw.on("close", () => {
+      clearInterval(ping);
+      off();
+    });
+  });
+
   // The run's findings for CI and security dashboards: SARIF (GitHub code scanning and others) and JUnit XML.
   const exportOf = (id: string) => {
     const run = stores.runs.get(id);
@@ -460,6 +500,42 @@ export async function createApp(opts: AppOptions) {
     const { result, name } = exportOf(req.params.id);
     reply.header("Content-Disposition", `attachment; filename="${name}.junit.xml"`).header("X-Content-Type-Options", "nosniff");
     return reply.type("application/xml").send(toJunit(result));
+  });
+
+  /**
+   * Writes the Claude summary for a finished test that has none (for example one that ran before
+   * the key was set). One call per test: a test that already has a summary keeps it.
+   */
+  const summarising = new Set<string>();
+  app.post<{ Params: { id: string } }>("/api/runs/:id/summary", async (req) => {
+    const run = stores.runs.get(req.params.id);
+    if (!run) throw new HttpError(404, "Run not found");
+    if (!run.result) throw new HttpError(409, "This test has no result to summarise.");
+    if (run.ai) return run;
+    // Another test of the project with exactly the same issues already has a summary: use it, for no credits.
+    const key = summaryKey(run.result);
+    const same = run.projectId ? stores.runs.list(50, run.projectId).find((r) => r.id !== run.id && r.ai?.key === key) : undefined;
+    if (same?.ai) {
+      const from = same.ai.reusedFrom ?? { runId: same.id, at: same.finishedAt ?? same.createdAt };
+      const saved = { ...run, ai: { ...same.ai, tokens: undefined, reusedFrom: from }, aiError: undefined };
+      stores.runs.save(saved);
+      return saved;
+    }
+    if (!aiEnabled()) throw new HttpError(409, "Claude summary is off: set ANTHROPIC_API_KEY in .env and restart.");
+    if (!stores.settings.get().aiSummary) throw new HttpError(409, "Claude summary is turned off in the owner panel.");
+    if (summarising.has(run.id)) throw new HttpError(409, "The summary is already being written.");
+    summarising.add(run.id);
+    try {
+      const ai = await summariseWithClaude(run.result);
+      const latest = stores.runs.get(run.id) ?? run;
+      const saved = { ...latest, ai, aiError: undefined };
+      stores.runs.save(saved);
+      return saved;
+    } catch (err) {
+      throw new HttpError(502, `Claude could not write the summary: ${(err as Error).message.split("\n")[0]}`);
+    } finally {
+      summarising.delete(run.id);
+    }
   });
 
   app.post<{ Params: { id: string } }>("/api/runs/:id/cancel", async (req) => {
@@ -565,7 +641,8 @@ export async function createApp(opts: AppOptions) {
 
   app.get("/api/owner/settings", async (req) => {
     ownerOnly(req);
-    return stores.settings.get();
+    const settings = stores.settings.get();
+    return { ...settings, parallelPages: parallelPages(settings.parallelPages), maxParallel: MAX_PARALLEL };
   });
 
   app.patch("/api/owner/settings", async (req) => {
@@ -579,7 +656,9 @@ export async function createApp(opts: AppOptions) {
     }
     if (b.defaultMaxPages !== undefined) patch.defaultMaxPages = Math.min(Math.max(Number(b.defaultMaxPages) || 20, 1), 200);
     if (b.aiSummary !== undefined) patch.aiSummary = Boolean(b.aiSummary);
-    return stores.settings.update(patch);
+    if (b.parallelPages !== undefined) patch.parallelPages = parallelPages(Number(b.parallelPages) || 1);
+    const saved = stores.settings.update(patch);
+    return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL };
   });
 
   app.get("/api/owner/users", async (req) => {

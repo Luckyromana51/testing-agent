@@ -1,3 +1,4 @@
+import type { LiveSink } from "./live.js";
 import type { ToolChoice, ToolStat } from "./tools/types.js";
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -73,6 +74,10 @@ export interface ScanOptions {
   signal?: AbortSignal;
   /** Called with the signed-in session's Cookie header at the end, for the outside tools. */
   onSession?: (cookie: string) => void;
+  /** How many pages are tested at the same time (1 to 16). Defaults to PARALLEL_PAGES, or 4. */
+  parallel?: number;
+  /** Where the live view of the test goes (screens and what each agent is doing). */
+  live?: LiveSink;
 }
 
 export interface AgentStat {
@@ -126,6 +131,12 @@ export interface AiSummary {
   model: string;
   summary: string;
   topFixes: { title: string; why: string; how: string }[];
+  /** Fingerprint of the issues the summary was written from (see summaryKey). */
+  key?: string;
+  /** Tokens the summary used (input, output), to keep an eye on credits. */
+  tokens?: { input: number; output: number };
+  /** Set when an earlier test had the same issues, so its summary was reused and no credits were spent. */
+  reusedFrom?: { runId: string; at: string };
 }
 
 /** Compared with the project's issue list before this run. */

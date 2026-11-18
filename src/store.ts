@@ -157,6 +157,8 @@ export interface Settings {
   defaultMaxPages: number;
   /** Turns the Claude summary off even when an API key is set. */
   aiSummary: boolean;
+  /** Pages a web test opens at the same time (1 to 16). Unset: PARALLEL_PAGES, or 4. */
+  parallelPages?: number;
 }
 
 const DEFAULT_SETTINGS: Settings = { agents: {}, defaultMaxPages: 20, aiSummary: true };

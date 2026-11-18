@@ -25,6 +25,7 @@ Usage:
 
 Options:
   --pages <n>     Maximum pages to crawl (default 10)
+  --parallel <n>  Pages to test at the same time, 1 to 16 (default 4, or PARALLEL_PAGES)
   --product <t>   website, ecommerce, webapp, saas or crm (default website)
   --out <dir>     Where to write the reports and screenshots (default ./glvtest-report):
                   report.json, report.sarif (GitHub code scanning) and report.junit.xml (CI)
@@ -45,6 +46,7 @@ async function main() {
     allowPositionals: true,
     options: {
       pages: { type: "string", default: "10" },
+      parallel: { type: "string" },
       product: { type: "string", default: "website" },
       out: { type: "string", default: "glvtest-report" },
       "no-links": { type: "boolean", default: false },
@@ -84,7 +86,7 @@ async function test(
   command: string,
   url: string,
   isUrl: boolean,
-  values: { pages?: string; product?: string; "no-links"?: boolean; "no-a11y"?: boolean; "fail-on"?: string; tools?: string },
+  values: { pages?: string; parallel?: string; product?: string; "no-links"?: boolean; "no-a11y"?: boolean; "fail-on"?: string; tools?: string },
   outDir: string,
   workDir: string,
   onProgress: (m: string) => void,
@@ -109,6 +111,7 @@ async function test(
       accessibility: !values["no-a11y"],
       artifactsDir: outDir,
       onProgress,
+      ...(values.parallel ? { parallel: Number(values.parallel) } : {}),
     });
   }
 

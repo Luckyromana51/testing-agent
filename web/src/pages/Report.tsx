@@ -5,6 +5,10 @@ import type { Category, Finding, Run, Severity } from "../../../src/types.ts";
 import { api } from "../api.ts";
 import { CATEGORY_LABEL, go, isMajor, pathOf, plural, scoreTone, SEVERITIES, usePoll } from "../lib.ts";
 import { FixBox, Sev } from "../ui.tsx";
+import { LiveView } from "./LiveView.tsx";
+
+/** Products tested in a browser, which can be watched live. */
+const BROWSER_PRODUCTS = new Set(["website", "webapp", "saas", "crm", "ecommerce"]);
 
 /** True for web addresses; code and app findings point at files instead. */
 const isUrl = (s: string) => /^https?:\/\//.test(s);
@@ -133,6 +137,15 @@ export function Report({ id }: { id: string }) {
       </div>
     </header>
   );
+
+  if (run.status === "running" && BROWSER_PRODUCTS.has(run.product ?? "website")) {
+    return (
+      <div className="page run wide">
+        {header}
+        <LiveView runId={run.id} progress={run.progress} />
+      </div>
+    );
+  }
 
   if (run.status === "queued" || run.status === "running") {
     return (
@@ -383,12 +396,29 @@ function Occurrences({ g, unit = "pages" }: { g: IssueGroup; unit?: string }) {
   );
 }
 
-function AiPanel({ run }: { run: Run }) {
+function AiPanel({ run: initial }: { run: Run }) {
+  const [run, setRun] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   if (!run.ai) {
+    const write = async () => {
+      setBusy(true);
+      setError("");
+      try {
+        setRun(await api.summarise(run.id));
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    };
     return (
       <section className="ai-panel off">
         <div className="ai-head">Claude summary</div>
-        <p className="muted">{run.aiError ?? "No summary for this test."}</p>
+        <p className="muted">{error || run.aiError || "No summary for this test."}</p>
+        <button className="btn small" onClick={write} disabled={busy}>
+          {busy ? "Claude is writing the summary…" : "Write summary"}
+        </button>
       </section>
     );
   }
@@ -396,6 +426,15 @@ function AiPanel({ run }: { run: Run }) {
     <section className="ai-panel">
       <div className="ai-head">
         Claude summary <span className="model">{run.ai.model}</span>
+        {run.ai.reusedFrom ? (
+          <span className="ai-cost" title="This test found the same issues as an earlier one, so its summary was reused.">
+            Same issues as the test of {new Date(run.ai.reusedFrom.at).toLocaleDateString()}: summary reused, no credits used
+          </span>
+        ) : (
+          run.ai.tokens && (
+            <span className="ai-cost">{(run.ai.tokens.input + run.ai.tokens.output).toLocaleString("en-IN")} tokens</span>
+          )
+        )}
       </div>
       <p>{run.ai.summary}</p>
       <ol className="fixes">

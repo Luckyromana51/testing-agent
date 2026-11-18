@@ -281,6 +281,7 @@ function TeamTab({ me }: { me: User }) {
 
 function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: () => void; loginOff: boolean }) {
   const [pages, setPages] = useState(meta.defaultMaxPages);
+  const [together, setTogether] = useState(meta.parallelPages);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [pw, setPw] = useState({ current: "", password: "" });
@@ -312,6 +313,27 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
             onChange={(e) => setPages(Number(e.target.value))}
             onBlur={() => pages !== meta.defaultMaxPages && save({ defaultMaxPages: pages })}
           />
+        </label>
+        <label className="form-field">
+          <span>Pages tested at the same time</span>
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={meta.maxParallel}
+            value={together}
+            onChange={(e) => setTogether(Number(e.target.value))}
+            onBlur={() => {
+              const n = Math.min(Math.max(Math.round(together) || 1, 1), meta.maxParallel);
+              setTogether(n);
+              if (n !== meta.parallelPages) save({ parallelPages: n });
+            }}
+          />
+          <span className="field-hint">
+            Each page gets its own browser screen, with all its agents checking it together. More is faster, up to what the
+            site and this server can take (1 to {meta.maxParallel}). Sites that answer "too many requests" are tested one page at a
+            time on their own.
+          </span>
         </label>
         <div className="agent-row">
           <div className="grow">

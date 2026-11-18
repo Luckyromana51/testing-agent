@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { scanSite } from "../runner/scan.js";
+import type { LiveSink } from "../live.js";
 import type { Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
 import { redact, secretsOf } from "../vault.js";
 import { scanApi } from "./api.js";
@@ -24,6 +25,10 @@ export interface EngineInput {
   signal?: AbortSignal;
   /** Web tests signed in: gets the session's Cookie header, for the outside tools. */
   onSession?: (cookie: string) => void;
+  /** Web tests: how many pages to test at the same time. */
+  parallel?: number;
+  /** Web tests: where the live screens go. */
+  live?: LiveSink;
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -90,6 +95,8 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         onProgress,
         signal: input.signal,
         onSession: input.onSession,
+        parallel: input.parallel,
+        live: input.live,
       });
   }
 }
