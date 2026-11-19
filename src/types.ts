@@ -101,6 +101,8 @@ export interface Journey {
   role?: string;
   /** Steps that always run at the end, even when the journey fails (delete the test record...). */
   cleanup?: string;
+  /** Test data: a small table (CSV with a header row). The journey runs once per row, with {{column}} words. */
+  data?: string;
 }
 
 export interface JourneyStepResult {
@@ -132,6 +134,8 @@ export interface JourneyResult {
   allowWrites?: boolean;
   /** The role it ran as. */
   role?: string;
+  /** The test data row it ran with (1 = the first row under the header). */
+  row?: number;
 }
 
 export interface ScanOptions {
@@ -235,6 +239,8 @@ export interface ScanResult {
   screens?: AppScreen[];
   /** Signed-in app: the calls the screens made to the app's server. */
   calls?: AppCall[];
+  /** Signed-in app: live connections (WebSocket) the screens opened, login values hidden. */
+  sockets?: AppSocket[];
   /** Signed-in app: who can open which screen and call. */
   access?: AccessGrid;
   /** The business system or framework the test recognised (Odoo, Salesforce, Laravel...). */
@@ -535,6 +541,14 @@ export interface AppCall {
   bearer?: boolean;
   /** What the same call answered with no login: the status, or "same" when it gave the same data. */
   anon?: number | "same";
+  /** A POST that only reads: what it asks (a GraphQL query, an Odoo read). */
+  what?: string;
+}
+
+/** A live connection (WebSocket) a screen opened. The address has its login values hidden. */
+export interface AppSocket {
+  url: string;
+  pageUrl: string;
 }
 
 export type AccessCell = "opens" | "blocked" | "error" | "same-data" | "other-data" | "not-tried";
@@ -543,15 +557,22 @@ export type AccessCell = "opens" | "blocked" | "error" | "same-data" | "other-da
 export interface AccessGrid {
   roles: { id: string; name: string; otherCompany?: boolean; signedIn: boolean; error?: string }[];
   rows: {
-    kind: "screen" | "call";
+    /** A screen, an app call (GET, or a POST that only reads), or a save made on a test server. */
+    kind: "screen" | "call" | "change";
     url: string;
+    /** The method, for calls and saves that are not GET. */
+    method?: string;
+    /** What a POST call reads ("GraphQL query Contacts"), or the journey that made a save. */
+    what?: string;
+    /** A known admin screen of the system, tried directly (no menu leads to it). */
+    known?: boolean;
     /** In the main account's menu. */
     inMenu?: boolean;
     cells: Record<string, AccessCell>;
     /** Roles whose own menu has this screen. */
     menuOf?: string[];
     /** Cells that are a problem, by role: the role must never open it, its menu hides it, or another company got the data. */
-    flags?: Record<string, "forbidden" | "hidden" | "other-company">;
+    flags?: Record<string, "forbidden" | "hidden" | "other-company" | "admin" | "no-login">;
   }[];
 }
 

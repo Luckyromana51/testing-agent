@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Response } from "playwright";
-import type { AccessGrid, AppScreen, Category, Finding, Login, PageResult, ProductType, RoleLogin, SystemInfo } from "../types.js";
+import type { AccessGrid, AppScreen, AppSocket, Category, Finding, Login, PageResult, ProductType, RoleLogin, SystemInfo } from "../types.js";
 
 /** Which test engine runs an agent: the browser, the API caller, the offline code reader, or the app reader. */
 export type Engine = "web" | "api" | "code" | "mobile";
@@ -63,6 +63,10 @@ export interface SiteState {
   mailUrl?: string;
   /** The app's own calls (fetch, XHR) seen while signed in, with their answers, in memory only. */
   calls?: CapturedCall[];
+  /** Live connections (WebSocket) the screens opened. */
+  sockets?: AppSocket[];
+  /** Calls that changed data in journeys allowed to send forms (test servers), to try as the other accounts. */
+  writes?: WriteCall[];
   /** Screens the explorer found. */
   screens?: AppScreen[];
   /** The system the test recognised. */
@@ -75,6 +79,19 @@ export interface SiteState {
 }
 
 /** One app call with its answer, kept in memory while the test runs. */
+/** A call that changed data (POST, PUT, PATCH, DELETE) made by a journey on a test server. */
+export interface WriteCall {
+  method: string;
+  url: string;
+  status: number;
+  body?: string;
+  contentType?: string;
+  /** The screen it was made on. */
+  pageUrl: string;
+  /** The journey that made it. */
+  journey: string;
+}
+
 export interface CapturedCall {
   method: string;
   url: string;
@@ -88,6 +105,9 @@ export interface CapturedCall {
   body?: string;
   /** Request headers worth replaying (Authorization, X-...), never reported. */
   auth?: Record<string, string>;
+  /** A POST that only reads (GraphQL query, Odoo search_read...): what it reads, and its body to send again. */
+  read?: string;
+  request?: { body: string; contentType: string };
   /** How many times the same call was made. */
   count: number;
   /** What the same call answered with no login (filled in by the calls agent). */

@@ -307,6 +307,46 @@ export function chosenSystem(id?: string): SystemFound | undefined {
   return p ? { id: p.id, name: p.name, kind: p.kind, by: ["project setting"], ...(p.tip ? { tip: p.tip } : {}) } : undefined;
 }
 
+/**
+ * Admin screens of each system: users, roles, settings, plugins. Every account of the project tries
+ * them directly (forced browsing), even when no menu links to them.
+ */
+const ADMIN_SCREENS: Record<string, string[]> = {
+  salesforce: ["/lightning/setup/ManageUsers/home", "/lightning/setup/Profiles/home"],
+  hubspot: ["/settings"],
+  suitecrm: ["/index.php?module=Users&action=index", "/index.php?module=Administration&action=index"],
+  espocrm: ["/#User", "/#Admin"],
+  vtiger: ["/index.php?module=Users&parent=Settings&view=List", "/index.php?module=Vtiger&parent=Settings&view=Index"],
+  perfex: ["/admin/staff", "/admin/settings", "/admin/roles"],
+  odoo: ["/odoo/settings", "/odoo/action-base.action_res_users", "/web#action=base.action_res_users"],
+  erpnext: ["/app/user", "/app/role", "/app/system-settings"],
+  dolibarr: ["/user/list.php", "/admin/index.php"],
+  orangehrm: ["/web/index.php/admin/viewSystemUsers"],
+  osticket: ["/scp/staff.php", "/scp/settings.php"],
+  moodle: ["/admin/user.php", "/admin/search.php"],
+  wordpress: ["/wp-admin/users.php", "/wp-admin/options-general.php", "/wp-admin/plugins.php"],
+  magento: ["/admin/admin/user/"],
+  strapi: ["/admin/settings/users"],
+  directus: ["/admin/users", "/admin/settings"],
+  metabase: ["/admin/people", "/admin/settings"],
+  grafana: ["/admin/users", "/org/users"],
+  jira: ["/secure/admin/user/UserBrowser.jspa", "/jira/settings/system/general-configuration"],
+  redmine: ["/users", "/settings"],
+  filament: ["/admin/users"],
+  nova: ["/nova/resources/users"],
+  "django-admin": ["/admin/auth/user/", "/admin/auth/group/"],
+};
+/** Admin addresses many custom apps use. */
+const GENERAL_ADMIN = ["/admin", "/admin/users", "/admin/settings", "/settings/users", "/users", "/api/users", "/api/admin/users", "/api/v1/users"];
+
+/** The system's own admin screens. */
+export const ownAdminScreens = (id?: string): string[] => ADMIN_SCREENS[id ?? ""] ?? [];
+
+/** The admin screens to try for this system (its own first), at most 12. */
+export function adminScreensOf(id?: string): string[] {
+  return [...new Set([...(ADMIN_SCREENS[id ?? ""] ?? []), ...GENERAL_ADMIN])].slice(0, 12);
+}
+
 /** Menu places the explorer looks at on every app, after the system's own. */
 export const GENERAL_NAV = [
   "nav a",

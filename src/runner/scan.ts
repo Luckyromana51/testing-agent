@@ -13,7 +13,7 @@ import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
-import { APPS, captureCalls, reportCall, sortCalls } from "../app/calls.js";
+import { APPS, captureCalls, hideSocketSecrets, reportCall, sortCalls } from "../app/calls.js";
 import { exploreApp } from "../app/explore.js";
 import { chosenSystem, detectSystem, profileOf } from "../app/systems.js";
 import type { RoleSession } from "./journeys.js";
@@ -702,6 +702,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       if (isApp) {
         const cap = captureCalls(context, new URL(startUrl).origin);
         site.calls = cap.calls;
+        site.sockets = cap.sockets;
         stopCalls = cap.stop;
       }
       notes.push(`Signed in as ${opts.login.username} at ${opts.login.loginUrl} before testing, so the pages behind the login were tested too.`);
@@ -831,6 +832,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       });
       journeys = r.results;
       findings.push(...r.findings);
+      if (r.writes.length) site.writes = r.writes;
     }
     if (opts.baselineDir) findings.push(...(await compareVisuals(context, pages, opts.artifactsDir, opts.baselineDir, log)));
     cookies = cookieList(await context.cookies().catch(() => []), origin);
@@ -894,6 +896,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     ...(cookies?.length ? { cookies } : {}),
     ...(site.screens?.length ? { screens: site.screens.map((x) => ({ ...x, tested: pages.some((p) => normaliseUrl(p.url) === x.url || (p.redirectedFrom && normaliseUrl(p.redirectedFrom) === x.url)) })) } : {}),
     ...(site.calls?.length ? { calls: site.calls.map(reportCall) } : {}),
+    ...(site.sockets?.length ? { sockets: site.sockets.map((x) => ({ url: hideSocketSecrets(x.url), pageUrl: x.pageUrl })) } : {}),
     ...(site.access ? { access: site.access } : {}),
     ...(site.system ? { system: site.system } : {}),
   };
