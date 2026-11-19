@@ -91,6 +91,18 @@ export interface SignedIn {
   landedUrl: string;
   /** The sign-in page's path, to notice when the site signs the agent out during the test. */
   loginPath: string;
+  /** The two-step code typed, when the site asked for one. */
+  code?: string;
+}
+
+export interface SignInOptions {
+  mailUrl?: string;
+  signal?: AbortSignal;
+  hints?: { username?: string; password?: string; submit?: string };
+  /** Called when the site asks for the two-step code, before it is typed (to try skipping it). */
+  beforeCode?: (page: Page) => Promise<void>;
+  /** Type this code instead of a new one (to check a used code is refused). */
+  fixedCode?: string;
 }
 
 /**
@@ -101,7 +113,7 @@ export async function signIn(
   context: BrowserContext,
   login: Login,
   log: (m: string) => void = () => {},
-  opts: { mailUrl?: string; signal?: AbortSignal; hints?: { username?: string; password?: string; submit?: string } } = {},
+  opts: SignInOptions = {},
 ): Promise<SignedIn> {
   if (!login.loginUrl || !login.username || (!login.password && !login.steps)) {
     throw new LoginError("The saved login is missing the sign-in page, user name or password.");
@@ -114,10 +126,10 @@ export async function signIn(
     if (login.steps?.trim()) {
       await signInWithSteps(page, loginUrl, login, opts.signal);
       await settle(page);
-      await twoStep(page, login, log, opts, startedAt);
+      const code = await twoStep(page, login, log, opts, startedAt);
       await confirmSignedIn(page, login);
       log(`Signed in with the sign-in steps; the site opened ${page.url().split("?")[0]}`);
-      return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname };
+      return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname, ...(code ? { code } : {}) };
     }
     const res = await page.goto(loginUrl, { waitUntil: "load", timeout: 30_000 }).catch((err: Error) => {
       throw new LoginError(`Could not open the sign-in page: ${err.message.split("\n")[0]}`);
@@ -158,10 +170,10 @@ export async function signIn(
     await submit(page, passwordScope, login, password);
     await settle(page);
 
-    await twoStep(page, login, log, opts, startedAt);
+    const code = await twoStep(page, login, log, opts, startedAt);
     await confirmSignedIn(page, login);
     log(`Signed in; the site opened ${page.url().split("?")[0]}`);
-    return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname };
+    return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname, ...(code ? { code } : {}) };
   } finally {
     await page.close().catch(() => {});
   }
@@ -194,11 +206,14 @@ async function signInWithSteps(page: Page, loginUrl: string, login: Login, signa
  * Two-step verification: when the site asks for a one-time code, type the code made from the saved
  * secret (like an authenticator app), or the code emailed to the test mailbox.
  */
-async function twoStep(page: Page, login: Login, log: (m: string) => void, opts: { mailUrl?: string; signal?: AbortSignal }, since: string): Promise<void> {
+async function twoStep(page: Page, login: Login, log: (m: string) => void, opts: SignInOptions, since: string): Promise<string | undefined> {
   const field = await firstVisible(page, [ONE_TIME_CODE]);
-  if (!field) return;
+  if (!field) return undefined;
+  await opts.beforeCode?.(page);
   let code: string | undefined;
-  if (login.totpSecret && login.codeFrom !== "email") {
+  if (opts.fixedCode) {
+    code = opts.fixedCode;
+  } else if (login.totpSecret && login.codeFrom !== "email") {
     // A code about to change may be refused by the time it arrives.
     if (secondsLeft(login.totpSecret) < 3) await page.waitForTimeout(3_500);
     code = totp(login.totpSecret);
@@ -229,6 +244,7 @@ async function twoStep(page: Page, login: Login, log: (m: string) => void, opts:
   if (await page.locator(ONE_TIME_CODE).first().isVisible().catch(() => false)) {
     throw await explain(page, "The site did not accept the two-step code. Check the saved secret, and that the server's clock is right.");
   }
+  return code;
 }
 
 async function confirmSignedIn(page: Page, login: Login): Promise<void> {

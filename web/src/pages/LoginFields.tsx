@@ -27,6 +27,8 @@ export function describeLogin(l: LoginSummary): string {
   if (l.authType === "basic") return `Basic login as ${l.username}`;
   if (l.authType === "header") return `Sends a key in the ${l.paramName} header`;
   if (l.authType === "query") return `Sends a key in the ${l.paramName} query parameter`;
+  if (l.authType === "oauth2") return `Gets an OAuth2 token (client ${l.username}) from ${l.tokenUrl}`;
+  if (l.authType === "login") return `Signs in as ${l.username} at ${l.tokenUrl} and uses the token it gets`;
   return "Sends a bearer token";
 }
 
@@ -135,9 +137,28 @@ export function LoginFields({
             <option value="header">In a header (like X-API-Key)</option>
             <option value="query">In the address (like ?api_key=…)</option>
             <option value="basic">User name and password (basic)</option>
+            <option value="oauth2">OAuth2 client credentials (gets a token first)</option>
+            <option value="login">A sign-in call (POST user name and password, use the token it gives)</option>
           </select>
         </label>
-        {type === "basic" ? (
+        {type === "oauth2" || type === "login" ? (
+          <>
+            {field("tokenUrl", type === "oauth2" ? "Token address" : "Sign-in call address", { placeholder: type === "oauth2" ? "https://auth.example.com/oauth/token" : "https://api.example.com/auth/login" })}
+            <div className="form-row">
+              <div className="grow">{field("username", type === "oauth2" ? "Client id" : "User name or email")}</div>
+              <div className="grow">{secret("password", type === "oauth2" ? "Client secret" : "Password", sameType && keep?.hasPassword)}</div>
+            </div>
+            <div className="form-row">
+              {type === "oauth2" ? (
+                <div className="grow">{field("scope", "Scopes (optional)", { placeholder: "read:orders read:customers" })}</div>
+              ) : (
+                <div className="grow">{field("tokenPath", "Where the token is in the answer (optional)", { placeholder: "$.data.access_token" })}</div>
+              )}
+              <div>{field("paramName", "Send it in header (optional)", { placeholder: "Authorization" })}</div>
+            </div>
+            <div className="note">The token is fetched at the start of each test, and fetched again once if it runs out during the test.</div>
+          </>
+        ) : type === "basic" ? (
           <div className="form-row">
             <div className="grow">{field("username", "User name")}</div>
             <div className="grow">{secret("password", "Password", sameType && keep?.hasPassword)}</div>
@@ -151,8 +172,8 @@ export function LoginFields({
           </div>
         )}
         <div className="note">
-          Still only read-only GET requests. The endpoints that need a login are also called once without it, to check
-          they refuse strangers. {SECRET_NOTE}
+          On a live API still only read-only GET requests. The endpoints that need a login are also called once without it, to check
+          they refuse strangers, and a token that is a JWT is checked too. {SECRET_NOTE}
         </div>
       </div>
     );

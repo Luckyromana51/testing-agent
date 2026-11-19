@@ -101,6 +101,8 @@ export interface Journey {
   role?: string;
   /** Steps that always run at the end, even when the journey fails (delete the test record...). */
   cleanup?: string;
+  /** Test data: a small table (CSV with a header row). The journey runs once per row, with {{column}} words. */
+  data?: string;
 }
 
 export interface JourneyStepResult {
@@ -132,6 +134,8 @@ export interface JourneyResult {
   allowWrites?: boolean;
   /** The role it ran as. */
   role?: string;
+  /** The test data row it ran with (1 = the first row under the header). */
+  row?: number;
 }
 
 export interface ScanOptions {
@@ -235,10 +239,123 @@ export interface ScanResult {
   screens?: AppScreen[];
   /** Signed-in app: the calls the screens made to the app's server. */
   calls?: AppCall[];
+  /** Signed-in app: live connections (WebSocket) the screens opened, login values hidden. */
+  sockets?: AppSocket[];
   /** Signed-in app: who can open which screen and call. */
   access?: AccessGrid;
   /** The business system or framework the test recognised (Odoo, Salesforce, Laravel...). */
   system?: SystemInfo;
+  /** API tests: every call with its request and answer, scenarios, changes and the access grid. */
+  api?: ApiReport;
+}
+
+/** One call the API test made, for the Endpoints tab (secrets are never in it). */
+export interface ApiCallView {
+  method: string;
+  path: string;
+  /** The address called (a key sent in the address is left out). */
+  url: string;
+  status: number | null;
+  /** Median time of the calls made, in milliseconds. */
+  ms: number;
+  /** The 95% time, when several calls were made. */
+  p95?: number;
+  samples?: number;
+  bytes: number;
+  contentType: string;
+  /** Request headers, with the login shown as [hidden]. */
+  requestHeaders: Record<string, string>;
+  requestBody?: string;
+  responseHeaders: Record<string, string>;
+  /** The start of the answer (up to 8 KB). */
+  body: string;
+  /** Where the answer differs from the API file. */
+  problems?: string[];
+  /** Fields in the answer the API file does not list. */
+  extra?: string[];
+  error?: string;
+  /** Where a real id in the address came from: "GET /users → $[0].id". */
+  idFrom?: string;
+  /** Path values that are only a guess ("1"), because the file gives no example and no list had one. */
+  guessed?: string[];
+  /** The test-server write test this call belongs to ("create", "read back", "update", "delete", "clean-up"). */
+  step?: string;
+  deprecated?: boolean;
+}
+
+export interface ApiCoverage {
+  documented: number;
+  called: number;
+  passed: number;
+  /** Endpoints not called, with why. */
+  skipped: { method: string; path: string; why: string }[];
+}
+
+export interface ApiScenarioStep {
+  line: number;
+  text: string;
+  ok: boolean;
+  /** Set for a request step. */
+  call?: ApiCallView;
+  /** The checks after the request, with what was found. */
+  checks?: { line: number; text: string; ok: boolean; actual?: string }[];
+  error?: string;
+  cleanup?: boolean;
+}
+
+export interface ApiScenarioResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  ms: number;
+  steps: ApiScenarioStep[];
+  error?: string;
+  /** Requests that would have changed data on a server that is not marked as a test server. */
+  blocked?: string[];
+}
+
+/** An API test written in plain words: requests, values saved from answers, and checks. */
+export interface ApiScenario {
+  id: string;
+  name: string;
+  steps: string;
+  cleanup?: string;
+  off?: boolean;
+}
+
+export interface ApiChange {
+  kind: "breaking" | "safe";
+  /** "GET /users/{id}", or "API" for the whole file. */
+  where: string;
+  text: string;
+}
+
+export interface ApiAccessRow {
+  method: string;
+  path: string;
+  url: string;
+  /** Account name -> HTTP status (null: no answer); "No login" is the call without credentials. */
+  cells: Record<string, { status: number | null; same?: boolean; bad?: string }>;
+}
+
+export interface ApiReport {
+  /** Where the endpoint list came from. */
+  source: "openapi" | "found" | "postman" | "har" | "curl" | "graphql";
+  /** The address the API file was found at, when the test looked for it. */
+  foundAt?: string;
+  calls: ApiCallView[];
+  coverage: ApiCoverage;
+  /** Test-server write tests, when the project is marked as a test server. */
+  writes?: { ran: boolean; why?: string; created: number; cleanedUp: number; leftOver: string[] };
+  scenarios?: ApiScenarioResult[];
+  /** Differences from the approved copy of the API file. */
+  changes?: { since: string; list: ApiChange[]; approvedAt?: string };
+  /** First test (no approved copy yet): this run's file became the approved copy. */
+  baselineSaved?: boolean;
+  access?: { accounts: string[]; rows: ApiAccessRow[] };
+  /** The API file audit: a score out of 100 and how many rules it breaks. */
+  audit?: { score: number; failed: number; rules: number };
+  graphql?: { queries: number; mutations: number; types: number; introspection: boolean };
 }
 
 export interface SystemInfo {
@@ -326,6 +443,10 @@ export interface ProjectTarget {
   system?: string;
   /** API: address of the OpenAPI (Swagger) file, JSON or YAML. */
   specUrl?: string;
+  /** API: a GraphQL endpoint to test instead of a REST API file. */
+  graphqlUrl?: string;
+  /** API: the project is a test server, so tests may create, change and delete data (and clean up). */
+  testServer?: boolean;
   /** Source code: Git repository to clone (https). */
   repoUrl?: string;
   branch?: string;
@@ -336,7 +457,7 @@ export interface ProjectTarget {
 }
 
 export type LoginKind = "web" | "api" | "git";
-export type ApiAuthType = "bearer" | "header" | "basic" | "query";
+export type ApiAuthType = "bearer" | "header" | "basic" | "query" | "oauth2" | "login";
 
 /**
  * A saved login for logged-in testing, kept encrypted in the vault on GLV's server.
@@ -359,6 +480,12 @@ export interface Login {
   authType?: ApiAuthType;
   /** api: the header or query parameter name, for header and query keys. */
   paramName?: string;
+  /** api oauth2: the token address (client credentials). login: the sign-in call's address. */
+  tokenUrl?: string;
+  /** api oauth2: the scopes to ask for. */
+  scope?: string;
+  /** api login: where the token is in the sign-in answer, like $.token or $.data.access_token. */
+  tokenPath?: string;
   /** api and git: the token or key. */
   token?: string;
   /** web: the secret behind the two-step code (the text under the QR code), for sign-ins that ask for a one-time code. */
@@ -414,6 +541,14 @@ export interface AppCall {
   bearer?: boolean;
   /** What the same call answered with no login: the status, or "same" when it gave the same data. */
   anon?: number | "same";
+  /** A POST that only reads: what it asks (a GraphQL query, an Odoo read). */
+  what?: string;
+}
+
+/** A live connection (WebSocket) a screen opened. The address has its login values hidden. */
+export interface AppSocket {
+  url: string;
+  pageUrl: string;
 }
 
 export type AccessCell = "opens" | "blocked" | "error" | "same-data" | "other-data" | "not-tried";
@@ -422,15 +557,22 @@ export type AccessCell = "opens" | "blocked" | "error" | "same-data" | "other-da
 export interface AccessGrid {
   roles: { id: string; name: string; otherCompany?: boolean; signedIn: boolean; error?: string }[];
   rows: {
-    kind: "screen" | "call";
+    /** A screen, an app call (GET, or a POST that only reads), or a save made on a test server. */
+    kind: "screen" | "call" | "change";
     url: string;
+    /** The method, for calls and saves that are not GET. */
+    method?: string;
+    /** What a POST call reads ("GraphQL query Contacts"), or the journey that made a save. */
+    what?: string;
+    /** A known admin screen of the system, tried directly (no menu leads to it). */
+    known?: boolean;
     /** In the main account's menu. */
     inMenu?: boolean;
     cells: Record<string, AccessCell>;
     /** Roles whose own menu has this screen. */
     menuOf?: string[];
     /** Cells that are a problem, by role: the role must never open it, its menu hides it, or another company got the data. */
-    flags?: Record<string, "forbidden" | "hidden" | "other-company">;
+    flags?: Record<string, "forbidden" | "hidden" | "other-company" | "admin" | "no-login">;
   }[];
 }
 
@@ -466,6 +608,10 @@ export interface Project {
   journeys?: Journey[];
   /** Uptime and SSL watch between tests. */
   watch?: WatchConfig;
+  /** API tests written in plain words, run on every test. */
+  apiScenarios?: ApiScenario[];
+  /** The mock server's secret address part, when the mock is on. */
+  mockToken?: string;
 }
 
 /** Uptime and SSL watch for a website project (see src/watch.ts). */
@@ -475,6 +621,8 @@ export interface WatchConfig {
   everyMin: number;
   /** Words the page must contain, to catch a blank or error page that still answers 200. */
   expectText?: string;
+  /** API projects: the endpoint to check (called with the saved login). */
+  checkUrl?: string;
   /** The project's own webhook for alerts (Slack, Teams, Google Chat...). */
   webhook?: string;
   /** Warn this many days before the certificate ends. */

@@ -58,6 +58,8 @@ export function cleanWatch(input: Partial<WatchConfig> | null | undefined): Watc
   }
   const warn = Number(input.sslWarnDays);
   out.sslWarnDays = Number.isFinite(warn) && warn >= 1 && warn <= 90 ? Math.round(warn) : 21;
+  const checkUrl = String(input.checkUrl ?? "").trim();
+  if (checkUrl) out.checkUrl = validateTarget(checkUrl);
   if (input.journeys) {
     out.journeys = true;
     out.journeysEveryMin = [15, 30, 60].includes(Number(input.journeysEveryMin)) ? Number(input.journeysEveryMin) : 15;
@@ -175,15 +177,20 @@ function toIncident(r: Record<string, string | number | null>): Incident {
   };
 }
 
+/** The address the watch checks: an API project's chosen endpoint, or the site. */
+export function watchUrl(p: Project): string | undefined {
+  return p.watch?.checkUrl ?? p.target.url ?? p.target.graphqlUrl;
+}
+
 /** One check: the page answers 2xx/3xx in time and, if asked, contains the expected words. */
-export async function checkOnce(url: string, expectText?: string, timeoutMs = 15_000): Promise<WatchCheck> {
+export async function checkOnce(url: string, expectText?: string, timeoutMs = 15_000, headers: Record<string, string> = {}): Promise<WatchCheck> {
   const at = new Date().toISOString();
   const started = Date.now();
   try {
     const res = await fetch(url, {
       redirect: "follow",
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "user-agent": "GLVTestingAgent-Watch/0.2" },
+      headers: { "user-agent": "GLVTestingAgent-Watch/0.2", ...headers },
     });
     const body = expectText ? await res.text() : (await res.body?.cancel(), "");
     const ms = Date.now() - started;
@@ -248,8 +255,10 @@ export class Watcher {
   private journeysRunning = new Set<string>();
   /** The last journey watch run of each project. */
   readonly journeyRuns = new Map<string, JourneyWatchRun>();
-  /** Runs a project's journeys for the journey watch; set by the server. */
+  /** Runs a project's journeys (or an API project's scenarios) for the journey watch; set by the server. */
   journeyRunner?: (p: Project) => Promise<JourneyWatchRun>;
+  /** The saved API login's headers, for API projects (set by the server). */
+  headersFor?: (p: Project) => Record<string, string>;
   readonly alerts: Alert[] = [];
   private timer?: NodeJS.Timeout;
 
@@ -268,7 +277,7 @@ export class Watcher {
   }
 
   private alert(p: Project, kind: Alert["kind"], text: string): Promise<void> {
-    const a: Alert = { projectId: p.id, projectName: p.name, url: p.target.url ?? "", kind, text, at: new Date().toISOString() };
+    const a: Alert = { projectId: p.id, projectName: p.name, url: watchUrl(p) ?? "", kind, text, at: new Date().toISOString() };
     this.alerts.unshift(a);
     this.alerts.length = Math.min(this.alerts.length, 100);
     return p.watch?.webhook ? this.send(p.watch.webhook, a).catch(() => {}) : Promise.resolve();
@@ -277,7 +286,7 @@ export class Watcher {
   async tick(now = Date.now()): Promise<void> {
     const work: Promise<void>[] = [];
     for (const p of this.projects()) {
-      if (!p.watch?.on || !p.target.url || this.running.has(p.id)) continue;
+      if (!p.watch?.on || !watchUrl(p) || this.running.has(p.id)) continue;
       if ((this.due.get(p.id) ?? 0) > now) continue;
       this.due.set(p.id, now + p.watch.everyMin * 60_000);
       this.running.add(p.id);
@@ -288,7 +297,8 @@ export class Watcher {
       );
     }
     for (const p of this.projects()) {
-      if (!this.journeyRunner || !p.watch?.on || !p.watch.journeys || !p.journeys?.some((j) => !j.off && !j.allowWrites)) continue;
+      const has = p.type === "api" ? p.apiScenarios?.some((x) => !x.off) : p.journeys?.some((j) => !j.off && !j.allowWrites);
+      if (!this.journeyRunner || !p.watch?.on || !p.watch.journeys || !has) continue;
       if (this.journeysRunning.has(p.id) || (this.journeysDue.get(p.id) ?? 0) > now) continue;
       this.journeysDue.set(p.id, now + (p.watch.journeysEveryMin ?? 15) * 60_000);
       this.journeysRunning.add(p.id);
@@ -320,8 +330,8 @@ export class Watcher {
   }
 
   async checkProject(p: Project, now = Date.now()): Promise<WatchCheck> {
-    const url = p.target.url!;
-    const c = await this.check(url, p.watch?.expectText);
+    const url = watchUrl(p)!;
+    const c = await this.check(url, p.watch?.expectText, 15_000, this.headersFor?.(p) ?? {});
     this.store.add(p.id, c);
     const open = this.store.openIncident(p.id);
     if (!c.ok && !open) {

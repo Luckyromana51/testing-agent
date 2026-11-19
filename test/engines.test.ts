@@ -433,7 +433,7 @@ describe("API, code and app projects through the server", () => {
   it("uploads an APK, checks it is a real zip, and tests it", async () => {
     const bad = await call("POST", "/api/uploads", Buffer.from("not a zip"), { "content-type": "application/octet-stream", "x-file-name": "app.apk" });
     assert.equal(bad.status, 400);
-    const wrongType = await call("POST", "/api/uploads", Buffer.from("x"), { "content-type": "application/octet-stream", "x-file-name": "run.sh" });
+    const wrongType = await call("POST", "/api/uploads", Buffer.from("x"), { "content-type": "application/octet-stream", "x-file-name": "run.exe" });
     assert.equal(wrongType.status, 400);
 
     const up = await call("POST", "/api/uploads", buildDemoApk(), { "content-type": "application/octet-stream", "x-file-name": "demo shop.apk" });

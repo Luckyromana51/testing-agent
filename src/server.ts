@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
@@ -24,15 +24,19 @@ import { openStores, type Settings, type Stores } from "./store.js";
 import { buildLogin, buildRole, buildTarget, defaultName, MAX_ROLES, type TargetInput } from "./targets.js";
 import { MAX_HOOK_BODY } from "./app/hooks.js";
 import { watchJourneys } from "./app/journey-watch.js";
+import { authParts } from "./engines/api-auth.js";
+import { watchScenarios } from "./engines/api-watch.js";
 import { SYSTEM_KINDS, SYSTEMS } from "./app/systems.js";
 import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, RoleLogin, Run, Schedule, Severity, User } from "./types.js";
 import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
 import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
+import { cleanScenario, MAX_SCENARIOS } from "./agents/api/scenarios.js";
+import { mockAddress, registerApiRoutes } from "./api-routes.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
 import { flakyIssues, trendPoints } from "./trends.js";
-import { cleanWatch, Watcher } from "./watch.js";
+import { cleanWatch, watchUrl, Watcher } from "./watch.js";
 import { reportHtml, reportPdf } from "./report-html.js";
 import { validateTarget } from "./runner/urls.js";
 
@@ -166,16 +170,21 @@ export async function createApp(opts: AppOptions) {
   helperHub.attach(stores.helpers);
   const watcher = new Watcher(stores.watch, () => stores.projects.list());
   watcher.journeyRunner = (p) => {
-    if (!moduleOn(stores.settings.get().modules, "journey-watch") || !moduleOn(stores.settings.get().modules, "journeys")) {
+    if (!moduleOn(stores.settings.get().modules, "journey-watch") || (p.type !== "api" && !moduleOn(stores.settings.get().modules, "journeys"))) {
       return Promise.resolve({ at: new Date().toISOString(), ok: true, ms: 0, results: [], error: "Journey watch is off in Owner panel > Modules." });
     }
     const login = stores.vault.get(p.id, { quiet: true });
+    if (p.type === "api") return watchScenarios(p, login, stores.vault.roles(p.id, { quiet: true }), queue.apiBaselineFile(p.id), queue.uploadsDir());
     return watchJourneys(p, {
       login,
       roles: login?.kind === "web" ? stores.vault.roles(p.id, { quiet: true }) : [],
       mailUrl: moduleOn(stores.settings.get().modules, "mail") ? process.env.MAILPIT_URL : undefined,
       hook: moduleOn(stores.settings.get().modules, "webhooks") ? stores.hooks.inboxFor(p.id) : undefined,
     });
+  };
+  watcher.headersFor = (p) => {
+    const login = p.type === "api" ? stores.vault.get(p.id, { quiet: true }) : undefined;
+    return login?.kind === "api" ? authParts(login).headers : {};
   };
   const stopWatcher = opts.scheduler ? watcher.start() : () => {};
   // Own checks are loaded once: switching the module takes effect after a restart.
@@ -348,6 +357,7 @@ export async function createApp(opts: AppOptions) {
         return t ? stores.hooks.address(t) : null;
       })(),
       permissions: (p.permissions ?? []).map((x) => ({ ...x, status: permissionStatus(x) })),
+      mockAddress: p.mockToken ? mockAddress(p.mockToken) : null,
     };
   };
 
@@ -393,8 +403,8 @@ export async function createApp(opts: AppOptions) {
   app.addContentTypeParser("application/octet-stream", (_req, payload, done) => done(null, payload));
   app.post("/api/uploads", { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
     const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? "")).replace(/[^\w. ()-]/g, "_").slice(0, 200);
-    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx)$/i)?.[0]?.toLowerCase();
-    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an OpenAPI file (.json or .yaml) or a JMeter plan (.jmx).");
+    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl)$/i)?.[0]?.toLowerCase();
+    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt) or a JMeter plan (.jmx).");
     if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
     await mkdir(queue.uploadsDir(), { recursive: true });
     const file = `${randomUUID()}${ext}`;
@@ -440,20 +450,22 @@ export async function createApp(opts: AppOptions) {
       agents: agentsFor(p.type, stores.settings.get().agents).map(describeAgent),
       trends: trendPoints(runs),
       flaky: flakyIssues(stores.issues.list(p.id), runs),
-      watch: WEB_PRODUCTS.includes(p.type) ? { ...stores.watch.summary(p), journeys: Boolean(p.watch?.journeys), journeysEveryMin: p.watch?.journeysEveryMin ?? 15, lastJourneys: watcher.journeyRuns.get(p.id) ?? null } : null,
+      watch: WEB_PRODUCTS.includes(p.type) || p.type === "api" ? { ...stores.watch.summary(p), checkUrl: p.watch?.checkUrl ?? null, expectText: p.watch?.expectText ?? null, journeys: Boolean(p.watch?.journeys), journeysEveryMin: p.watch?.journeysEveryMin ?? 15, lastJourneys: watcher.journeyRuns.get(p.id) ?? null } : null,
     };
   });
 
   // Uptime and SSL watch: check now, and the alerts and outages across projects.
   app.post<{ Params: { id: string } }>("/api/projects/:id/watch/check", async (req) => {
     const p = getProject(req.params.id);
-    if (!p.target.url) throw new HttpError(400, "This project has no address to watch.");
+    if (!watchUrl(p)) throw new HttpError(400, p.type === "api" ? "Choose the endpoint to watch first." : "This project has no address to watch.");
     await watcher.checkProject(p);
     return stores.watch.summary(p);
   });
   app.post<{ Params: { id: string } }>("/api/projects/:id/watch/journeys", async (req) => {
     const p = getProject(req.params.id);
-    if (!p.journeys?.some((j) => !j.off && !j.allowWrites)) throw new HttpError(400, "This project has no read-only journeys to watch.");
+    if (p.type === "api" ? !p.apiScenarios?.some((x) => !x.off) : !p.journeys?.some((j) => !j.off && !j.allowWrites)) {
+      throw new HttpError(400, p.type === "api" ? "This project has no scenarios to watch." : "This project has no read-only journeys to watch.");
+    }
     return (await watcher.checkJourneys(p)) ?? null;
   });
   app.get("/api/watch", async () => {
@@ -467,14 +479,26 @@ export async function createApp(opts: AppOptions) {
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown; watch: unknown }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown; watch: unknown; apiScenarios: unknown; mock: unknown }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, watch: watchInput, ...targetInput } = b;
+    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, watch: watchInput, apiScenarios: scenariosInput, mock: mockInput, ...targetInput } = b;
     let login: Login | undefined;
     try {
+      if (scenariosInput !== undefined) {
+        if (p.type !== "api") throw new Error("API scenarios are for API projects.");
+        if (!Array.isArray(scenariosInput)) throw new Error("Scenarios must be a list.");
+        if (scenariosInput.length > MAX_SCENARIOS) throw new Error(`A project can have up to ${MAX_SCENARIOS} scenarios.`);
+        next.apiScenarios = scenariosInput.map((x, i) => cleanScenario(x as Record<string, unknown>, i));
+        if (!next.apiScenarios.length) delete next.apiScenarios;
+      }
+      if (mockInput !== undefined) {
+        if (p.type !== "api") throw new Error("The mock server is for API projects.");
+        if (mockInput === "new" || (mockInput === true && !p.mockToken)) next.mockToken = randomBytes(16).toString("hex");
+        else if (mockInput === false || mockInput === null) delete next.mockToken;
+      }
       if (watchInput !== undefined) {
-        if (!WEB_PRODUCTS.includes(p.type)) throw new Error("Uptime watch is for websites and web apps.");
+        if (!WEB_PRODUCTS.includes(p.type) && p.type !== "api") throw new Error("Uptime watch is for websites, web apps and APIs.");
         const w = cleanWatch(watchInput as Record<string, unknown> | null);
         if (w) next.watch = w;
         else delete next.watch;
@@ -633,6 +657,8 @@ export async function createApp(opts: AppOptions) {
       .header("X-Content-Type-Options", "nosniff");
     return reply.send(zip);
   });
+
+  registerApiRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message) });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
   await app.register(async (scope) => {

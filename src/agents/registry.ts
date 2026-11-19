@@ -25,6 +25,8 @@ import {
 import { PRODUCT_AGENTS } from "./web/products.js";
 import { accessAgent } from "../app/access.js";
 import { appCallsAgent } from "../app/calls.js";
+import { exposedAgent } from "../app/exposed.js";
+import { loginRedirectAgent, twoStepAgent } from "../app/signin.js";
 import { csrfAgent, idNumbersAgent, sessionAgent, tokensAgent, userEnumAgent } from "../app/session.js";
 import { tablesAgent } from "../app/tables.js";
 import { appInstallAgent } from "./web/pwa.js";
@@ -111,6 +113,7 @@ export const WEB_AGENTS: WebAgent[] = [
   // Signed-in apps (CRM, ERP, SaaS...): app calls, lists and tables, ID numbers, CSRF, tokens, and
   // the checks that sign in again in their own browser: who can see what, then the session.
   appCallsAgent,
+  exposedAgent,
   tablesAgent,
   idNumbersAgent,
   csrfAgent,
@@ -118,6 +121,8 @@ export const WEB_AGENTS: WebAgent[] = [
   accessAgent,
   sessionAgent,
   userEnumAgent,
+  twoStepAgent,
+  loginRedirectAgent,
 ];
 
 /** All agents of every engine. */

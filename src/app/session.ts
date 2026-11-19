@@ -4,7 +4,8 @@ import type { PageAgent, SiteAgent } from "../agents/types.js";
 import { finding } from "../runner/finding.js";
 import { LoginError, signIn } from "../runner/login.js";
 import type { Finding, Login } from "../types.js";
-import { APPS } from "./calls.js";
+import { readOnly } from "../agents/web/guard.js";
+import { APPS, sameData } from "./calls.js";
 
 /**
  * Session safety, the checks Burp Suite, ZAP and Invicti run on signed-in apps: a new session after
@@ -38,11 +39,78 @@ async function freshContext(browser: Browser): Promise<BrowserContext> {
 
 const sessionCookies = (list: Cookie[]) => list.filter((c) => SESSION_COOKIE.test(c.name));
 
+const NAV = ["nav a", "nav button", "aside a", "aside button", "[role=navigation] a", "[role=navigation] button", ".sidebar a", ".menu a"];
+const NOT_NAV = /log\s?out|sign\s?out|delete|remove|wipe|clear|reset|archive|cancel|close|export|download|print|new|add|create/i;
+const ASKS_SIGN_IN = /session (has )?(expired|ended|timed out)|signed out|logged out|sign in again|log in again|please (sign|log) in|login required|your session/i;
+
+/**
+ * Copies the signed-in browser, ends its session (cookies and stored tokens gone), clicks a menu
+ * item, and says what the app did, when it did not ask to sign in again.
+ */
+async function expiredSession(real: Browser, ctx: BrowserContext, url: string, login: Login, unsafe?: RegExp): Promise<{ clicked: string; what: string; errors: number } | undefined> {
+  const copy = await real.newContext({ viewport: { width: 1366, height: 900 }, storageState: await ctx.storageState() });
+  try {
+    const page = await copy.newPage();
+    const guard = await readOnly(page, { loggedIn: true, unsafe });
+    let errors = 0;
+    page.on("pageerror", () => errors++);
+    try {
+      await page.goto(url, { waitUntil: "load", timeout: 20_000 });
+      await page.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => {});
+      let target: { el: import("playwright").Locator; name: string } | undefined;
+      for (const sel of NAV) {
+        const all = page.locator(sel);
+        const n = Math.min(await all.count(), 15);
+        for (let i = 1; i < n && !target; i++) {
+          const el = all.nth(i);
+          const name = ((await el.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim().slice(0, 40);
+          const href = (await el.getAttribute("href").catch(() => null)) ?? "";
+          if (!name || NOT_NAV.test(name) || (unsafe && href && unsafe.test(href)) || !(await el.isVisible().catch(() => false))) continue;
+          target = { el, name };
+        }
+        if (target) break;
+      }
+      if (!target) return undefined;
+      await copy.clearCookies();
+      await page.evaluate(() => {
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+        } catch {
+          // storage off
+        }
+      });
+      errors = 0;
+      await target.el.click({ timeout: 5_000 }).catch(() => {});
+      await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => {});
+      await page.waitForTimeout(3_000);
+      const loginPath = login.loginUrl ? new URL(login.loginUrl).pathname : "";
+      if (new URL(page.url()).pathname === loginPath) return undefined;
+      if (await page.locator('input[type="password"]').first().isVisible().catch(() => false)) return undefined;
+      const text = (await page.evaluate(() => document.body?.innerText ?? "").catch(() => "")).replace(/\s+/g, " ").trim();
+      if (ASKS_SIGN_IN.test(text)) return undefined;
+      const what =
+        text.length < 40
+          ? "goes blank"
+          : /undefined|null|\[object Object\]|error|failed|something went wrong/i.test(text.slice(0, 2000))
+            ? "shows an error message"
+            : errors
+              ? "stays on the old screen with script errors, without saying anything"
+              : "stays on the old screen without saying anything";
+      return { clicked: target.name, what, errors };
+    } finally {
+      await guard.off();
+    }
+  } finally {
+    await copy.close().catch(() => {});
+  }
+}
+
 export const sessionAgent: SiteAgent = {
   id: "app.session",
   name: "Session safety",
   description:
-    "Signs in again in its own browser to check the session: a new session id after signing in (no session fixation), signing out really ends the session on the server, and sessions do not last for weeks.",
+    "Signs in again in its own browser to check the session: a new session id after signing in (no session fixation), signing out really ends the session on the server, Back after signing out does not show the private screen, the app asks to sign in again when the session ends mid-work, and sessions do not last for weeks.",
   category: "security",
   engine: "web",
   products: APPS,
@@ -95,10 +163,29 @@ export const sessionAgent: SiteAgent = {
         );
       }
 
+      // The session ends in the middle of work: the app must ask to sign in again, not go blank.
+      const expired = await expiredSession(real, ctx, landed.landedUrl, login, site.unsafe).catch(() => undefined);
+      if (expired) {
+        out.push(
+          finding({
+            category: "functional",
+            rule: "app:expired-session-unhandled",
+            severity: "medium",
+            title: "When the session ends, the app does not ask to sign in again",
+            detail: `The test ended the session (as a timeout or a sign-out in another tab would), then clicked "${expired.clicked}". The app ${expired.what} instead of going to the sign-in page or saying the session ended. Users lose what they were typing and think the app is broken. When the server answers 401 or 419, send the user to the sign-in page (and back to this screen afterwards).`,
+            pageUrl: landed.landedUrl,
+            evidence: `Session ended, clicked "${expired.clicked}": ${expired.what}${expired.errors ? `; ${expired.errors} script error${expired.errors === 1 ? "" : "s"}` : ""}`,
+            agent: "app.session",
+          }),
+        );
+      }
+
       // Sign out in this browser, then try the old cookies in another one.
       const saved = await ctx.cookies();
       const p = await ctx.newPage();
       await p.goto(landed.landedUrl, { waitUntil: "load", timeout: 20_000 }).catch(() => {});
+      await p.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => {});
+      const privateText = await p.evaluate(() => (document.body?.innerText ?? "").slice(0, 20_000)).catch(() => "");
       let clicked = false;
       for (const attempt of [0, 1]) {
         if (attempt === 1) await p.locator(USER_MENU).first().click({ timeout: 2_000 }).catch(() => {});
@@ -117,6 +204,27 @@ export const sessionAgent: SiteAgent = {
       }
       await p.waitForLoadState("load", { timeout: 10_000 }).catch(() => {});
       await p.waitForTimeout(1_000);
+      // Back after signing out must not show the private screen again (from the browser's cache).
+      const out1 = p.url();
+      await p.goBack({ waitUntil: "load", timeout: 10_000 }).catch(() => null);
+      await p.waitForTimeout(800);
+      if (p.url() !== out1 && !(await p.locator('input[type="password"]').first().isVisible().catch(() => false))) {
+        const back = await p.evaluate(() => (document.body?.innerText ?? "").slice(0, 20_000)).catch(() => "");
+        if (back.length > 60 && sameData(privateText, back)) {
+          out.push(
+            finding({
+              category: "security",
+              rule: "app:back-shows-private-data",
+              severity: "medium",
+              title: "After signing out, Back shows the private screen again",
+              detail: `The test signed out, then pressed the browser's Back button, and ${landed.landedUrl} showed again with its data, from the browser's memory. On a shared computer the next person sees it. Send Cache-Control: no-store on signed-in pages, and have the page check the session when it is shown again (the pageshow event).`,
+              pageUrl: landed.landedUrl,
+              evidence: "Signed out → Back → the same private screen",
+              agent: "app.session",
+            }),
+          );
+        }
+      }
       const replay = await freshContext(real);
       try {
         await replay.addCookies(saved);

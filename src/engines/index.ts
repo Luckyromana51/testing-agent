@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { scanSite } from "../runner/scan.js";
 import type { LiveSink } from "../live.js";
-import type { HookInbox, Journey, Login, ProductType, ProjectTarget, RoleLogin, ScanResult } from "../types.js";
+import { stat } from "node:fs/promises";
+import type { ApiScenario, HookInbox, Journey, Login, ProductType, ProjectTarget, RoleLogin, ScanResult } from "../types.js";
 import { redact, secretsOf } from "../vault.js";
 import { scanApi } from "./api.js";
 
@@ -44,6 +45,21 @@ export interface EngineInput {
   /** Web tests: click through the signed-in app's menus (on unless turned off). */
   explore?: boolean;
   system?: string;
+  /** API tests: the project's scenarios. */
+  apiScenarios?: ApiScenario[];
+  /** API tests: the approved copy of the API file (api-spec.json), to list breaking changes. */
+  apiBaselineFile?: string;
+}
+
+/** The approved API file, when there is one. */
+async function readBaseline(file?: string): Promise<{ spec: unknown; at: string } | undefined> {
+  if (!file) return undefined;
+  try {
+    const [text, info] = await Promise.all([readFile(file, "utf8"), stat(file)]);
+    return { spec: JSON.parse(text), at: info.mtime.toISOString() };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -75,9 +91,16 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         specUrl: target.specUrl,
         specText: target.file ? await readFile(uploadedPath(input.uploadsDir, target.file), "utf8") : undefined,
         baseUrl: target.url,
+        graphqlUrl: target.graphqlUrl,
         auth: login?.kind === "api" ? login : undefined,
+        roles: login?.kind === "api" ? input.roles : undefined,
+        testServer: target.testServer,
+        scenarios: input.apiScenarios,
+        baseline: await readBaseline(input.apiBaselineFile),
+        artifactsDir: input.artifactsDir,
         agents,
         onProgress,
+        signal: input.signal,
       });
     case "code": {
       const { scanCode } = await import("./code.js");

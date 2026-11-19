@@ -1,8 +1,9 @@
-import { request as playwrightRequest, type BrowserContext, type Request } from "playwright";
+import { request as playwrightRequest, type BrowserContext, type Page, type Request, type WebSocket } from "playwright";
 import type { CapturedCall, SiteAgent } from "../agents/types.js";
 import { finding } from "../runner/finding.js";
 import { siteOf } from "../runner/urls.js";
-import type { AppCall, Finding, ProductType } from "../types.js";
+import type { AppCall, AppSocket, Finding, ProductType } from "../types.js";
+import { INTROSPECTION, safeRead } from "./reads.js";
 
 /**
  * The app's own calls: the fetch and XHR requests its screens make to its server (the "API behind
@@ -16,8 +17,23 @@ const MAX_BODY = 300_000;
 const REPLAY_HEADERS = /^(authorization|x-[\w-]*(token|auth|key|session|tenant|company|org)[\w-]*)$/i;
 
 /** Starts noting the app calls made in this browser. Returns the list it fills and a stop function. */
-export function captureCalls(context: BrowserContext, origin: string): { calls: CapturedCall[]; stop: () => void } {
+export function captureCalls(context: BrowserContext, origin: string): { calls: CapturedCall[]; sockets: AppSocket[]; stop: () => void } {
   const calls: CapturedCall[] = [];
+  const sockets: AppSocket[] = [];
+  // Live connections (WebSocket): the address only, once each.
+  const onSocket = (page: Page) => (ws: WebSocket) => {
+    const url = ws.url();
+    if (sockets.length < 20 && !sockets.some((x) => x.url === url)) sockets.push({ url, pageUrl: page.url() });
+  };
+  const watched = new Map<Page, (ws: WebSocket) => void>();
+  const watch = (page: Page) => {
+    if (watched.has(page)) return;
+    const h = onSocket(page);
+    watched.set(page, h);
+    page.on("websocket", h);
+  };
+  for (const p of context.pages()) watch(p);
+  context.on("page", watch);
   const byKey = new Map<string, CapturedCall>();
   const site = siteOf(new URL(origin).hostname);
   const onDone = async (req: Request) => {
@@ -30,7 +46,11 @@ export function captureCalls(context: BrowserContext, origin: string): { calls: 
       return;
     }
     if (siteOf(u.hostname) !== site) return;
-    const key = `${req.method()} ${u.origin}${u.pathname}${u.search}`;
+    // A POST that only reads (GraphQL, Odoo): each different question is its own call.
+    const post = req.method() === "POST" ? req.postData() : null;
+    const reqType = req.headers()["content-type"] ?? "";
+    const read = post ? safeRead("POST", req.url(), post, reqType) : undefined;
+    const key = `${req.method()} ${u.origin}${u.pathname}${u.search}${read ? ` ${post}` : ""}`;
     const had = byKey.get(key);
     if (had) {
       had.count++;
@@ -75,6 +95,7 @@ export function captureCalls(context: BrowserContext, origin: string): { calls: 
       contentType,
       ...(body !== undefined ? { body } : {}),
       ...(Object.keys(auth).length ? { auth } : {}),
+      ...(read && post && post.length <= 20_000 ? { read, request: { body: post, contentType: reqType || "application/json" } } : {}),
       count: 1,
     };
     byKey.set(key, call);
@@ -82,7 +103,15 @@ export function captureCalls(context: BrowserContext, origin: string): { calls: 
   };
   const handler = (req: Request) => void onDone(req).catch(() => {});
   context.on("requestfinished", handler);
-  return { calls, stop: () => context.off("requestfinished", handler) };
+  return {
+    calls,
+    sockets,
+    stop: () => {
+      context.off("requestfinished", handler);
+      context.off("page", watch);
+      for (const [p, h] of watched) p.off("websocket", h);
+    },
+  };
 }
 
 /**
@@ -91,7 +120,7 @@ export function captureCalls(context: BrowserContext, origin: string): { calls: 
  * 40 calls must take the same ones every time.
  */
 export function sortCalls(calls: CapturedCall[]): CapturedCall[] {
-  return calls.sort((a, b) => a.url.localeCompare(b.url) || a.method.localeCompare(b.method));
+  return calls.sort((a, b) => a.url.localeCompare(b.url) || a.method.localeCompare(b.method) || (a.request?.body ?? "").localeCompare(b.request?.body ?? ""));
 }
 
 /** What the report shows of a call: no answers, no headers. */
@@ -104,8 +133,13 @@ export const reportCall = (c: CapturedCall): AppCall => ({
   pageUrl: c.pageUrl,
   type: c.type,
   ...(c.auth?.authorization ? { bearer: true } : {}),
+  ...(c.read ? { what: c.read } : {}),
   ...(c.anon !== undefined ? { anon: c.anon } : {}),
 });
+
+/** Login values in a live connection's address: kept out of the report. */
+const SOCKET_SECRET = /([?&](?:token|access_token|auth|auth_token|jwt|session|session_id|sid|key|api_key|apikey|password|ticket)=)[^&#]+/gi;
+export const hideSocketSecrets = (url: string) => url.replace(SOCKET_SECRET, "$1[hidden]").slice(0, 500);
 
 /** Field names that must never reach a browser. */
 const SECRET_KEYS = /^(password|passwd|pwd|pass|password_?hash|hashed_?password|pass_?hash|salt|secret|client_?secret|api_?secret|private_?key|totp_?secret|otp_?secret|mfa_?secret|two_?factor_?secret|recovery_?codes?|reset_?token|password_?reset_?token|remember_?token|ssn|aadhaar|aadhar|pan_?number|card_?number|cc_?number|cvv|cvc|bank_?account(_?number)?|iban)$/i;
@@ -256,9 +290,45 @@ export const appCallsAgent: SiteAgent = {
       }
     }
 
-    // The same calls with no login: a stranger's view.
-    const replay = calls.filter((c) => c.method === "GET" && c.status >= 200 && c.status < 300 && c.body && !PUBLIC_CALL.test(new URL(c.url).pathname)).slice(0, 40);
-    if (replay.length) {
+    // Live connections: login values in the address end up in server and proxy logs.
+    const pageIsHttps = calls.some((c) => c.pageUrl.startsWith("https:")) || (site.sockets ?? []).some((x) => x.pageUrl.startsWith("https:"));
+    for (const ws of site.sockets ?? []) {
+      const hidden = hideSocketSecrets(ws.url);
+      if (hidden !== ws.url.slice(0, 500)) {
+        out.push(
+          finding({
+            category: "security",
+            rule: "app:socket-token-in-address",
+            severity: "medium",
+            title: "A live connection puts the login token in its address",
+            detail: `The screen opens a live connection (WebSocket) to ${hidden}. Addresses are written to server, proxy and load-balancer logs, so anyone who reads them can use the token. Send the token in the first message after connecting, or rely on the session cookie, and keep tokens short-lived.`,
+            pageUrl: ws.pageUrl || ws.url,
+            evidence: hidden,
+            agent: "app.calls",
+          }),
+        );
+      }
+      if (ws.url.startsWith("ws:") && (ws.pageUrl.startsWith("https:") || pageIsHttps)) {
+        out.push(
+          finding({
+            category: "security",
+            rule: "app:socket-not-encrypted",
+            severity: "high",
+            title: "A live connection is not encrypted",
+            detail: `The app is on https, but its live connection uses plain ws:// (${hidden}). Everything in it (messages, and the cookies sent when it opens) can be read on the network. Use wss://.`,
+            pageUrl: ws.pageUrl || ws.url,
+            evidence: hidden,
+            agent: "app.calls",
+          }),
+        );
+      }
+    }
+
+    // The same calls with no login: a stranger's view. POST calls that only read (GraphQL queries,
+    // Odoo reads) are sent again with the same question.
+    const replay = calls.filter((c) => (c.method === "GET" || c.request) && c.status >= 200 && c.status < 300 && c.body && !PUBLIC_CALL.test(new URL(c.url).pathname)).slice(0, 40);
+    const graphql = [...new Set(calls.filter((c) => c.read?.startsWith("GraphQL")).map((c) => c.url))].slice(0, 2);
+    if (replay.length || graphql.length) {
       log(`Calling ${replay.length} app calls again without the login`);
       const proxyServer = process.env.HTTPS_PROXY || process.env.https_proxy;
       const stranger = await playwrightRequest.newContext({
@@ -266,9 +336,32 @@ export const appCallsAgent: SiteAgent = {
         userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36 GLVTestingAgent/0.5",
       });
       try {
+        // A GraphQL server that tells anyone its whole schema hands attackers a map of every query.
+        for (const g of graphql) {
+          const r = await stranger.post(g, { data: INTROSPECTION, headers: { "content-type": "application/json" }, timeout: 15_000, maxRedirects: 0 }).catch(() => null);
+          const text = r && r.status() < 300 ? await r.text().catch(() => "") : "";
+          const types = (parse(text) as { data?: { __schema?: { types?: { name: string }[] } } } | undefined)?.data?.__schema?.types;
+          if (!types?.length) continue;
+          const own = types.map((t) => t.name).filter((n) => !n.startsWith("__") && !["String", "Int", "Float", "Boolean", "ID"].includes(n));
+          out.push(
+            finding({
+              category: "security",
+              rule: "app:graphql-schema-public",
+              severity: "medium",
+              title: "Anyone can read the app's GraphQL schema, with no login",
+              detail: `${pathOf(g)} answers the schema question (introspection) for a visitor with no login: ${types.length} types, every query and field the app has. It is a map for attackers looking for fields that are not protected. Turn introspection off in production (or allow it only for signed-in developers).`,
+              pageUrl: g,
+              evidence: `No login: ${types.length} types, like ${own.slice(0, 8).join(", ")}`,
+              agent: "app.calls",
+            }),
+          );
+        }
         for (const c of replay) {
           site.signal?.throwIfAborted();
-          const r = await stranger.get(c.url, { timeout: 15_000, maxRedirects: 0 }).catch(() => null);
+          const r = await (c.request
+            ? stranger.post(c.url, { data: c.request.body, headers: { "content-type": c.request.contentType }, timeout: 15_000, maxRedirects: 0 })
+            : stranger.get(c.url, { timeout: 15_000, maxRedirects: 0 })
+          ).catch(() => null);
           if (!r) continue;
           const status = r.status();
           const body = status >= 200 && status < 300 ? await r.text().catch(() => "") : "";
@@ -283,9 +376,9 @@ export const appCallsAgent: SiteAgent = {
               rule: "app:call-public",
               severity: user || emails > 0 ? "critical" : "high",
               title: user || emails > 0 ? "An app call gives private data to anyone, with no login" : "An app call answers the same with no login",
-              detail: `${c.method} ${pathOf(c.url)} gave a visitor with no login the same answer as the signed-in user${user ? ", including the user's own email" : emails ? `, including ${emails} email address${emails === 1 ? "" : "es"}` : ""}. The screen is protected, but the data behind it is not. Put the login check (auth middleware) on the API routes too, not only on the pages.`,
+              detail: `${c.method} ${pathOf(c.url)}${c.read ? ` (${c.read})` : ""} gave a visitor with no login the same answer as the signed-in user${user ? ", including the user's own email" : emails ? `, including ${emails} email address${emails === 1 ? "" : "es"}` : ""}. The screen is protected, but the data behind it is not. Put the login check (auth middleware) on the API routes too, not only on the pages.`,
               pageUrl: c.pageUrl || c.url,
-              evidence: `No login: HTTP ${status}, same data${c.auth ? " (the app sends a login header; the call worked without it)" : ""}`,
+              evidence: `${c.read ? `${c.read}\n` : ""}No login: HTTP ${status}, same data${c.auth ? " (the app sends a login header; the call worked without it)" : ""}`,
               agent: "app.calls",
             }),
           );

@@ -86,19 +86,51 @@ The crawler and the link checker never open log-out or delete links.
 
 A CRM gets no search engine (SEO) checks and no SEO score: only its sign-in page is public. Any test that runs signed in leaves the SEO checks out too, because private pages are not meant to be found on Google. The two login-only checks are listed as "Needs a saved login" when a project has none.
 
-### API engine (OpenAPI 3 or Swagger 2)
+### API engine (REST and GraphQL)
 
-Only read-only GET requests are sent, with the project's saved key or token if it has one. POST, PUT, PATCH and DELETE operations are counted but never called. Up to 60 endpoints per test, 3 at a time, with a retry on rate limits and gateway errors.
+What it reads: an OpenAPI 3 or Swagger 2 file (address or upload), or just the API's base address (it looks for the file at the usual places: `/openapi.json`, `/swagger.json`, `/v3/api-docs`, `/api-docs` and more), a Postman collection, a HAR recording from the browser, a text file of cURL commands, or a GraphQL endpoint. Postman, HAR and cURL are turned into an API file, with ids in addresses made into `{id}` templates.
+
+Logins: bearer token, a key in a header or the address, basic, **OAuth2 client credentials** (it fetches the token from the token address, with a scope) or **a login call** (POST user name and password to the API's login address and read the token from the answer, like `$.data.token`). A fetched token is renewed once if the API answers 401 halfway. Tokens never show in the report.
+
+How it calls: endpoints are called in waves, lists first, so detail endpoints get **real ids** from the lists (`GET /users/{id}` uses the first id that `GET /users` gave; the report says where the id came from). Each endpoint is timed `API_SAMPLES` times (default 5): the report shows the median and the 95% time, so one slow call is not a slow endpoint. On a live API only GET is sent. Tick **This API is a test server** (new-test form or the project's API setup tab) to let the test add, change and delete its own records, which it always removes after.
 
 | Agent | What it checks |
 | --- | --- |
-| Endpoint health | Server errors, no answer, documented endpoints that are missing (404), slow endpoints (the faster of two calls) |
-| Response format | Broken JSON, web pages where JSON should be, wrong content type, answers that do not match the documented schema, undocumented status codes |
+| Endpoint health | Server errors, no answer, documented endpoints that are missing (404), slow endpoints (median time) |
+| Response format | Broken JSON, wrong content type, answers that break the schema (types, formats like email and date, min and max, lengths, patterns, list sizes, extra fields where the file forbids them), fields the file does not list, documented headers that are missing, deprecated endpoints with no Deprecation or Sunset header |
 | Login protection | Endpoints marked as needing a login that answer without one; login errors sent as 200; no login described at all |
 | Data exposure | Password hashes, tokens and keys in answers; lists of personal e-mail addresses readable without a login |
-| Error handling | Stack traces, SQL errors and debug pages in answers, including for a missing address and a wrong-type id |
+| Error handling | Stack traces, SQL errors and debug pages, including for a missing address and a wrong-type id |
 | HTTPS, CORS and headers | Plain HTTP, CORS that lets any website call the API as the logged-in user, HSTS, nosniff, version disclosure |
 | API file quality | No servers, duplicate operationIds, operations without documented answers |
+| API file audit | 26 rules like 42Crunch and Spectral (security schemes, plain-http servers, keys in the address, no 401 or 429 answers, strings with no length limit, lists with no limit, missing descriptions and examples...), with a score out of 100 |
+| OWASP API Top 10 | No rate limit (a burst of 20 calls, never on a health check), lists with no page limit, debug and admin endpoints left open (actuator, /debug, phpinfo...), old API versions still answering, address parameters that take a URL (SSRF candidates), TRACE switched on |
+| Login tokens (JWT) | Not signed, no end time, a life over 30 days, secrets inside the token, signed with a well-known key (`secret`, `changeme`... checked on this server, nothing is sent), and whether the API accepts a token with its signature changed or with `alg: none` |
+| Breaking changes | Compares the API file with the approved copy: removed endpoints, fields, answers and parameters, new required fields, changed types. The first test's file is approved by itself; press **Approve as the new version** in the report to accept a change |
+| Who can read what | With other accounts on the project (roles, another company): every endpoint is called as each one. Another company getting the same record (BOLA, broken object level authorization), an account opening what it must not (BFLA, like `/admin*` for staff), and data with no login. Shown as a grid in the report |
+| Scenarios | The team's own tests in plain words, one step a line (see below) |
+| Test-server writes | Only on a test server: wrong and empty input (should be 400 or 422, not 500 or 201), create without a login, create with fields a user must not set (`role`, `isAdmin`, `balance`...: mass assignment) and with read-only fields, read back, change, delete, read after delete, then clean-up. Anything left over is listed |
+| GraphQL | Introspection open, field suggestions, no depth limit (a depth-10 query), no alias limit (50 aliases), batching, queries over GET (CSRF), errors that leak, and every read-only query run with made-up arguments, with and without the login. Mutations are never sent, even on a test server |
+
+**Scenarios** (project page > API setup) look like this:
+
+```
+GET /orders
+expect status 200
+expect time < 800
+save id = $.data[0].id
+GET /orders/{{id}}
+expect $.total > 0
+expect schema
+```
+
+Other steps: `header Name: value`, `body {...}`, `as Role name` (or `as nobody`), `set name = value`, `wait 500`, `expect header Content-Type contains json`, and clean-up steps that always run at the end. POST, PUT, PATCH and DELETE steps run only on a test server.
+
+**In the report**, the API tab shows every call with its request and answer (headers and body, login hidden), **Copy as cURL**, what was not called and why, the scenarios step by step, the changes since the approved file, the who-can-read-what grid and the write tests. **Download collection** gives a Postman collection of the tested calls with a status test each; the token is a `{{token}}` variable.
+
+**Mock server** (project page > API setup): a secret address on this server (`/mock/<token>/...`) that answers like the API from its file, with the file's examples or made-up data that fits the schema. It checks requests (required query parameters, the body against its schema) and answers 400 with the reasons, keeps the last 50 calls, and lets front ends on any address call it. **New address** stops the old one.
+
+**API watch** (project page): checks an endpoint every few minutes with the saved login (uptime, answer time, SSL, words the answer must hold), and can also run the read-only scenarios every 15 to 60 minutes.
 
 ### Source code engine (offline)
 
@@ -242,7 +274,7 @@ A project can keep one login, used for every test of that project:
 | Product | Login | What happens |
 | --- | --- | --- |
 | Website, online store, web app, SaaS, CRM | Sign-in page, user name or email, password; optionally text that only shows once signed in, and CSS selectors for unusual forms | The agent opens the sign-in page, fills the form (one page, or email then password), checks it worked, then crawls and tests the pages behind the login. If the site signs it out, it signs in again (up to 3 times). |
-| API | Bearer token, a key in a header (like `X-API-Key`), a key in the address (like `?api_key=`), or basic user name and password | Every endpoint is called with it (still GET only). The endpoints the API file marks as needing a login are also called once without it, to check they refuse strangers. |
+| API | Bearer token, a key in a header (like `X-API-Key`), a key in the address (like `?api_key=`), basic user name and password, OAuth2 client credentials, or a login call that returns a token | Every endpoint is called with it (GET only, unless the project is a test server). The endpoints the API file marks as needing a login are also called once without it, to check they refuse strangers. Other accounts (roles, another company) can be added for the who-can-read-what grid. |
 | Source code | Access token (GitHub fine-grained token with Contents: Read, GitLab project token with read_repository) | The token is sent as a header to the repository's own host only. It never goes into the address, the command line or the clone. |
 
 Safety while signed in:
@@ -267,9 +299,19 @@ For a web app, SaaS or CRM project, the test signs in with the saved login and t
 - **Journeys per role, with clean-up.** A journey can run as one of the accounts, record the app calls of each step, and end with clean-up steps that always run (delete the test record it made). New words: `{{random}}`, `{{today}}`, `{{code}}` (the two-step code), `{{role}}`, `{{webhook}}`, and the step `webhook has <text>`. **+ Record test** gives a create, read, update and delete template for test servers.
 - **Webhook inbox.** Open an inbox to get an address the client's app can send its webhooks to; the tab shows each one as it arrives, and a journey can check one came. Set `PUBLIC_URL` in `.env` to the address the client's app can reach this server at.
 - **Journey watch.** The website watch can also run the read-only journeys (sign in, open a lead...) every 15, 30 or 60 minutes, and alerts when one fails and again when it passes.
+- **Apps that read with POST.** Odoo, ERPNext, Salesforce Lightning and GraphQL apps load their screens with POST calls. Calls that plainly only read (GraphQL queries, never mutations; Odoo's search_read and other read methods; Frappe's get methods; Salesforce getters; search endpoints) pass the read-only guard, and the access grid sends them again as each account and with no login. A GraphQL schema anyone can read is reported too.
+- **Admin and debug screens left open.** With no login, the test asks for the screens well-known systems leave open: the Odoo database manager, Metabase's setup token, Strapi with no admin, Magento's env.php, Grafana without login, Laravel Telescope, Horizon, Debugbar and Ignition, Spring's actuator and heap dump, Django's debug page, Rails' route list, ASP.NET's ELMAH and trace, GraphQL playgrounds, phpMyAdmin and Adminer.
+- **Admin screens by address.** Each system's admin screens (users, roles, settings, plugins) and the usual ones of custom apps (/admin, /admin/users...) are tried directly by every account, even when no menu leads there.
+- **Two-step and sign-in checks.** After the password, the test opens the app before typing the code (it must not open), signs in again with the code already used (it must be refused), and signs in through `?next=` (or the app's own return parameter) pointing at an outside site (it must not go there).
+- **Back and expired sessions.** After signing out, Back must not show the private screen. When the session ends mid-work, clicking a menu item must lead to the sign-in page, not a blank or broken screen.
+- **Who can change what (test servers).** A journey ticked "May send forms" runs only on a test server; the saves it makes are sent again as each other account and with no login. A save the server accepts from the wrong account is reported. This can leave extra test records on the test server.
+- **Test data.** A journey can hold a small table (CSV with a header row). It runs once per row, with `{{column}}` words, for phone formats, long names or Hindi text.
+- **Live connections.** WebSocket addresses are listed with the app calls; a login token in the address, or plain ws:// on an https app, is reported.
 - **Step recorder for Chrome.** Download it from the Signed-in app tab, load it in Chrome (Extensions > Developer mode > Load unpacked), press Record, use the app, and copy the steps into a journey. It never records what is typed into password fields.
 
-The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data.
+The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data (except the saves of a journey allowed to send forms).
+
+Not built yet: the Salesforce guest-user data check (Mandiant's AuraInspector method), which needs a real Salesforce Experience site to prove; and account lock, file upload and mass assignment tests, which send many requests or change data and so need the client permission step.
 
 ## What the categories cover
 
@@ -425,11 +467,15 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET` | `/api/meta` | Product types, agents with on/off state, and the outside tools with whether each is installed on this server |
 | `GET`, `POST` | `/api/projects` | List projects; create one and start its first test. Body: `{ "type": "website", "url": "https://...", "name": "", "maxPages": 20, "schedule": "off" }`. API: `specUrl` (or `file`) and an optional base `url`. Code: `repoUrl` and `branch` (or `file`). Android and iOS: `file`. Optional `login`: `{ "loginUrl", "username", "password" }` for web, `{ "authType": "bearer" \| "header" \| "query" \| "basic", "token", "paramName", "username", "password" }` for an API, `{ "token", "username" }` for code. Optional `tools`: `[{ "id": "lighthouse", "options": { "device": "desktop", "pages": "3" } }, { "id": "zap" }]` (left out: every installed safe tool). Answers show only whether a secret is saved |
 | `POST` | `/api/uploads` | Upload an APK, a zip of code or an OpenAPI file as the raw body (`content-type: application/octet-stream`, file name in `x-file-name`, up to 300 MB). Returns the `file` to put in the project |
-| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), `tools` (the tool tabs for later tests; `null` goes back to the default), or `login` (secrets left empty keep the saved ones; `null` removes it); delete (owner; a queued or running test is cancelled first) |
+| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | Project with runs and score trend; change name, address, pages, schedule, the uploaded file (a new app build), `tools` (the tool tabs for later tests; `null` goes back to the default), `login` (secrets left empty keep the saved ones; `null` removes it), and for APIs `apiScenarios`, `testServer`, `graphqlUrl` and `mock`; delete (owner; a queued or running test is cancelled first) |
 | `POST` | `/api/projects/:id/runs` | Re-test now |
 | `POST` | `/api/projects/:id/permissions` | Record the client's permission for load or attack tests (owner). Body: `{ "hosts": ["shop.example.com"], "kinds": ["load", "attack"], "grantedBy", "reference", "from", "until", "maxUsers", "maxMinutes", "writes": false, "confirm": true }`. Answers with the token for the proof and the first proof check |
 | `POST` | `/api/projects/:id/permissions/:pid/check`, `/revoke` | Check the client's proof again (anyone on the team); withdraw the permission (owner), which also switches its tools off |
 | `GET` | `/api/runs/:id` | Full report, with live progress while it runs |
+| `POST` | `/api/runs/:id/api-baseline` | API tests: approve this test's API file as the new version (later tests list changes against it) |
+| `GET` | `/api/runs/:id/postman` | API tests: the tested calls as a Postman collection (v2.1) |
+| `GET` | `/api/projects/:id/mock` | API projects: the mock server's address, whether it is ready, and its last 50 calls. Turn it on with `PATCH /api/projects/:id` `{ "mock": true }` (`"new"` for a new address, `false` to turn it off) |
+| any | `/mock/:token/*` | The mock server itself (no login, only the secret address) |
 | `GET` | `/api/runs/:id/live` | The live view while a website test runs, as server-sent events: `screens` (how many), `screen` (address, desktop or phone, what it is doing, which agents are checking it), `frame` (a JPEG picture), `log` and `end`. Pictures are only made while a viewer is connected |
 | `POST` | `/api/runs/:id/summary` | Write the Claude summary for a finished test that has none |
 | `GET` | `/api/runs/:id/artifacts/:file` | Screenshots, and each tool's own report (`tool-*.html` opens in a sandbox, `tool-*.json` is the raw results) |
@@ -505,6 +551,8 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 ```
 
 ## Not built yet (next steps from the plan)
+
+- API: SOAP, gRPC and WebSocket APIs, contract tests between services (like Pact), and GraphQL mutations on a test server
 
 - Claude choosing and filling forms on its own while signed in, on a test copy of the client's system
 - Jira export, and AI fix pull requests

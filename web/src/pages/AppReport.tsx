@@ -24,6 +24,7 @@ export function AppReport({ result }: { result: ScanResult }) {
   const [part, setPart] = useState<"screens" | "access" | "calls">(result.access ? "access" : "screens");
   const screens = result.screens ?? [];
   const calls = result.calls ?? [];
+  const sockets = result.sockets ?? [];
   const grid = result.access;
   return (
     <div className="app-report">
@@ -48,7 +49,7 @@ export function AppReport({ result }: { result: ScanResult }) {
           </button>
         )}
         <button className={`pill${part === "calls" ? " active" : ""}`} onClick={() => setPart("calls")}>
-          App calls ({calls.length})
+          App calls ({calls.length}{sockets.length ? ` + ${sockets.length} live` : ""})
         </button>
       </div>
 
@@ -84,9 +85,12 @@ export function AppReport({ result }: { result: ScanResult }) {
       {part === "access" && grid && (
         <div className="card table-card">
           <p className="muted small pad">
-            Each account signed in in its own browser and opened every screen and app call the main account reached. Red cells are the
-            ones to fix: another company getting the same data, an account opening what it must never open, or anyone getting data with no
-            login. Orange: it opens although the account's menu hides it. A screen in an account's own menu is marked ☰.
+            Each account signed in in its own browser and opened every screen and app call the main account reached, and the system's
+            admin screens by their address. Red cells are the ones to fix: another company getting the same data, an account opening what
+            it must never open or an admin screen, or anyone getting data with no login. Orange: it opens although the account's menu
+            hides it. A screen in an account's own menu is marked ☰.
+            {grid.rows.some((r) => r.kind === "change") &&
+              ' "Save" rows are saves a journey made on the test server, sent again as each account: "Works" means the server accepted it (this may leave extra test records on the test server).'}
           </p>
           {grid.roles.some((r) => r.error) && (
             <div className="error pad">
@@ -111,23 +115,40 @@ export function AppReport({ result }: { result: ScanResult }) {
               </thead>
               <tbody>
                 {grid.rows.map((row) => (
-                  <tr key={`${row.kind}${row.url}`}>
+                  <tr key={`${row.kind}${row.method ?? ""}${row.url}${row.what ?? ""}`}>
                     <td className="mono small">
-                      <span className="badge">{row.kind === "call" ? "call" : "screen"}</span> {short(row.url)}
+                      <span className={`badge${row.kind === "change" ? " warn" : ""}`}>{row.kind === "call" ? "call" : row.kind === "change" ? "save" : row.known ? "admin" : "screen"}</span>{" "}
+                      {row.method && row.method !== "GET" ? `${row.method} ` : ""}
+                      {short(row.url)}
+                      {row.what && <div className="muted small">{row.kind === "change" ? `journey "${row.what}"` : row.what}</div>}
                     </td>
                     {grid.roles.map((r) => {
                       const c = row.cells[r.id] ?? "not-tried";
                       const info = CELL[c];
                       const inMenu = r.id === "main" ? row.inMenu : row.menuOf?.includes(r.id);
                       const flag = row.flags?.[r.id];
-                      const bad = flag === "forbidden" || flag === "other-company" || (c === "same-data" && r.id === "anon");
+                      const bad = flag === "forbidden" || flag === "other-company" || flag === "admin" || flag === "no-login" || (c === "same-data" && r.id === "anon") || (row.kind === "change" && r.id === "anon" && c === "opens");
                       const tone = bad ? "bad" : flag === "hidden" ? "warn" : c === "same-data" ? "ok" : info.tone;
-                      const title = flag === "forbidden" ? "This account must never open it" : flag === "hidden" ? "Not in this account's menu, but it opens" : flag === "other-company" ? "Another company got this company's data" : info.title;
+                      const title =
+                        flag === "forbidden"
+                          ? "This account must never open it"
+                          : flag === "hidden"
+                            ? "Not in this account's menu, but it opens"
+                            : flag === "other-company"
+                              ? "Another company got this company's data"
+                              : flag === "admin"
+                                ? "An admin screen opens for this account"
+                                : row.kind === "change"
+                                  ? c === "opens"
+                                    ? "The server accepted this save from this account"
+                                    : "The server refused this save"
+                                  : info.title;
+                      const text = row.kind === "change" ? (c === "opens" ? "Works" : c === "blocked" ? "Refused" : info.text) : c === "same-data" && !bad ? "Opens" : info.text;
                       return (
                         <td key={r.id} className={`cell-${tone}`} title={title}>
-                          {c === "same-data" && !bad ? "Opens" : info.text}
+                          {text}
                           {inMenu && row.kind === "screen" ? " ☰" : ""}
-                          {flag === "hidden" ? " (hidden)" : flag === "forbidden" ? " (never)" : ""}
+                          {flag === "hidden" ? " (hidden)" : flag === "forbidden" ? " (never)" : flag === "admin" ? " (admin)" : ""}
                         </td>
                       );
                     })}
@@ -159,10 +180,11 @@ export function AppReport({ result }: { result: ScanResult }) {
               {[...calls]
                 .sort((a, b) => b.ms - a.ms)
                 .map((c) => (
-                  <tr key={`${c.method}${c.url}`}>
+                  <tr key={`${c.method}${c.url}${c.what ?? ""}`}>
                     <td className="mono small">
                       {c.method} {short(c.url)}
                       {c.bearer && <span className="muted"> · login header</span>}
+                      {c.what && <div className="muted small">{c.what} (only reads)</div>}
                     </td>
                     <td className={c.status >= 500 || c.status === 0 ? "bad" : c.status >= 400 ? "warn" : ""}>{c.status || "none"}</td>
                     <td className={c.ms >= 3000 ? "bad" : c.ms >= 1000 ? "warn" : ""}>{c.ms} ms</td>
@@ -172,6 +194,27 @@ export function AppReport({ result }: { result: ScanResult }) {
                 ))}
             </tbody>
           </table>
+          {sockets.length > 0 && (
+            <>
+              <h3 className="sub-title pad">Live connections (WebSocket)</h3>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Address (login values hidden)</th>
+                    <th>Opened by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sockets.map((s) => (
+                    <tr key={s.url}>
+                      <td className="mono small">{s.url}</td>
+                      <td className="mono small">{short(s.pageUrl)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
         </div>
       )}
     </div>

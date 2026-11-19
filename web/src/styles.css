@@ -3773,3 +3773,26 @@ button.net-row:hover,
   .access-grid td:first-child { min-width: 160px; }
   .hook-row .muted.small { display: none; }
 }
+/* API report */
+.api-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.api-stats .card { display: grid; gap: 4px; align-content: start; }
+.api-stats .btn { justify-self: start; }
+.api-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.api-filter input { max-width: 280px; }
+.api-row { cursor: pointer; }
+.api-row:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.api-row .tag { margin-left: 6px; }
+.api-call-detail { display: grid; gap: 8px; padding: 6px 0; }
+.api-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.api-panes > div { min-width: 0; }
+.api-panes .code-block pre { max-height: 320px; overflow: auto; }
+.api-problems ul { margin: 4px 0 0; padding-left: 18px; color: var(--bad); }
+.api-scenarios { display: grid; gap: 10px; }
+.scenario-steps { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.scenario-steps li.bad > .mono { color: var(--bad); }
+.api-approve { margin-top: 12px; gap: 10px; align-items: center; }
+.scenario-editor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; min-height: 140px; }
+.scenario-editor { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+@media (max-width: 800px) { .api-panes { grid-template-columns: 1fr; } }
+.row.between { justify-content: space-between; }
+.api-setup { display: grid; gap: 12px; }

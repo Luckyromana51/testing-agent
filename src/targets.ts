@@ -19,11 +19,15 @@ export interface TargetInput {
   checkLinks?: boolean;
   /** A known system's id, or "" to let the test spot it. */
   system?: string;
+  /** API: a GraphQL endpoint instead of a REST API file. */
+  graphqlUrl?: string;
+  /** API: the project is a test server (tests may change data, and clean up). */
+  testServer?: boolean;
 }
 
 /** Which uploaded file types each product takes. */
 export const UPLOAD_TYPES: Record<string, RegExp> = {
-  api: /\.(json|ya?ml)$/i,
+  api: /\.(json|ya?ml|har|txt|sh|curl)$/i,
   code: /\.zip$/i,
   android: /\.apk$/i,
   ios: /\.(ipa|zip)$/i,
@@ -77,7 +81,18 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
       if (url) t.url = validateTarget(url).replace(/\/$/, "");
       else delete t.url;
     }
-    if (!t.specUrl && !t.file) throw new Error("Enter the address of the OpenAPI (Swagger) file, or upload it.");
+    if (set("graphqlUrl")) {
+      const g = clean(input.graphqlUrl);
+      if (g) t.graphqlUrl = validateTarget(g);
+      else delete t.graphqlUrl;
+    }
+    if (set("testServer")) {
+      if (input.testServer === true) t.testServer = true;
+      else delete t.testServer;
+    }
+    if (!t.specUrl && !t.file && !t.graphqlUrl && !t.url) {
+      throw new Error("Enter the address of the OpenAPI (Swagger) file, upload it (or a Postman collection, HAR file or cURL commands), give a GraphQL address, or give the API's base address so the test can look for the file.");
+    }
     return t;
   }
 
@@ -127,7 +142,7 @@ export function loginKindFor(type: ProductType): LoginKind | undefined {
   return undefined;
 }
 
-const API_AUTH_TYPES: ApiAuthType[] = ["bearer", "header", "basic", "query"];
+const API_AUTH_TYPES: ApiAuthType[] = ["bearer", "header", "basic", "query", "oauth2", "login"];
 // Control characters would let a value add its own headers or lines.
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
@@ -196,8 +211,24 @@ export function buildLogin(type: ProductType, input: Partial<Login>, prev?: Logi
 
   if (kind === "api") {
     const authType = (pick("authType", "The login type", 20) ?? "bearer") as ApiAuthType;
-    if (!API_AUTH_TYPES.includes(authType)) throw new Error("Choose how the API key is sent: bearer token, header, basic or query.");
+    if (!API_AUTH_TYPES.includes(authType)) throw new Error("Choose how the API key is sent: bearer token, header, basic, query, OAuth2 or a sign-in call.");
     login.authType = authType;
+    if (authType === "oauth2" || authType === "login") {
+      const tokenUrl = pick("tokenUrl", authType === "oauth2" ? "The token address" : "The sign-in call address", 2000);
+      if (!tokenUrl) throw new Error(authType === "oauth2" ? "Enter the OAuth2 token address." : "Enter the address of the sign-in call, like https://api.example.com/auth/login.");
+      login.tokenUrl = validateTarget(tokenUrl);
+      login.username = pick("username", authType === "oauth2" ? "The client id" : "The user name", 300);
+      if (!login.username) throw new Error(authType === "oauth2" ? "Enter the client id." : "Enter the user name or email.");
+      const keepSecret = keep?.authType === authType && keep.hasPassword;
+      if (!password && !keepSecret) throw new Error(authType === "oauth2" ? "Enter the client secret." : "Enter the password.");
+      login.password = password;
+      if (authType === "oauth2") login.scope = pick("scope", "The scopes", 500);
+      else login.tokenPath = pick("tokenPath", "Where the token is", 200);
+      const header = pick("paramName", "The header name", 100);
+      if (header && !/^[A-Za-z0-9_-]+$/.test(header)) throw new Error("The header name can only have letters, digits, - and _.");
+      login.paramName = header;
+      return login;
+    }
     if (authType === "basic") {
       login.username = pick("username", "The user name", 200);
       if (!login.username) throw new Error("Enter the user name for basic login.");
@@ -228,12 +259,13 @@ export const MAX_ROLES = 6;
 
 /** Checks another account entered for a project (a role, or a user of another company). */
 export function buildRole(type: ProductType, input: Partial<RoleLogin> & { login?: Partial<Login> }, main: LoginSummary | undefined, prev?: RoleSummary): RoleLogin {
-  if (!APP_TYPES.includes(type)) throw new Error("Roles are for web apps, SaaS and CRMs.");
-  if (!main || main.kind !== "web") throw new Error("Save the main login first: roles are tested next to it.");
+  if (!APP_TYPES.includes(type) && type !== "api") throw new Error("Other accounts are for web apps, SaaS, CRMs and APIs.");
+  const kind = type === "api" ? "api" : "web";
+  if (!main || main.kind !== kind) throw new Error("Save the main login first: other accounts are tested next to it.");
   const name = String(input.name ?? prev?.name ?? "").trim().slice(0, 40);
   if (!name || CONTROL.test(name)) throw new Error("Give the role a name, like Sales staff or Other company.");
   const li: Partial<Login> = { ...(input.login ?? {}) };
-  if (!li.loginUrl && !prev?.login.loginUrl) li.loginUrl = main.loginUrl;
+  if (kind === "web" && !li.loginUrl && !prev?.login.loginUrl) li.loginUrl = main.loginUrl;
   const login = buildLogin(type, li, prev?.login);
   const mustNotOpen = String(input.mustNotOpen ?? prev?.mustNotOpen ?? "").slice(0, 2000).trim();
   if (CONTROL.test(mustNotOpen.replace(/[\r\n]/g, ""))) throw new Error("The addresses have characters that are not allowed.");

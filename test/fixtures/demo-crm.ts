@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { totp } from "../../src/app/totp.js";
 
@@ -15,6 +15,17 @@ import { totp } from "../../src/app/totp.js";
  * - the sign-in page says when an account does not exist
  * - a list whose search does nothing, and an export with a formula cell
  * - a full Aadhaar number on a contact; a POST form without a CSRF token
+ * Round 2 (the deeper checks):
+ * - the Deals screen reads with a GraphQL query (POST) that also answers with no login, and the
+ *   GraphQL schema is open to anyone
+ * - Laravel Telescope left open at /telescope/requests
+ * - an /admin panel no menu links to, which staff can open
+ * - the two-step code can be skipped, and a used code works again
+ * - /login?next= sends the browser to any website after signing in
+ * - /app may be kept in the browser's cache, so Back after signing out shows it
+ * - when the session ends, the screens fail quietly instead of asking to sign in
+ * - a live connection (WebSocket) with the login token in its address
+ * - on the Users screen, adding a user has no role check (staff can do it too)
  */
 export const CRM_ADMIN = { email: "admin@acme.test", password: "Adm1n-Pass-2026" };
 export const CRM_STAFF = { email: "staff@acme.test", password: "St4ff-Pass-2026" };
@@ -52,6 +63,12 @@ export interface DemoCrm {
 }
 
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const DEALS = [
+  { id: 1, company: "acme", title: "Annual support", value: 250000, owner: "admin@acme.test" },
+  { id: 2, company: "acme", title: "New branch rollout", value: 200000, owner: "staff@acme.test" },
+  { id: 3, company: "globex", title: "Globex pilot", value: 90000, owner: "owner@globex.test" },
+];
+const SCHEMA = { data: { __schema: { queryType: { name: "Query" }, types: ["Query", "Deal", "Contact", "User", "String", "Int", "Boolean", "__Schema", "__Type"].map((name) => ({ name })) } } };
 
 const APP_HTML = (user: User) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Acme CRM</title></head>
 <body><header><span>Signed in as ${user.email}</span> <a href="/logout">Sign out</a> <a href="/profile">Profile</a></header>
@@ -67,6 +84,7 @@ const APP_HTML = (user: User) => `<!doctype html><html lang="en"><head><meta cha
 <main id="screen"><h1>Loading</h1></main>
 <script>
 localStorage.setItem("crm_token", "${b64({ alg: "none", typ: "JWT" })}.${b64({ sub: user.email, company: user.company, role: user.role })}.");
+try { new WebSocket("ws://" + location.host + "/live?token=" + encodeURIComponent(localStorage.getItem("crm_token"))); } catch (e) {}
 document.querySelectorAll("[data-go]").forEach(function (b) { b.addEventListener("click", function () { location.hash = b.getAttribute("data-go"); document.getElementById("reports-menu").hidden = true; }); });
 document.getElementById("reports").addEventListener("click", function () { var m = document.getElementById("reports-menu"); m.hidden = !m.hidden; });
 document.getElementById("wipe").addEventListener("click", function () { fetch("/api/contacts/wipe", { method: "POST" }); });
@@ -85,10 +103,24 @@ function route() {
   }
   var m = h.match(/^#\\/contacts\\/(\\d+)$/);
   if (m) { fetch("/api/contacts/" + m[1]).then(function (r) { return r.ok ? r.json() : null; }).then(function (c) { show(c ? "<h1>" + c.name + "</h1><p>" + c.email + " · " + c.phone + "</p>" + (c.aadhaar ? "<p>Aadhaar: " + c.aadhaar + "</p>" : "") : "<h1>Not found</h1>"); }); return; }
-  if (h === "#/deals") { show("<h1>Deals</h1><p>3 open deals worth 4,50,000 rupees.</p>"); return; }
+  if (h === "#/deals") {
+    fetch("/graphql", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "query Deals { deals { id title value owner } }" }) })
+      .then(function (r) { return r.json(); })
+      .then(function (g) { show("<h1>Deals</h1><p>" + g.data.deals.length + " open deals.</p><ul>" + g.data.deals.map(function (d) { return "<li>" + d.title + " (" + d.owner + ")</li>"; }).join("") + "</ul>"); });
+    return;
+  }
   if (h === "#/reports/sales") { show("<h1>Sales report</h1><p>Sales are up 12% this quarter compared with last quarter.</p>"); return; }
   if (h === "#/reports/team") { show("<h1>Team report</h1><p>Five people closed deals this month across the team.</p>"); return; }
-  if (h === "#/admin/users") { fetch("/api/admin/users").then(function (r) { return r.json(); }).then(function (u) { show("<h1>Users</h1><ul>" + u.map(function (x) { return "<li>" + x.email + " (" + x.role + ")</li>"; }).join("") + "</ul>"); }); return; }
+  if (h === "#/admin/users") {
+    fetch("/api/admin/users").then(function (r) { return r.json(); }).then(function (u) {
+      show("<h1>Users</h1><ul>" + u.map(function (x) { return "<li>" + x.email + " (" + x.role + ")</li>"; }).join("") + '</ul><label>New user email <input id="new-user"></label> <button type="button" id="add-user">Add user</button><p id="added"></p>');
+      document.getElementById("add-user").addEventListener("click", function () {
+        fetch("/api/admin/users", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: document.getElementById("new-user").value, role: "staff" }) })
+          .then(function (r) { document.getElementById("added").textContent = r.ok ? "Added" : "Not allowed"; });
+      });
+    });
+    return;
+  }
   show("<h1>Not found</h1>");
 }
 window.addEventListener("hashchange", route);
@@ -110,21 +142,22 @@ export function startDemoCrm(port = 4250): Promise<DemoCrm> {
     requested.push(`${req.method} ${url.pathname}`);
     let sid = /(?:^|;\s*)crm_session=(\w+)/.exec(req.headers.cookie ?? "")?.[1];
     const who = sid ? sessions.get(sid) : undefined;
-    const user = who ? USERS.find((u) => u.email === who) : undefined;
+    // Planted: a session waiting for its two-step code already counts as signed in.
+    const user = who ? USERS.find((u) => u.email === (who.startsWith("2fa:") ? who.slice(4) : who)) : undefined;
     const send = (status: number, type: string, body: string, headers: Record<string, string> = {}) =>
       res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...headers }).end(body);
     const html = (status: number, body: string, headers: Record<string, string> = {}) => send(status, "text/html; charset=utf-8", body, headers);
     const json = (status: number, body: unknown) => send(status, "application/json", JSON.stringify(body));
     const redirect = (to: string, headers: Record<string, string> = {}) => res.writeHead(302, { location: to, ...headers }).end();
-    const readBody = (fn: (f: URLSearchParams) => void) => {
+    const readBody = (fn: (f: URLSearchParams) => void, raw?: (b: string) => void) => {
       let b = "";
       req.on("data", (c) => (b += c));
-      req.on("end", () => fn(new URLSearchParams(b)));
+      req.on("end", () => (raw ? raw(b) : fn(new URLSearchParams(b))));
     };
     const form = (error = "") =>
       page(
         "Sign in to Acme CRM",
-        `${error ? `<div role="alert">${error}</div>` : ""}<form method="post" action="/login"><label>Email <input type="email" name="email" autocomplete="username"></label>
+        `${error ? `<div role="alert">${error}</div>` : ""}<form method="post" action="/login${url.search}"><label>Email <input type="email" name="email" autocomplete="username"></label>
          <label>Password <input type="password" name="password" autocomplete="current-password"></label><button type="submit">Sign in</button></form>`,
       );
 
@@ -148,7 +181,8 @@ export function startDemoCrm(port = 4250): Promise<DemoCrm> {
           return redirect("/login/2fa", { "set-cookie": `crm_session=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=7776000` });
         }
         sessions.set(id, u.email);
-        redirect("/app", { "set-cookie": `crm_session=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=7776000` });
+        // Planted: any address in ?next= is followed after signing in.
+        redirect(url.searchParams.get("next") || "/app", { "set-cookie": `crm_session=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=7776000` });
       });
     }
     if (url.pathname === "/login/2fa") {
@@ -167,11 +201,34 @@ export function startDemoCrm(port = 4250): Promise<DemoCrm> {
     }
     // Planted: answers with no login.
     if (url.pathname === "/api/stats") return json(200, { contacts: 5, deals: 3, top: "asha@acmeclient.in" });
+    // Planted: Laravel Telescope left open.
+    if (url.pathname.startsWith("/telescope")) {
+      return html(200, '<!doctype html><html><head><title>Telescope</title></head><body><div id="telescope" v-cloak></div><script>window.Telescope = {"path":"telescope","timezone":"UTC"};</script><script src="/vendor/telescope/app.js"></script></body></html>');
+    }
+    // GraphQL: queries read, with no login check (planted), and the schema is open to anyone (planted).
+    if (url.pathname === "/graphql" && req.method === "POST") {
+      return readBody((_f) => undefined, (raw) => {
+        let q = "";
+        try {
+          q = String(JSON.parse(raw).query ?? "");
+        } catch {
+          return json(400, { errors: [{ message: "Bad JSON" }] });
+        }
+        if (/\bmutation\b/.test(q)) {
+          changes.push("POST /graphql mutation");
+          return json(200, { data: { ok: true } });
+        }
+        if (q.includes("__schema")) return json(200, SCHEMA);
+        const company = user?.company ?? "acme";
+        if (q.includes("deals")) return json(200, { data: { deals: DEALS.filter((d) => d.company === company).map(({ company: _c, ...d }) => d) } });
+        return json(200, { errors: [{ message: "Unknown query" }] });
+      });
+    }
     if (url.pathname === "/") return redirect(user ? "/app" : "/login");
 
     if (!user) {
       if (url.pathname.startsWith("/api/")) return json(401, { error: "Sign in first" });
-      return redirect("/login");
+      return redirect(`/login?next=${encodeURIComponent(url.pathname)}`);
     }
     if (req.method !== "GET" && req.method !== "HEAD") {
       changes.push(`${req.method} ${url.pathname}`);
@@ -179,7 +236,13 @@ export function startDemoCrm(port = 4250): Promise<DemoCrm> {
     }
     // Planted: the session stays valid on the server after signing out.
     if (url.pathname === "/logout") return html(200, page("Signed out", '<p>You are signed out.</p><a href="/login">Sign in again</a>'), { "set-cookie": "crm_session=; Path=/; Max-Age=0" });
-    if (url.pathname === "/app") return html(200, APP_HTML(user));
+    // Planted: the browser may keep the signed-in app in its cache (Back after signing out shows it).
+    if (url.pathname === "/app") return html(200, APP_HTML(user), { "cache-control": "private, max-age=600" });
+    // Planted: an admin panel no menu links to, with no role check.
+    if (url.pathname === "/admin") {
+      const list = USERS.filter((u) => u.company === user.company).map((u) => `<li>${u.email}, ${u.role}</li>`).join("");
+      return html(200, page("Admin panel", `<h2>All users of ${user.company}</h2><ul>${list}</ul><h2>Settings</h2><p>Billing plan: Business. Seats: 25. Data kept for 7 years.</p>`));
+    }
     if (url.pathname === "/profile") {
       return html(200, page("Profile", `<p>Signed in as ${user.email}.</p><form method="post" action="/profile"><label>Name <input name="name" value="Admin"></label><button type="submit">Save</button></form><a href="/app">Back</a>`));
     }
@@ -199,5 +262,22 @@ export function startDemoCrm(port = 4250): Promise<DemoCrm> {
     if (url.pathname === "/api/admin/users") return json(200, USERS.filter((u) => u.company === user.company).map((u) => ({ email: u.email, role: u.role })));
     return html(404, page("Not found", "<p>No such page.</p>"));
   });
+  // Live connections: accept the WebSocket handshake and keep it open (no messages).
+  server.on("upgrade", (req, socket) => {
+    requested.push(`WS ${new URL(req.url ?? "/", base).pathname}`);
+    const key = String(req.headers["sec-websocket-key"] ?? "");
+    const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    socket.on("error", () => {});
+    live.add(socket);
+    socket.on("close", () => live.delete(socket));
+  });
+  // Closing the demo also closes its live connections, so the test process can end.
+  const live = new Set<import("node:stream").Duplex>();
+  const close = server.close.bind(server);
+  server.close = ((cb?: (err?: Error) => void) => {
+    for (const s of live) s.destroy();
+    return close(cb);
+  }) as typeof server.close;
   return new Promise((resolve) => server.listen(port, () => resolve({ server, base, requested, changes })));
 }

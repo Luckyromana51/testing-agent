@@ -99,7 +99,7 @@ export function startDemoApi(port = 4200): Promise<DemoApi> {
       res.writeHead(status, { ...headers, "content-type": "application/json" }).end(JSON.stringify(body));
     };
     if (req.headers.authorization === `Bearer ${DEMO_TOKEN}` || url.searchParams.get("api_key") === DEMO_TOKEN) tokens++;
-    if (req.method !== "GET") {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method ?? "")) {
       writes++;
       return json(405, { error: "no writes in the demo" });
     }

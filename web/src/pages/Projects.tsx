@@ -8,6 +8,7 @@ import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { PermissionCard } from "./Permission.tsx";
 import { JourneysEditor } from "./Journeys.tsx";
 import { AppSetup } from "./AppSetup.tsx";
+import { ApiSetup } from "./ApiSetup.tsx";
 import { TrendsCard } from "./Trends.tsx";
 import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
@@ -86,7 +87,7 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
-type ProjectTab = "overview" | "app" | "trends" | "watch" | "journeys" | "tests";
+type ProjectTab = "overview" | "app" | "api" | "trends" | "watch" | "journeys" | "tests";
 
 export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: User }) {
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
@@ -120,8 +121,9 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
   const tabs: [ProjectTab, string, string?][] = [
     ["overview", "Overview"],
     ...(isApp ? ([["app", "Signed-in app", p.roles?.length ? `${p.roles.length + 1} accounts` : undefined]] as [ProjectTab, string, string?][]) : []),
+    ...(p.type === "api" ? ([["api", "API setup", p.apiScenarios?.length ? `${p.apiScenarios.length} scenario${p.apiScenarios.length === 1 ? "" : "s"}` : undefined]] as [ProjectTab, string, string?][]) : []),
     ["trends", "Trends", flaky.length ? `${flaky.length} flaky` : undefined],
-    ...(watch && p.target.url ? ([["watch", "Uptime and SSL", watch.down ? "down" : p.watch?.on ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
+    ...(watch && (p.target.url || p.type === "api") ? ([["watch", p.type === "api" ? "API watch" : "Uptime and SSL", watch.down ? "down" : p.watch?.on ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ["tests", "What runs"],
   ];
@@ -261,8 +263,10 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
 
       {current === "app" && isApp && <AppSetup project={p} onChanged={reload} meta={meta} />}
 
+      {current === "api" && p.type === "api" && <ApiSetup project={p} onChanged={reload} />}
+
       {current === "watch" && watch && (
-        <WatchCard key={JSON.stringify(p.watch ?? null)} hasJourneys={Boolean(p.journeys?.some((j) => !j.off && !j.allowWrites)) && meta.modules.some((m) => m.id === "journey-watch" && m.on)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />
+        <WatchCard key={JSON.stringify(p.watch ?? null)} api={p.type === "api"} hasJourneys={(p.type === "api" ? Boolean(p.apiScenarios?.some((x) => !x.off)) : Boolean(p.journeys?.some((j) => !j.off && !j.allowWrites))) && meta.modules.some((m) => m.id === "journey-watch" && m.on)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />
       )}
 
       {current === "overview" && (

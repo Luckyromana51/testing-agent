@@ -1,4 +1,5 @@
 import { AppReport } from "./AppReport.tsx";
+import { ApiReport } from "./ApiReport.tsx";
 import { useMemo, useState } from "react";
 import { fixFor } from "../../../src/fixes.ts";
 import { groupFindings, type IssueGroup } from "../../../src/group.ts";
@@ -51,7 +52,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "app" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
+  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "api" | "app" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -301,7 +302,12 @@ export function Report({ id }: { id: string }) {
         <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
           All issues ({groups.length})
         </button>
-        {result.pages.length > 0 && (
+        {result.api && (
+          <button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}>
+            API ({result.api.calls.length} calls)
+          </button>
+        )}
+        {result.pages.length > 0 && !result.api && (
           <button className={tab === "pages" ? "active" : ""} onClick={() => setTab("pages")}>
             {unit.tab} ({result.pages.length})
           </button>
@@ -365,6 +371,7 @@ export function Report({ id }: { id: string }) {
       )}
       {tab === "issues" && <IssueList groups={groups} categories={categories} unit={unit.many} />}
       {tab === "pages" && <Pages run={run} onRunChange={reload} />}
+      {tab === "api" && <ApiReport run={run} onRunChange={reload} />}
       {tab === "app" && <AppReport result={result} />}
       {tab === "journeys" && <Journeys run={run} />}
       {tab === "visual" && <VisualTab run={run} onRunChange={reload} />}
