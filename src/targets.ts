@@ -19,11 +19,15 @@ export interface TargetInput {
   checkLinks?: boolean;
   /** A known system's id, or "" to let the test spot it. */
   system?: string;
+  /** API: a GraphQL endpoint instead of a REST API file. */
+  graphqlUrl?: string;
+  /** API: the project is a test server (tests may change data, and clean up). */
+  testServer?: boolean;
 }
 
 /** Which uploaded file types each product takes. */
 export const UPLOAD_TYPES: Record<string, RegExp> = {
-  api: /\.(json|ya?ml)$/i,
+  api: /\.(json|ya?ml|har|txt|sh|curl)$/i,
   code: /\.zip$/i,
   android: /\.apk$/i,
   ios: /\.(ipa|zip)$/i,
@@ -77,7 +81,18 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
       if (url) t.url = validateTarget(url).replace(/\/$/, "");
       else delete t.url;
     }
-    if (!t.specUrl && !t.file) throw new Error("Enter the address of the OpenAPI (Swagger) file, or upload it.");
+    if (set("graphqlUrl")) {
+      const g = clean(input.graphqlUrl);
+      if (g) t.graphqlUrl = validateTarget(g);
+      else delete t.graphqlUrl;
+    }
+    if (set("testServer")) {
+      if (input.testServer === true) t.testServer = true;
+      else delete t.testServer;
+    }
+    if (!t.specUrl && !t.file && !t.graphqlUrl && !t.url) {
+      throw new Error("Enter the address of the OpenAPI (Swagger) file, upload it (or a Postman collection, HAR file or cURL commands), give a GraphQL address, or give the API's base address so the test can look for the file.");
+    }
     return t;
   }
 

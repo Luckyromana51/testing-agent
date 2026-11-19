@@ -343,7 +343,7 @@ export interface ApiReport {
   writes?: { ran: boolean; why?: string; created: number; cleanedUp: number; leftOver: string[] };
   scenarios?: ApiScenarioResult[];
   /** Differences from the approved copy of the API file. */
-  changes?: { since: string; list: ApiChange[] };
+  changes?: { since: string; list: ApiChange[]; approvedAt?: string };
   /** First test (no approved copy yet): this run's file became the approved copy. */
   baselineSaved?: boolean;
   access?: { accounts: string[]; rows: ApiAccessRow[] };
@@ -600,6 +600,8 @@ export interface WatchConfig {
   everyMin: number;
   /** Words the page must contain, to catch a blank or error page that still answers 200. */
   expectText?: string;
+  /** API projects: the endpoint to check (called with the saved login). */
+  checkUrl?: string;
   /** The project's own webhook for alerts (Slack, Teams, Google Chat...). */
   webhook?: string;
   /** Warn this many days before the certificate ends. */

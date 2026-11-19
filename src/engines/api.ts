@@ -45,6 +45,8 @@ export interface ApiScanOptions {
   /** Where this run's copy of the API file is saved (api-spec.json), for the next test and the mock server. */
   artifactsDir?: string;
   agents?: string[];
+  /** Only run the scenarios (the API watch): no endpoint is called on its own. */
+  scenariosOnly?: boolean;
   onProgress?: (message: string) => void;
   signal?: AbortSignal;
 }
@@ -328,7 +330,7 @@ export async function scanApi(opts: ApiScanOptions): Promise<ScanResult> {
     };
 
     const callable = parsed.operations.filter((o) => !o.skip);
-    const toCall = callable.slice(0, MAX_OPERATIONS);
+    const toCall = opts.scenariosOnly ? [] : callable.slice(0, MAX_OPERATIONS);
     if (opts.auth) log(`Calling the endpoints with the saved login (${auth.label})`);
     const samples = samplesWanted();
     // Lists first, so detail endpoints get real ids from their answers.
@@ -383,7 +385,7 @@ export async function scanApi(opts: ApiScanOptions): Promise<ScanResult> {
       extraCalls: [],
       log,
     };
-    const selected = opts.agents ? API_AGENTS.filter((a) => opts.agents!.includes(a.id)) : API_AGENTS.filter((a) => !a.defaultOff);
+    const selected = opts.scenariosOnly ? API_AGENTS.filter((a) => a.id === "api.scenarios") : opts.agents ? API_AGENTS.filter((a) => opts.agents!.includes(a.id)) : API_AGENTS.filter((a) => !a.defaultOff);
     const { findings, stats } = await runEngineAgents(selected, ctx, specUrl, log);
 
     const pages: PageResult[] = calls.map((c) => ({

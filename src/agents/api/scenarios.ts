@@ -342,3 +342,25 @@ export const apiScenariosAgent: ApiAgent = {
     return out;
   },
 };
+
+export const MAX_SCENARIOS = 30;
+
+/** Checks a scenario entered on the project page. */
+export function cleanScenario(input: Record<string, unknown>, i: number): ApiScenario {
+  const name = String(input.name ?? "").trim().slice(0, 80) || `Scenario ${i + 1}`;
+  const steps = String(input.steps ?? "").slice(0, 8000);
+  const cleanup = String(input.cleanup ?? "").slice(0, 4000).trim();
+  try {
+    parseScenario(steps);
+    if (cleanup) parseScenario(cleanup);
+  } catch (err) {
+    throw new Error(`Scenario "${name}": ${(err as Error).message}`);
+  }
+  return {
+    id: String(input.id ?? "").replace(/[^\w-]/g, "").slice(0, 20) || `s${Date.now().toString(36)}${i}`,
+    name,
+    steps,
+    ...(cleanup ? { cleanup } : {}),
+    ...(input.off ? { off: true } : {}),
+  };
+}
