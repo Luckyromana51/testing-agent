@@ -146,11 +146,24 @@ export class LiveHub {
   private runs = new Map<string, LiveRun>();
   /** Finished runs stay for a moment, so a viewer that connects just after the end is told so. */
   private finished = new Map<string, string>();
+  private changed = new Set<() => void>();
 
   open(runId: string): LiveRun {
     const run = new LiveRun();
     this.runs.set(runId, run);
+    for (const cb of this.changed) cb();
     return run;
+  }
+
+  /** The ids of the tests that are running now. */
+  ids(): string[] {
+    return [...this.runs.keys()];
+  }
+
+  /** Called when a test starts or ends, for the page that shows every running test. Returns a function that unsubscribes. */
+  onChange(cb: () => void): () => void {
+    this.changed.add(cb);
+    return () => this.changed.delete(cb);
   }
 
   get(runId: string): LiveRun | undefined {
@@ -166,5 +179,6 @@ export class LiveHub {
     this.runs.delete(runId);
     this.finished.set(runId, status);
     if (this.finished.size > 200) this.finished.delete(this.finished.keys().next().value!);
+    for (const cb of this.changed) cb();
   }
 }

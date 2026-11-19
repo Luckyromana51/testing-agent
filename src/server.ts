@@ -64,6 +64,15 @@ export async function helperZip(dir = path.resolve(here, "../helper/mac")): Prom
   return zipSync(files, { level: 6 });
 }
 
+/** More tests at once than this would starve each one of CPU and memory on a normal server. */
+export const MAX_PARALLEL_PROJECTS = 8;
+
+/** How many tests (projects) run at the same time: the owner's setting, else SCAN_CONCURRENCY, else 2. */
+export function parallelProjects(asked?: number): number {
+  const n = Number(asked ?? process.env.SCAN_CONCURRENCY ?? 2);
+  return Number.isFinite(n) ? Math.max(1, Math.min(MAX_PARALLEL_PROJECTS, Math.round(n))) : 2;
+}
+
 /** Largest file that can be uploaded (APKs with native code can be big). */
 const MAX_UPLOAD = 300_000_000;
 
@@ -147,7 +156,7 @@ let ownChecksLoaded = false;
 export async function createApp(opts: AppOptions) {
   const stores = openStores(opts.dataDir);
   migrateLooseRuns(stores);
-  const queue = new ScanQueue(stores, opts.dataDir, Number(process.env.SCAN_CONCURRENCY ?? 2));
+  const queue = new ScanQueue(stores, opts.dataDir, () => parallelProjects(stores.settings.get().parallelProjects));
   const auth = new Auth(stores.users);
   auth.bootstrapFromEnv();
   const stopScheduler = opts.scheduler ? startScheduler(stores.projects, queue) : () => {};
@@ -297,6 +306,8 @@ export async function createApp(opts: AppOptions) {
       defaultMaxPages: settings.defaultMaxPages,
       parallelPages: parallelPages(settings.parallelPages),
       maxParallel: MAX_PARALLEL,
+      parallelProjects: parallelProjects(settings.parallelProjects),
+      maxParallelProjects: MAX_PARALLEL_PROJECTS,
       vault: stores.vault.status(),
       modules: MODULES.map((m) => ({ ...m, on: moduleOn(settings.modules, m.id), ready: moduleReady(m) })),
     };
@@ -395,7 +406,7 @@ export async function createApp(opts: AppOptions) {
 
   app.get<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const runs = stores.runs.list(100, p.id);
+    const runs = stores.runs.list(1000, p.id);
     return {
       project: projectSummary(p),
       runs: runs.map(runSummary),
@@ -631,6 +642,58 @@ export async function createApp(opts: AppOptions) {
     });
   });
 
+  /** The tests running now and waiting, with their project names, and the limit. */
+  const queueOverview = () => {
+    const o = queue.overview();
+    const name = (id?: string) => (id ? stores.projects.get(id)?.name : undefined);
+    return {
+      limit: o.limit,
+      maxLimit: MAX_PARALLEL_PROJECTS,
+      running: o.running.map((r) => ({ ...r, name: name(r.projectId) ?? r.url })),
+      waiting: o.waiting.map((r) => ({ ...r, name: name(r.projectId) ?? r.url })),
+    };
+  };
+  app.get("/api/queue", async () => queueOverview());
+
+  /**
+   * Every running test's live view on one stream (the Live page): the same events as one test's
+   * stream, each with its runId, plus "runs" whenever a test starts or ends. One connection for all
+   * tests, because a browser allows only six open streams to a server.
+   */
+  app.get("/api/live", async (req, reply) => {
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    const write = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const subs = new Map<string, () => void>();
+    const sync = () => {
+      for (const id of queue.live.ids()) {
+        const live = queue.live.get(id);
+        if (!live || subs.has(id)) continue;
+        const send = (event: string, data: unknown) => {
+          // With many tests on one stream, a slow connection skips pictures first.
+          if (event === "frame" && res.writableLength > 2_000_000) return;
+          write(event, { runId: id, ...(data as object) });
+        };
+        subs.set(id, live.subscribe(send, () => subs.delete(id)));
+      }
+      write("runs", queueOverview());
+    };
+    sync();
+    const offChange = queue.live.onChange(() => setTimeout(sync, 0));
+    const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
+    req.raw.on("close", () => {
+      clearInterval(ping);
+      offChange();
+      for (const off of subs.values()) off();
+    });
+  });
+
   // The run's findings for CI and security dashboards: SARIF (GitHub code scanning and others) and JUnit XML.
   const exportOf = (id: string) => {
     const run = stores.runs.get(id);
@@ -841,7 +904,7 @@ export async function createApp(opts: AppOptions) {
   app.get("/api/owner/settings", async (req) => {
     ownerOnly(req);
     const settings = stores.settings.get();
-    return { ...settings, parallelPages: parallelPages(settings.parallelPages), maxParallel: MAX_PARALLEL };
+    return { ...settings, parallelPages: parallelPages(settings.parallelPages), maxParallel: MAX_PARALLEL, parallelProjects: parallelProjects(settings.parallelProjects) };
   });
 
   app.patch("/api/owner/settings", async (req) => {
@@ -856,12 +919,15 @@ export async function createApp(opts: AppOptions) {
     if (b.defaultMaxPages !== undefined) patch.defaultMaxPages = Math.min(Math.max(Number(b.defaultMaxPages) || 20, 1), 200);
     if (b.aiSummary !== undefined) patch.aiSummary = Boolean(b.aiSummary);
     if (b.parallelPages !== undefined) patch.parallelPages = parallelPages(Number(b.parallelPages) || 1);
+    if (b.parallelProjects !== undefined) patch.parallelProjects = parallelProjects(Number(b.parallelProjects) || 1);
     if (b.modules && typeof b.modules === "object") {
       patch.modules = { ...stores.settings.get().modules };
       for (const [id, on] of Object.entries(b.modules)) if (MODULES.some((m) => m.id === id)) patch.modules[id] = Boolean(on);
     }
     const saved = stores.settings.update(patch);
-    return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL };
+    // A higher limit starts waiting tests now.
+    if (patch.parallelProjects !== undefined) queue.kick();
+    return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL, parallelProjects: parallelProjects(saved.parallelProjects) };
   });
 
   // ---- Mac helpers ------------------------------------------------------------------------------

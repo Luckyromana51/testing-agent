@@ -553,6 +553,7 @@ function HelperRow({ h, onRemove }: { h: HelperView; onRemove: () => void }) {
 function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: () => void; loginOff: boolean }) {
   const [pages, setPages] = useState(meta.defaultMaxPages);
   const [together, setTogether] = useState(meta.parallelPages);
+  const [projectsAtOnce, setProjectsAtOnce] = useState(meta.parallelProjects);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [pw, setPw] = useState({ current: "", password: "" });
@@ -584,6 +585,27 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
             onChange={(e) => setPages(Number(e.target.value))}
             onBlur={() => pages !== meta.defaultMaxPages && save({ defaultMaxPages: pages })}
           />
+        </label>
+        <label className="form-field">
+          <span>Projects tested at the same time</span>
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={meta.maxParallelProjects}
+            value={projectsAtOnce}
+            onChange={(e) => setProjectsAtOnce(Number(e.target.value))}
+            onBlur={() => {
+              const n = Math.min(Math.max(Math.round(projectsAtOnce) || 1, 1), meta.maxParallelProjects);
+              setProjectsAtOnce(n);
+              if (n !== meta.parallelProjects) save({ parallelProjects: n });
+            }}
+          />
+          <span className="field-hint">
+            How many tests run together (1 to {meta.maxParallelProjects}). Others wait for a free slot and start on their own; the
+            sidebar shows how many are running. Each test uses about 1 to 2 CPU cores and 1 to 2 GB of memory, so on an 8 GB
+            computer 2 or 3 is a good limit.
+          </span>
         </label>
         <label className="form-field">
           <span>Pages tested at the same time</span>

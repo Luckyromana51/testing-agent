@@ -161,6 +161,8 @@ export interface Settings {
   aiSummary: boolean;
   /** Pages a web test opens at the same time (1 to 16). Unset: PARALLEL_PAGES, or 4. */
   parallelPages?: number;
+  /** Tests (projects) run at the same time (1 to 8). Unset: SCAN_CONCURRENCY, or 2. */
+  parallelProjects?: number;
   /** Optional modules on/off (see src/modules.ts). Unset: each module's default. */
   modules?: Record<string, boolean>;
 }

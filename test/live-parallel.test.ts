@@ -311,6 +311,33 @@ describe("live view and summary routes", () => {
     assert.equal((await fetch(`${base}/api/runs/${id}/live`)).status, 401, "only signed-in people can watch");
   });
 
+  it("runs as many projects at once as the owner allows, and shows them all on one live stream", async () => {
+    assert.equal((await call("PATCH", "/api/owner/settings", { parallelProjects: 1 })).body.parallelProjects, 1);
+    assert.equal((await call("PATCH", "/api/owner/settings", { parallelProjects: 99 })).body.parallelProjects, 8, "kept to the limit");
+    await call("PATCH", "/api/owner/settings", { parallelProjects: 1, parallelPages: 2 });
+    const meta = (await call("GET", "/api/meta")).body;
+    assert.deepEqual([meta.parallelProjects, meta.maxParallelProjects], [1, 8]);
+    const a = await call("POST", "/api/projects", { name: "Shop A", type: "website", url: `http://127.0.0.1:${port}/`, maxPages: 4, checkLinks: false });
+    const b = await call("POST", "/api/projects", { name: "Shop B", type: "website", url: `http://127.0.0.1:${port}/about`, maxPages: 4, checkLinks: false });
+    for (let i = 0; i < 100 && stores.runs.get(a.body.run.id)?.status === "queued"; i++) await wait(50);
+    const q1 = (await call("GET", "/api/queue")).body;
+    assert.equal(q1.limit, 1);
+    assert.deepEqual(q1.running.map((r: { name: string }) => r.name), ["Shop A"]);
+    assert.deepEqual(q1.waiting.map((r: { name: string }) => r.name), ["Shop B"]);
+
+    // Raising the limit starts the waiting test at once.
+    await call("PATCH", "/api/owner/settings", { parallelProjects: 2 });
+    for (let i = 0; i < 100 && stores.runs.get(b.body.run.id)?.status === "queued"; i++) await wait(50);
+    const both = new Set([a.body.run.id, b.body.run.id]);
+    const events = await stream("/api/live", (e) => [...both].every((id) => e.some((x) => x.event === "frame" && x.data.runId === id)) || e.filter((x) => x.event === "end").length > 0);
+    const runs = events.find((e) => e.event === "runs")!.data;
+    assert.equal(runs.running.length, 2, JSON.stringify(runs));
+    for (const id of both) assert.ok(events.some((e) => e.event === "frame" && e.data.runId === id), `pictures of ${id} on the shared stream`);
+
+    for (let i = 0; i < 240 && [...both].some((id) => ["queued", "running"].includes(stores.runs.get(id)!.status)); i++) await wait(500);
+    assert.deepEqual((await call("GET", "/api/queue")).body.running, []);
+  });
+
   it("writes a summary on request only when Claude is on, and reuses one for the same issues", async () => {
     const [done] = stores.runs.list(1);
     assert.ok(done.result && !done.ai);

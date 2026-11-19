@@ -356,7 +356,7 @@ As a safety net, with login off the server only answers visits from its own comp
 
 Projects, reports and issues made while login was off are kept. To turn login off again on your own computer, set `AUTH_DISABLED=1` and restart. Without Docker (`npm start`), login is on unless you set `AUTH_DISABLED=1` yourself.
 
-Each scan uses about 1 to 2 CPU cores and 1 to 2 GB of RAM while running (an estimate, not yet measured). `SCAN_CONCURRENCY` (default 2) controls how many scans run at once.
+Each scan uses about 1 to 2 CPU cores and 1 to 2 GB of RAM while running (an estimate, not yet measured). How many tests run at once is set in Owner panel > Settings ("Projects tested at the same time", 1 to 8; `SCAN_CONCURRENCY` in .env is the starting value, default 2). The sidebar shows how many are running, and the **Live** page shows every running test's screens on one page.
 
 ### Processor type (Intel vs Apple Silicon / ARM)
 

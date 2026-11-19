@@ -95,7 +95,7 @@ function useMedia(query: string): boolean {
 }
 
 /** The newest picture of each screen, handed straight to the <img> elements showing it (never through React state). */
-class Pictures {
+export class Pictures {
   private latest = new Map<number, string>();
   private shown = new Map<number, Set<HTMLImageElement>>();
   onFirst?: (slot: number) => void;

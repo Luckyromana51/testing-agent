@@ -91,6 +91,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
   const [actionError, setActionError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [allRuns, setAllRuns] = useState(false);
   const [tab, setTabState] = useState<ProjectTab>(() => {
     try {
       return (localStorage.getItem("glv.projectTab") as ProjectTab) || "overview";
@@ -157,6 +158,11 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             <span className="muted">{targetLabel(p.target)}</span>
           )}
         </div>
+        {p.busy && !p.waiting && p.lastRun && (
+          <a className="btn live-btn" href={`#/run/${p.lastRun.id}`}>
+            ● Watch live
+          </a>
+        )}
         <button
           className="btn primary"
           disabled={p.busy}
@@ -271,7 +277,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             </tr>
           </thead>
           <tbody>
-            {runs.map((r) => (
+            {(allRuns ? runs : runs.slice(0, 20)).map((r) => (
               <tr key={r.id} onClick={() => go(`#/run/${r.id}`)} className="clickable">
                 <td>{new Date(r.startedAt ?? r.createdAt).toLocaleString()}</td>
                 <td className="muted">{r.trigger === "schedule" ? "Schedule" : r.trigger === "retest" ? "Re-test" : "Manual"}</td>
@@ -295,6 +301,11 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             ))}
           </tbody>
         </table>
+        {runs.length > 20 && (
+          <button className="btn ghost show-more" onClick={() => setAllRuns((a) => !a)}>
+            {allRuns ? "Show the latest 20" : `Show all ${runs.length} test runs`}
+          </button>
+        )}
       </div>
 
       {user.role === "owner" && (

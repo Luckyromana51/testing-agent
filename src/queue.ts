@@ -38,8 +38,28 @@ export class ScanQueue {
   constructor(
     private stores: Stores,
     private dataDir: string,
-    private concurrency = 2,
+    /** How many tests run at the same time; read on every start, so a new setting applies at once. */
+    private limit: number | (() => number) = 2,
   ) {}
+
+  private get concurrency(): number {
+    return typeof this.limit === "function" ? this.limit() : this.limit;
+  }
+
+  /** Starts waiting tests when the owner raises the limit. */
+  kick(): void {
+    this.pump();
+  }
+
+  /** The tests running now and the ones waiting, for the dashboard. */
+  overview(): { running: { runId: string; projectId?: string; url: string; startedAt?: string }[]; waiting: { runId: string; projectId?: string; url: string }[]; limit: number } {
+    const runs = [...this.active.keys()].map((id) => this.stores.runs.get(id)).filter((r): r is Run => Boolean(r));
+    return {
+      running: runs.map((r) => ({ runId: r.id, projectId: r.projectId, url: r.url, startedAt: r.startedAt })),
+      waiting: this.waiting.map((r) => ({ runId: r.id, projectId: r.projectId, url: r.url })),
+      limit: this.concurrency,
+    };
+  }
 
   artifactsDir(runId: string): string {
     return path.join(this.dataDir, "artifacts", runId);

@@ -190,3 +190,16 @@ describe("API: trends and watch", () => {
     assert.deepEqual(overview.down, []);
   });
 });
+
+describe("issue places", () => {
+  it("keeps every place an issue was seen, not just the first 50", async () => {
+    const { syncIssues } = await import("../src/issues.js");
+    const project: Project = { id: "p", key: "GC", name: "Shop", type: "website", target: { url: "https://x/" }, schedule: "off", createdAt: "", issueSeq: 0 };
+    const r = run("r1", "2026-11-19T00:00:00Z", 80, []);
+    r.result!.pages = Array.from({ length: 120 }, (_, i) => ({ url: `https://x/p${i}`, status: 200, title: "", loadMs: 1 }));
+    r.result!.findings = r.result!.pages.map((p, i) => ({ id: `f${i}`, rule: "axe:label-content-name-mismatch", title: "Visible text not in the name", detail: "", pageUrl: p.url, severity: "medium", category: "accessibility" }));
+    const { created } = syncIssues(project, r, []);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].occurrences.length, 120);
+  });
+});

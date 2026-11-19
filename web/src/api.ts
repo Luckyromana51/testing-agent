@@ -122,6 +122,9 @@ export interface Meta {
   /** Pages a web test opens at the same time, and the most the server allows. */
   parallelPages: number;
   maxParallel: number;
+  /** Tests (projects) run at the same time, and the most allowed. */
+  parallelProjects: number;
+  maxParallelProjects: number;
   /** Where the login vault's key comes from, and how many logins it holds. */
   vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
   /** Optional modules (inspect screen, visual compare, journeys...) and whether each is on. */
@@ -135,7 +138,16 @@ export interface Settings {
   /** Pages a web test opens at the same time. */
   parallelPages: number;
   maxParallel: number;
+  parallelProjects: number;
   modules?: Record<string, boolean>;
+}
+
+/** The tests running now and waiting, and how many may run at the same time. */
+export interface QueueOverview {
+  limit: number;
+  maxLimit: number;
+  running: { runId: string; projectId?: string; name: string; url: string; startedAt?: string }[];
+  waiting: { runId: string; projectId?: string; name: string; url: string }[];
 }
 
 export interface Overview {
@@ -244,6 +256,7 @@ export const api = {
 
   overview: () => call<Overview>("GET", "/api/owner/overview"),
   settings: () => call<Settings>("GET", "/api/owner/settings"),
+  queue: () => call<QueueOverview>("GET", "/api/queue"),
   updateSettings: (b: Partial<Settings>) => call<Settings>("PATCH", "/api/owner/settings", b),
   users: () => call<User[]>("GET", "/api/owner/users"),
   addUser: (b: { name: string; email: string; password: string; role: "owner" | "member" }) =>
