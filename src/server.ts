@@ -30,6 +30,7 @@ import { loadOwnChecks, moduleOn, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
 import { flakyIssues, trendPoints } from "./trends.js";
 import { cleanWatch, Watcher } from "./watch.js";
+import { reportHtml, reportPdf } from "./report-html.js";
 import { validateTarget } from "./runner/urls.js";
 
 export { validateTarget } from "./runner/urls.js";
@@ -638,6 +639,26 @@ export async function createApp(opts: AppOptions) {
     const project = (stores.projects.get(run.projectId ?? "")?.name ?? "report").replace(/[^\w-]+/g, "-").slice(0, 60);
     return { result: run.result, name: `glv-${project}-${run.id.slice(0, 8)}` };
   };
+  // The client report: a printable page, and the same page as a PDF printed by our own Chromium.
+  const clientReport = (id: string) => {
+    const run = stores.runs.get(id);
+    if (!run) throw new HttpError(404, "Run not found");
+    if (!run.result) throw new HttpError(409, "This test has no result yet.");
+    return { html: reportHtml(run, stores.projects.get(run.projectId ?? "")?.name ?? run.url), name: exportOf(id).name };
+  };
+  app.get<{ Params: { id: string } }>("/api/runs/:id/report.html", async (req, reply) => {
+    const { html } = clientReport(req.params.id);
+    // Only our inline styles: no scripts, nothing fetched.
+    reply.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:").header("X-Content-Type-Options", "nosniff");
+    return reply.type("text/html; charset=utf-8").send(html);
+  });
+  app.get<{ Params: { id: string } }>("/api/runs/:id/report.pdf", async (req, reply) => {
+    const { html, name } = clientReport(req.params.id);
+    const pdf = await reportPdf(html);
+    reply.header("Content-Disposition", `attachment; filename="${name}.pdf"`).header("X-Content-Type-Options", "nosniff");
+    return reply.type("application/pdf").send(pdf);
+  });
+
   app.get<{ Params: { id: string } }>("/api/runs/:id/report.sarif", async (req, reply) => {
     const { result, name } = exportOf(req.params.id);
     reply.header("Content-Disposition", `attachment; filename="${name}.sarif"`).header("X-Content-Type-Options", "nosniff");

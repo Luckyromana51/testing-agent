@@ -7,6 +7,7 @@ import { CATEGORY_LABEL, go, isMajor, pathOf, plural, scoreTone, SEVERITIES, use
 import { FixBox, Sev } from "../ui.tsx";
 import { LiveView } from "./LiveView.tsx";
 import { Inspect, VisualCompare } from "./Inspect.tsx";
+import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
 
 /** Products tested in a browser, which can be watched live. */
 const BROWSER_PRODUCTS = new Set(["website", "webapp", "saas", "crm", "ecommerce"]);
@@ -49,7 +50,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"issues" | "pages" | "journeys" | "visual" | "agents" | "tools">("issues");
+  const [tab, setTab] = useState<"issues" | "pages" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("issues");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -102,6 +103,14 @@ export function Report({ id }: { id: string }) {
           <details className="download-menu">
             <summary className="btn ghost">Download</summary>
             <div className="download-list">
+              <a href={`/api/runs/${run.id}/report.pdf`} download>
+                <strong>PDF report</strong>
+                <span className="muted small">For the client: scores, major issues with fixes, WCAG table, cookies</span>
+              </a>
+              <a href={`/api/runs/${run.id}/report.html`} target="_blank" rel="noreferrer">
+                <strong>Printable page</strong>
+                <span className="muted small">The same report as a web page, to read or print</span>
+              </a>
               <a href={`/api/runs/${run.id}/report.sarif`} download>
                 <strong>SARIF</strong>
                 <span className="muted small">For GitHub code scanning, GitLab, Azure DevOps and security dashboards</span>
@@ -312,6 +321,16 @@ export function Report({ id }: { id: string }) {
             Visual ({result.pages.filter((p) => p.visual?.desktop?.status === "changed" || p.visual?.phone?.status === "changed").length} changed)
           </button>
         )}
+        {result.pages.length > 0 && isUrl(result.pages[0].url) && result.scores.accessibility !== undefined && (
+          <button className={tab === "wcag" ? "active" : ""} onClick={() => setTab("wcag")}>
+            WCAG 2.2
+          </button>
+        )}
+        {result.cookies && result.cookies.length > 0 && (
+          <button className={tab === "cookies" ? "active" : ""} onClick={() => setTab("cookies")}>
+            Cookies ({result.cookies.length})
+          </button>
+        )}
         {result.agentStats && (
           <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>
             Agents ({result.agentStats.filter((s) => !s.id.startsWith("tool.")).length})
@@ -327,6 +346,8 @@ export function Report({ id }: { id: string }) {
       {tab === "pages" && <Pages run={run} onRunChange={reload} />}
       {tab === "journeys" && <Journeys run={run} />}
       {tab === "visual" && <VisualTab run={run} onRunChange={reload} />}
+      {tab === "wcag" && <WcagTab run={run} />}
+      {tab === "cookies" && <CookiesTab run={run} />}
       {tab === "agents" && <Agents run={run} />}
       {tab === "tools" && <Tools run={run} />}
     </div>
@@ -675,6 +696,113 @@ function VisualTab({ run, onRunChange }: { run: Run; onRunChange: () => void }) 
           {open === i && <VisualCompare run={run} index={i} onRunChange={onRunChange} />}
         </div>
       ))}
+    </div>
+  );
+}
+
+const WCAG_TEXT: Record<CriterionStatus, string> = { fails: "Fails", passes: "No problems found", manual: "Check by hand", "not-tested": "Not tested" };
+
+/** WCAG 2.2 A and AA, criterion by criterion, like a VPAT / accessibility conformance report. */
+function WcagTab({ run }: { run: Run }) {
+  const report = useMemo(() => wcagReport(run.result!), [run.result]);
+  const [show, setShow] = useState<CriterionStatus | "all">("all");
+  const [level, setLevel] = useState<"A" | "AA" | "all">("all");
+  const rows = report.results.filter((r) => (show === "all" || r.status === show) && (level === "all" || r.level === level));
+  return (
+    <div>
+      <div className="wcag-summary">
+        {(["fails", "passes", "manual", "not-tested"] as CriterionStatus[]).map((s) => (
+          <button key={s} className={`card wcag-tile st-${s}${show === s ? " active" : ""}`} onClick={() => setShow(show === s ? "all" : s)}>
+            <b>{report.counts[s]}</b>
+            <span>{WCAG_TEXT[s]}</span>
+          </button>
+        ))}
+      </div>
+      <p className="muted small">
+        WCAG 2.2 level A and AA ({report.results.length} criteria). Automatic checks find about a third to a half of accessibility problems; the
+        criteria marked "Check by hand" need a person with a keyboard and a screen reader. The PDF report includes this table.
+      </p>
+      <div className="pills">
+        {(["all", "A", "AA"] as const).map((l) => (
+          <button key={l} className={`pill${level === l ? " active" : ""}`} onClick={() => setLevel(l)}>
+            {l === "all" ? "A and AA" : `Level ${l}`}
+          </button>
+        ))}
+      </div>
+      <div className="card table-card">
+        <table className="table wcag-table">
+          <thead>
+            <tr>
+              <th>Criterion</th>
+              <th>Level</th>
+              <th>Result</th>
+              <th>Problems found</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <a href={`https://www.w3.org/WAI/WCAG22/Understanding/${c.id}`} target="_blank" rel="noreferrer">
+                    {c.id}
+                  </a>{" "}
+                  {c.name}
+                </td>
+                <td>{c.level}</td>
+                <td className={`st-${c.status}`}>{WCAG_TEXT[c.status]}</td>
+                <td className="small">
+                  {c.problems.join(" · ")}
+                  {c.pages > 0 && <span className="muted"> ({plural(c.pages, "page")})</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Every cookie the site set (never the values), with its security flags. */
+function CookiesTab({ run }: { run: Run }) {
+  const list = run.result!.cookies ?? [];
+  const third = list.filter((c) => !c.firstParty).length;
+  return (
+    <div>
+      <p className="muted">
+        {plural(list.length, "cookie")} set during the test, {third} by other websites. Values are never stored. Session and login cookies should be
+        Secure and HttpOnly; cookies from other sites usually need consent first (GDPR, India's DPDP Act).
+      </p>
+      <div className="card table-card">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Set by</th>
+              <th>Secure</th>
+              <th>HttpOnly</th>
+              <th>SameSite</th>
+              <th>Ends</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((c) => (
+              <tr key={`${c.domain}|${c.path}|${c.name}`}>
+                <td>
+                  <code>{c.name}</code>
+                </td>
+                <td>
+                  {c.domain} {!c.firstParty && <span className="tag muted">other site</span>}
+                </td>
+                <td className={c.secure ? "ok" : "bad"}>{c.secure ? "Yes" : "No"}</td>
+                <td className={c.httpOnly ? "ok" : /sess|auth|token|sid|jwt/i.test(c.name) ? "bad" : "muted"}>{c.httpOnly ? "Yes" : "No"}</td>
+                <td>{c.sameSite}</td>
+                <td className="small">{c.expires ? new Date(c.expires).toLocaleDateString() : "When the browser closes"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

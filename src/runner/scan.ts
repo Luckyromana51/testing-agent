@@ -5,7 +5,7 @@ import { agentsFor, WEB_AGENTS } from "../agents/registry.js";
 import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../agents/types.js";
 import { listen } from "../agents/web/signals.js";
 import type { LiveSink } from "../live.js";
-import type { AgentStat, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
+import type { AgentStat, CookieInfo, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
 import { Inspector } from "./inspect.js";
 import { runJourneys } from "./journeys.js";
 import { compareVisuals } from "./visual.js";
@@ -14,7 +14,7 @@ import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } fr
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
 import { categoriesFor } from "../products.js";
-import { isCrawlable, normaliseUrl } from "./urls.js";
+import { isCrawlable, normaliseUrl, siteOf } from "./urls.js";
 import { scoreFindings } from "./score.js";
 
 export { isCrawlable, normaliseUrl } from "./urls.js";
@@ -436,6 +436,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
 
   const pages: PageResult[] = [];
   let journeys: JourneyResult[] | undefined;
+  let cookies: CookieInfo[] | undefined;
   const parallel = parallelPages(opts.parallel);
   const live = opts.live;
   live?.setScreens(Math.min(parallel, maxPages));
@@ -665,6 +666,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       findings.push(...r.findings);
     }
     if (opts.baselineDir) findings.push(...(await compareVisuals(context, pages, opts.artifactsDir, opts.baselineDir, log)));
+    cookies = cookieList(await context.cookies().catch(() => []), origin);
 
     // Site-wide agents (links, exposed files, duplicates...) run at the same time, except those
     // that measure speed or could end the session: they run afterwards, one at a time.
@@ -719,5 +721,29 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     agentStats,
     ...(notes.length ? { notes } : {}),
     ...(journeys ? { journeys } : {}),
+    ...(cookies?.length ? { cookies } : {}),
   };
+}
+
+/** The cookies the site set, without their values, first-party first. */
+export function cookieList(list: { name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: "Strict" | "Lax" | "None" }[], origin: string): CookieInfo[] {
+  const host = new URL(origin).hostname;
+  const site = siteOf(host);
+  return list
+    .map((c) => {
+      const domain = c.domain.replace(/^\./, "");
+      return {
+        name: c.name.slice(0, 100),
+        domain,
+        path: c.path,
+        firstParty: domain === host || siteOf(domain) === site,
+        secure: c.secure,
+        httpOnly: c.httpOnly,
+        sameSite: c.sameSite,
+        ...(c.expires > 0 ? { expires: new Date(c.expires * 1000).toISOString() } : {}),
+        size: c.name.length + c.value.length,
+      };
+    })
+    .sort((a, b) => Number(b.firstParty) - Number(a.firstParty) || a.domain.localeCompare(b.domain) || a.name.localeCompare(b.name))
+    .slice(0, 300);
 }

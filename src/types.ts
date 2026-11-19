@@ -190,6 +190,23 @@ export interface ScanResult {
   tools?: ToolStat[];
   /** The user journeys followed in this run. */
   journeys?: JourneyResult[];
+  /** Every cookie the site set during the test (never their values). */
+  cookies?: CookieInfo[];
+}
+
+/** A cookie the site set, without its value. */
+export interface CookieInfo {
+  name: string;
+  domain: string;
+  path: string;
+  /** Set by the site itself (true) or by another website it loads. */
+  firstParty: boolean;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite: "Strict" | "Lax" | "None";
+  /** When it ends; unset: when the browser closes. */
+  expires?: string;
+  size: number;
 }
 
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";

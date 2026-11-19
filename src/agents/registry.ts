@@ -5,6 +5,7 @@ import { ANDROID_AGENTS } from "./mobile/android.js";
 import { IOS_AGENTS } from "./mobile/ios.js";
 import type { AgentInfo, WebAgent } from "./types.js";
 import { keyboardAgent, motionAgent, screenReaderAgent, textSpacingAgent, zoomAgent } from "./web/a11y.js";
+import { corsAgent, cspAgent, orphanPagesAgent, redirectChainAgent, renderedHtmlAgent } from "./web/audit.js";
 import { browserLabAgent } from "./web/browsers.js";
 import { anchorsAgent, devicesAgent, formFieldsAgent, monkeyAgent, notFoundPageAgent, searchAgent } from "./web/interact.js";
 import { authFormsAgent, infoLeakAgent, jsLibrariesAgent, sriAgent } from "./web/leaks.js";
@@ -95,6 +96,12 @@ export const WEB_AGENTS: WebAgent[] = [
   formatsAgent,
   otherLocaleAgent,
   appInstallAgent,
+  // Site audit: redirect chains, JavaScript-only content, orphan pages, CORS and CSP strength.
+  redirectChainAgent,
+  renderedHtmlAgent,
+  orphanPagesAgent,
+  corsAgent,
+  cspAgent,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
   ...PRODUCT_AGENTS,
 ];
