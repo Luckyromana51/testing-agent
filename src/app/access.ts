@@ -1,13 +1,13 @@
 import type { Browser, BrowserContext, Page } from "playwright";
 import { readOnly } from "../agents/web/guard.js";
-import type { CapturedCall, SiteAgent } from "../agents/types.js";
+import type { CapturedCall, SiteAgent, WriteCall } from "../agents/types.js";
 import { finding } from "../runner/finding.js";
 import { LoginError, signIn } from "../runner/login.js";
 import { normaliseUrl } from "../runner/urls.js";
 import type { AccessCell, AccessGrid, AppScreen, Finding, RoleLogin } from "../types.js";
 import { APPS, sameData } from "./calls.js";
 import { exploreApp } from "./explore.js";
-import { profileOf } from "./systems.js";
+import { adminScreensOf, ownAdminScreens, profileOf } from "./systems.js";
 
 /**
  * Who can see what: every screen and app call the main account reached is opened again by each
@@ -19,6 +19,9 @@ import { profileOf } from "./systems.js";
 const DENIED = /access denied|not authori[sz]ed|unauthori[sz]ed|forbidden|permission denied|no permission|don'?t have (access|permission)|do not have (access|permission)|not allowed|no access|insufficient (rights|privileges)|403\b|404\b|not found/i;
 const MAX_SCREENS = 40;
 const MAX_CALLS = 30;
+const MAX_CHANGES = 10;
+type Row = AccessGrid["rows"][number];
+type Flag = NonNullable<Row["flags"]>[string];
 
 /** A record's own address: a number, a UUID or a long hex id in the path, or an id parameter. */
 export function isRecordUrl(url: string): boolean {
@@ -79,21 +82,49 @@ async function openAs(page: Page, url: string, loginPaths: string[]): Promise<Op
   return { cell: "opens", text };
 }
 
+/** Sends an app call again as this account: a GET, or a POST that only reads with the same question. */
 async function callAs(ctx: BrowserContext, c: CapturedCall): Promise<{ cell: AccessCell; body: string }> {
-  const r = await ctx.request.get(c.url, { timeout: 15_000, maxRedirects: 0 }).catch(() => null);
+  const r = await (c.request
+    ? ctx.request.post(c.url, { data: c.request.body, headers: { "content-type": c.request.contentType }, timeout: 15_000, maxRedirects: 0 })
+    : ctx.request.get(c.url, { timeout: 15_000, maxRedirects: 0 })
+  ).catch(() => null);
   if (!r) return { cell: "error", body: "" };
   const s = r.status();
   if (s === 401 || s === 403 || s === 404 || (s >= 300 && s < 400)) return { cell: "blocked", body: "" };
   if (s >= 500) return { cell: "error", body: "" };
   const body = await r.text().catch(() => "");
+  // GraphQL answers 200 with an error list when it refuses.
+  if (c.read?.startsWith("GraphQL") && /"errors"\s*:/.test(body) && !/"data"\s*:\s*\{\s*"\w+"\s*:\s*[[{]/.test(body)) return { cell: "blocked", body: "" };
   return { cell: sameData(c.body, body) ? "same-data" : "opens", body };
+}
+
+/** Sends a save the main account made on the test server again as this account: did it work? */
+async function changeAs(ctx: BrowserContext, w: WriteCall, loginPaths: string[]): Promise<AccessCell> {
+  const r = await ctx.request
+    .fetch(w.url, { method: w.method, ...(w.body !== undefined ? { data: w.body } : {}), headers: w.contentType ? { "content-type": w.contentType } : {}, timeout: 15_000, maxRedirects: 0 })
+    .catch(() => null);
+  if (!r) return "error";
+  const s = r.status();
+  if (s >= 200 && s < 300) return "opens";
+  if (s >= 300 && s < 400) {
+    // A form that saved sends the browser on (to the new record); a refused one sends it to sign in.
+    const to = r.headers().location ?? "";
+    let path = "";
+    try {
+      path = new URL(to, w.url).pathname;
+    } catch {
+      return "blocked";
+    }
+    return loginPaths.includes(path) || /log_?in|sign_?in|denied|forbidden|unauthori/i.test(to) ? "blocked" : "opens";
+  }
+  return s >= 500 ? "error" : "blocked";
 }
 
 export const accessAgent: SiteAgent = {
   id: "app.access",
   name: "Who can see what (roles and companies)",
   description:
-    "Opens every screen and app call the main account reached again as each other saved account (a lower role, a user of another company) and with no login, and draws the access grid. Reports screens a role's menu hides but the role can open, addresses a role must never open, and another company's users getting this company's records.",
+    "Opens every screen and app call the main account reached again as each other saved account (a lower role, a user of another company) and with no login, and draws the access grid. Also tries the system's known admin screens directly, and on test servers the saves journeys made. Reports screens a role's menu hides but the role can open, addresses a role must never open, admin screens open to lower roles, saves that work for the wrong account, and another company's users getting this company's records.",
   category: "security",
   engine: "web",
   products: APPS,
@@ -104,7 +135,7 @@ export const accessAgent: SiteAgent = {
     const roles = site.roles ?? [];
     const out: Finding[] = [];
     const main = { id: "main", name: site.login?.roleName || "Main account", signedIn: true };
-    const screens: AppScreen[] = [];
+    const screens: (AppScreen & { known?: "system" | "general" })[] = [];
     const seen = new Set<string>();
     const byUrl = new Map((site.screens ?? []).map((s) => [s.url, s]));
     for (const s of [...(site.screens ?? []).filter((s) => s.inMenu), ...pages.filter((p) => !p.error && (p.status ?? 0) < 400).map((p) => byUrl.get(normaliseUrl(p.url)) ?? { url: normaliseUrl(p.url) })]) {
@@ -112,33 +143,70 @@ export const accessAgent: SiteAgent = {
       seen.add(s.url);
       screens.push(s);
     }
-    const calls = (site.calls ?? []).filter((c) => c.method === "GET" && c.status >= 200 && c.status < 300 && c.body).slice(0, MAX_CALLS);
-    const grid: AccessGrid = {
-      roles: [main, ...roles.map((r) => ({ id: r.id, name: r.name, ...(r.otherCompany ? { otherCompany: true } : {}), signedIn: false })), { id: "anon", name: "No login", signedIn: false }],
-      rows: [
-        ...screens.map((s) => ({ kind: "screen" as const, url: s.url, ...(s.inMenu ? { inMenu: true } : {}), cells: { main: "opens" as AccessCell } })),
-        ...calls.map((c) => ({ kind: "call" as const, url: c.url, cells: { main: "opens" as AccessCell } })),
-      ],
-    };
-    site.access = grid;
+    const calls = (site.calls ?? []).filter((c) => (c.method === "GET" || c.request) && c.status >= 200 && c.status < 300 && c.body).slice(0, MAX_CALLS);
+    const changes = (site.writes ?? []).filter((w) => w.status >= 200 && w.status < 400).slice(0, MAX_CHANGES);
     const real: Browser | null = browser.browser();
-    if (!real || !screens.length) return out;
     const loginPaths = [site.login?.loginUrl, ...roles.map((r) => r.login.loginUrl)].filter((u): u is string => Boolean(u)).map((u) => new URL(u).pathname);
     const unsafe = site.unsafe;
-    const mainTexts = new Map<string, string>();
-    const mainText = async (url: string) => {
-      if (mainTexts.has(url)) return mainTexts.get(url)!;
+    const mainOpened = new Map<string, Opened>();
+    const mainOpen = async (url: string): Promise<Opened> => {
+      if (mainOpened.has(url)) return mainOpened.get(url)!;
       const p = await browser.newPage();
       const g = await readOnly(p, { loggedIn: true, unsafe });
       try {
         const r = await openAs(p, url, loginPaths);
-        mainTexts.set(url, r.text);
-        return r.text;
+        mainOpened.set(url, r);
+        return r;
       } finally {
         await g.off();
         await p.close().catch(() => {});
       }
     };
+    const mainText = async (url: string) => (await mainOpen(url)).text;
+
+    // The system's admin screens (users, roles, settings), tried directly: no menu needs to lead there.
+    const knownCalls: CapturedCall[] = [];
+    if (real && screens.length) {
+      const origin = new URL(startUrl).origin;
+      const own = new Set(ownAdminScreens(site.system?.id));
+      const startText = await mainText(normaliseUrl(startUrl));
+      for (const path of adminScreensOf(site.system?.id)) {
+        site.signal?.throwIfAborted();
+        const url = new URL(path, origin).href;
+        if (seen.has(url) || seen.has(normaliseUrl(url)) || unsafe?.test(url) || calls.some((c) => c.url === url)) continue;
+        if (/\/api\//.test(path)) {
+          const r = await browser.request.get(url, { timeout: 10_000, maxRedirects: 0 }).catch(() => null);
+          const body = r && r.status() === 200 && /json/i.test(r.headers()["content-type"] ?? "") ? await r.text().catch(() => "") : "";
+          if (body.length > 20) knownCalls.push({ method: "GET", url, status: 200, ms: 0, bytes: body.length, pageUrl: url, type: "fetch", contentType: "application/json", body, count: 1 });
+          continue;
+        }
+        const got = await mainOpen(url);
+        if (got.cell !== "opens" || got.text.length < 40 || sameData(got.text, startText)) continue;
+        seen.add(url);
+        screens.push({ url, via: "Admin screen, tried directly", known: own.has(path) ? "system" : "general" });
+      }
+      if (screens.some((s) => s.known) || knownCalls.length) log(`Access grid: ${screens.filter((s) => s.known).length + knownCalls.length} admin screens of the system open for the main account; trying them as the other accounts`);
+    }
+    const allCalls = [...calls, ...knownCalls];
+
+    const grid: AccessGrid = {
+      roles: [main, ...roles.map((r) => ({ id: r.id, name: r.name, ...(r.otherCompany ? { otherCompany: true } : {}), signedIn: false })), { id: "anon", name: "No login", signedIn: false }],
+      rows: [],
+    };
+    const screenRows = screens.map((s): Row => ({ kind: "screen" as const, url: s.url, ...(s.inMenu ? { inMenu: true } : {}), ...(s.known ? { known: true } : {}), cells: { main: "opens" as AccessCell } }));
+    const callRows = allCalls.map((c): Row => ({
+      kind: "call" as const,
+      url: c.url,
+      ...(c.method !== "GET" ? { method: c.method } : {}),
+      ...(c.read ? { what: c.read } : {}),
+      ...(knownCalls.includes(c) ? { known: true } : {}),
+      cells: { main: "opens" as AccessCell },
+    }));
+    const changeRows = changes.map((w): Row => ({ kind: "change" as const, url: w.url, method: w.method, what: w.journey, cells: { main: "opens" as AccessCell } }));
+    grid.rows.push(...screenRows, ...callRows, ...changeRows);
+    site.access = grid;
+    if (!real || !screens.length) return out;
+    if (changes.length) log(`Access grid: ${changes.length} saves from journeys on the test server will be tried as the other accounts`);
 
     const accounts: { col: (typeof grid.roles)[number]; role?: RoleLogin }[] = [...roles.map((r) => ({ col: grid.roles.find((g) => g.id === r.id)!, role: r })), { col: grid.roles.at(-1)! }];
     for (const { col, role } of accounts) {
@@ -173,25 +241,46 @@ export const accessAgent: SiteAgent = {
           menu = new Set(own.filter((s) => s.inMenu).map((s) => s.url));
           for (const row of grid.rows) if (menu.has(row.url)) row.menuOf = [...(row.menuOf ?? []), role.id];
         }
-        log(`Access grid: opening ${screens.length} screens and ${calls.length} app calls as ${col.name}`);
+        log(`Access grid: opening ${screens.length} screens, ${allCalls.length} app calls${changes.length ? ` and ${changes.length} save${changes.length === 1 ? "" : "s"}` : ""} as ${col.name}`);
         const page = await ctx.newPage();
         const guard = await readOnly(page, { loggedIn: true, unsafe });
         const records: string[] = [];
+        const adminOpen: string[] = [];
+        let adminSystem = false;
         try {
-          for (const s of screens) {
+          for (const [i, s] of screens.entries()) {
             site.signal?.throwIfAborted();
-            const row = grid.rows.find((r) => r.kind === "screen" && r.url === s.url)!;
+            const row = screenRows[i];
             const got = await openAs(page, s.url, loginPaths);
             let cell = got.cell;
-            if (cell === "opens" && role?.otherCompany && isRecordUrl(s.url)) {
+            if (cell === "opens" && (role?.otherCompany ? isRecordUrl(s.url) : s.known)) {
               cell = sameData(await mainText(s.url), got.text) ? "same-data" : "other-data";
             }
             row.cells[col.id] = cell;
-            if (!role || cell === "blocked" || cell === "error") continue;
+            if (cell === "blocked" || cell === "error") continue;
+            const flag = (f: Flag) => (row.flags = { ...(row.flags ?? {}), [col.id]: f });
+            if (!role) {
+              // No login: an admin screen that opens with the admin's data.
+              if (s.known && cell === "same-data") {
+                flag("no-login");
+                out.push(
+                  finding({
+                    category: "security",
+                    rule: "app:admin-screen-public",
+                    severity: "critical",
+                    title: "An admin screen opens with no login",
+                    detail: `${s.url} shows a visitor with no login the same admin screen the main account sees. Put the login check on this route.`,
+                    pageUrl: s.url,
+                    evidence: "No login → same admin screen",
+                    agent: "app.access",
+                  }),
+                );
+              }
+              continue;
+            }
             const path = new URL(s.url).pathname;
             const forbidden = role.mustNotOpen ? matchesPattern(s.url, role.mustNotOpen) : undefined;
-            const flag = (f: "forbidden" | "hidden" | "other-company") => (row.flags = { ...(row.flags ?? {}), [col.id]: f });
-            if (role.otherCompany && cell === "same-data") {
+            if (role.otherCompany && cell === "same-data" && !s.known) {
               records.push(s.url);
               flag("other-company");
             } else if (forbidden) {
@@ -208,6 +297,10 @@ export const accessAgent: SiteAgent = {
                   agent: "app.access",
                 }),
               );
+            } else if (!role.otherCompany && s.known && cell === "same-data" && !menu.has(s.url)) {
+              flag("admin");
+              adminOpen.push(s.url);
+              adminSystem ||= s.known === "system";
             } else if (!role.otherCompany && s.inMenu && menu.size > 1 && !menu.has(s.url) && s.url !== normaliseUrl(startUrl) && !(path === new URL(startUrl).pathname && !new URL(s.url).hash)) {
               flag("hidden");
               out.push(
@@ -228,6 +321,20 @@ export const accessAgent: SiteAgent = {
           await guard.off();
           await page.close().catch(() => {});
         }
+        if (role && adminOpen.length) {
+          out.push(
+            finding({
+              category: "security",
+              rule: "app:role-admin-screen",
+              severity: adminSystem ? "high" : "medium",
+              title: `${role.name} opens admin screens by typing the address`,
+              detail: `${role.name}'s menu has no link to ${adminOpen.length === 1 ? "this admin screen" : `these ${adminOpen.length} admin screens`}, but typing the address opens the same screen the main account sees${site.system ? ` (known admin screens of ${site.system.name})` : ""}. If ${role.name} should not manage users or settings, add the role check on the server for these routes.`,
+              pageUrl: adminOpen[0],
+              evidence: adminOpen.slice(0, 10).map((u) => `${role.name} → opens ${u}`).join("\n"),
+              agent: "app.access",
+            }),
+          );
+        }
         if (role && records.length) {
           out.push(
             finding({
@@ -244,23 +351,29 @@ export const accessAgent: SiteAgent = {
         }
         const idor: string[] = [];
         const forbiddenCalls: string[] = [];
+        const adminCalls: string[] = [];
         let firstPage = "";
-        for (const c of calls) {
+        for (const [i, c] of allCalls.entries()) {
           site.signal?.throwIfAborted();
-          const row = grid.rows.find((r) => r.kind === "call" && r.url === c.url)!;
+          const row = callRows[i];
           const got = await callAs(ctx, c);
           row.cells[col.id] = got.cell;
           if (!role) continue;
           const forbidden = role.mustNotOpen ? matchesPattern(c.url, role.mustNotOpen) : undefined;
-          const where = new URL(c.url).pathname + new URL(c.url).search;
-          if (role.otherCompany && got.cell === "same-data" && isRecordUrl(c.url)) {
-            row.flags = { ...(row.flags ?? {}), [col.id]: "other-company" };
-            idor.push(`GET ${where} → same data`);
+          const where = `${c.method} ${new URL(c.url).pathname + new URL(c.url).search}${c.read ? ` (${c.read})` : ""}`;
+          const setFlag = (f: Flag) => (row.flags = { ...(row.flags ?? {}), [col.id]: f });
+          if (role.otherCompany && got.cell === "same-data" && (isRecordUrl(c.url) || (c.request && /\b(id|ids)\b"?\s*[:=]/.test(c.request.body)))) {
+            setFlag("other-company");
+            idor.push(`${where} → same data`);
             firstPage ||= c.pageUrl || c.url;
           } else if (forbidden && (got.cell === "same-data" || got.cell === "opens")) {
-            row.flags = { ...(row.flags ?? {}), [col.id]: "forbidden" };
-            forbiddenCalls.push(`GET ${where} → answers (rule "${forbidden}")`);
+            setFlag("forbidden");
+            forbiddenCalls.push(`${where} → answers (rule "${forbidden}")`);
             firstPage ||= c.pageUrl || c.url;
+          } else if (!role.otherCompany && knownCalls.includes(c) && got.cell === "same-data") {
+            setFlag("admin");
+            adminCalls.push(`${where} → same data`);
+            firstPage ||= c.url;
           }
         }
         if (role && idor.length) {
@@ -287,6 +400,68 @@ export const accessAgent: SiteAgent = {
               detail: `${forbiddenCalls.length} call${forbiddenCalls.length === 1 ? "" : "s"} that ${role.name} must never use answer them. Hiding the screen is not enough: add the role check to these API routes.`,
               pageUrl: firstPage,
               evidence: forbiddenCalls.slice(0, 10).join("\n"),
+              agent: "app.access",
+            }),
+          );
+        }
+        if (role && adminCalls.length) {
+          out.push(
+            finding({
+              category: "security",
+              rule: "app:role-admin-call",
+              severity: "medium",
+              title: `${role.name} gets the user list from the app's admin API`,
+              detail: `${role.name} called the app's admin addresses directly and got the same answer as the main account. If ${role.name} should not see every user, add the role check to these API routes.`,
+              pageUrl: firstPage,
+              evidence: adminCalls.slice(0, 10).join("\n"),
+              agent: "app.access",
+            }),
+          );
+        }
+
+        // Saves from the test server's journeys, sent again as this account.
+        const bad: Record<"no-login" | "other-company" | "forbidden" | "hidden", string[]> = { "no-login": [], "other-company": [], forbidden: [], hidden: [] };
+        for (const [i, w] of changes.entries()) {
+          site.signal?.throwIfAborted();
+          const row = changeRows[i];
+          const cell = await changeAs(ctx, w, loginPaths);
+          row.cells[col.id] = cell;
+          if (cell !== "opens") continue;
+          const where = `${w.method} ${new URL(w.url).pathname} (journey "${w.journey}")`;
+          const forbidden = role?.mustNotOpen ? matchesPattern(w.url, role.mustNotOpen) || matchesPattern(w.pageUrl, role.mustNotOpen) : undefined;
+          const kind = !role
+            ? "no-login"
+            : role.otherCompany
+              ? isRecordUrl(w.url)
+                ? "other-company"
+                : undefined
+              : forbidden
+                ? "forbidden"
+                : menu.size > 1 && !menu.has(normaliseUrl(w.pageUrl))
+                  ? "hidden"
+                  : undefined;
+          if (!kind) continue;
+          row.flags = { ...(row.flags ?? {}), [col.id]: kind };
+          bad[kind].push(where);
+        }
+        const who = role?.name ?? "A visitor with no login";
+        const changeFindings: [keyof typeof bad, string, Finding["severity"], string, string][] = [
+          ["no-login", "app:change-without-login", "critical", "A save works with no login", "sends the same save without any login, and the server accepts it. Anyone on the internet can change data. Put the login check on these routes."],
+          ["other-company", "app:other-company-change", "critical", "A user of another company can change this company's records", "a user of another client company, sends the same save to this company's record, and the server accepts it. Check on the server that the record belongs to the user's company before saving."],
+          ["forbidden", "app:role-forbidden-change", "high", `${who} can make a save they must never make`, "sends a save on an address they must never use, and the server accepts it. Add the role check to the route that saves, not only to the screen."],
+          ["hidden", "app:role-hidden-change", "high", `${who} can make a save from a screen their menu hides`, "has no menu link to the screen this save comes from, yet the server accepts the save from them. If they should not do it, add the role check to the route that saves."],
+        ];
+        for (const [k, rule, severity, title, text] of changeFindings) {
+          if (!bad[k].length) continue;
+          out.push(
+            finding({
+              category: "security",
+              rule,
+              severity,
+              title,
+              detail: `${who}${k === "other-company" ? ` (${role?.name})` : ""} ${text} Found by sending again the saves a journey made on the test server.`,
+              pageUrl: changes[0].pageUrl || changes[0].url,
+              evidence: bad[k].slice(0, 10).map((x) => `${role?.name ?? "No login"} → accepted: ${x}`).join("\n"),
               agent: "app.access",
             }),
           );

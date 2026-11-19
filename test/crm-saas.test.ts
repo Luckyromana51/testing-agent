@@ -6,13 +6,15 @@ import { after, before, describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { chromium } from "playwright";
 import { isRecordUrl, matchesPattern } from "../src/app/access.js";
-import { sameData } from "../src/app/calls.js";
+import { hideSocketSecrets, sameData } from "../src/app/calls.js";
+import { exposuresFor } from "../src/app/exposed.js";
+import { safeRead } from "../src/app/reads.js";
 import { HookStore } from "../src/app/hooks.js";
 import { idNumbers } from "../src/app/session.js";
-import { chosenSystem, detectSystem, SYSTEMS } from "../src/app/systems.js";
+import { adminScreensOf, chosenSystem, detectSystem, SYSTEMS } from "../src/app/systems.js";
 import { formulaCells } from "../src/app/tables.js";
 import { base32Decode, codeInEmail, hotp, totp } from "../src/app/totp.js";
-import { runJourneys } from "../src/runner/journeys.js";
+import { cleanJourney, fillTarget, parseTable, runJourneys } from "../src/runner/journeys.js";
 import { LoginError, signIn } from "../src/runner/login.js";
 import { scanSite } from "../src/runner/scan.js";
 import { normaliseUrl } from "../src/runner/urls.js";
@@ -60,6 +62,52 @@ describe("business systems", () => {
     assert.equal(buildTarget("crm", { system: "" }, "/tmp", 20, t).system, undefined);
     assert.equal(buildTarget("crm", {}, "/tmp", 20, t).system, "zoho");
     assert.throws(() => buildTarget("crm", { url: "https://crm.acme.in", system: "made-up" }, "/tmp", 20), /not on the list/);
+  });
+});
+
+describe("round 2: reads sent with POST, system screens, test data", () => {
+  it("lets POST calls through only when they plainly read", () => {
+    const gql = (q: string) => safeRead("POST", "https://app.test/graphql", JSON.stringify({ query: q }), "application/json");
+    assert.equal(gql("query Contacts { contacts { id name } }"), "GraphQL query Contacts");
+    assert.equal(gql("{ me { email } }"), "GraphQL query");
+    assert.equal(gql("mutation Save { save(id: 1) }"), undefined);
+    assert.equal(gql('query A { a(note: "no mutation here") } mutation B { b }'), undefined);
+    assert.equal(gql('query A { a(note: "mutation X {") }'), "GraphQL query A", "words inside strings do not count");
+    const odoo = (m: string) => safeRead("POST", "https://erp.test/web/dataset/call_kw/res.partner/" + m, JSON.stringify({ jsonrpc: "2.0", method: "call", params: { model: "res.partner", method: m, args: [] } }), "application/json");
+    assert.equal(odoo("web_search_read"), "Odoo web_search_read on res.partner");
+    assert.equal(odoo("write"), undefined);
+    assert.equal(odoo("action_confirm"), undefined);
+    assert.equal(safeRead("POST", "https://erp.test/web/dataset/call_button", JSON.stringify({ params: { method: "action_post" } })), undefined);
+    assert.equal(safeRead("POST", "https://erp.test/api/method/frappe.client.get_list", "doctype=Lead"), "Frappe frappe.client.get_list");
+    assert.equal(safeRead("POST", "https://erp.test/api/method/frappe.client.save", "doc={}"), undefined);
+    const aura = (d: string) => safeRead("POST", "https://acme.my.site.com/s/sfsites/aura", `message=${encodeURIComponent(JSON.stringify({ actions: [{ descriptor: `serviceComponent://ui.x.Controller/ACTION$${d}` }] }))}`, "application/x-www-form-urlencoded");
+    assert.equal(aura("getRecord"), "Salesforce getRecord");
+    assert.equal(aura("saveRecord"), undefined);
+    assert.equal(safeRead("POST", "https://app.test/api/contacts", '{"name":"x"}', "application/json"), undefined);
+    assert.equal(safeRead("GET", "https://app.test/graphql", null), undefined);
+  });
+
+  it("knows each system's admin screens and open debug screens", () => {
+    assert.deepEqual(adminScreensOf("wordpress").slice(0, 3), ["/wp-admin/users.php", "/wp-admin/options-general.php", "/wp-admin/plugins.php"]);
+    assert.ok(adminScreensOf(undefined).includes("/admin"));
+    assert.ok(adminScreensOf("odoo").length <= 12);
+    const odoo = exposuresFor("odoo").map((e) => e.path);
+    assert.ok(odoo.includes("/web/database/manager") && odoo.includes("/telescope/requests"));
+    assert.ok(!exposuresFor("wordpress").some((e) => e.path === "/web/database/manager"));
+    assert.equal(hideSocketSecrets("wss://app.test/live?token=abc.def&room=7"), "wss://app.test/live?token=[hidden]&room=7");
+  });
+
+  it("reads a test data table and refuses bad column names", () => {
+    const t = parseTable('name,phone\nAsha Verma,98450 11111\n"Kumar, Ravi",+91 98450 22222\n');
+    assert.deepEqual(t.columns, ["name", "phone"]);
+    assert.deepEqual(t.rows[1], { name: "Kumar, Ravi", phone: "+91 98450 22222" });
+    assert.throws(() => parseTable("password\nx"), /already a word/);
+    assert.throws(() => parseTable("first name\nx"), /only have letters/);
+    assert.throws(() => cleanJourney({ name: "J", steps: "open /", data: "phone" }, 0), /at least one row/);
+    assert.equal(cleanJourney({ name: "J", steps: "open /", data: "phone\n1" }, 0).data, "phone\n1");
+    // What a step looks for or clicks gets the row's values, never the password.
+    const v = { random: "glv1", data: { name: "Asha" }, login: { kind: "web" as const, username: "a@x.test", password: "secret" } };
+    assert.equal(fillTarget("{{name}} ({{username}}) {{random}} {{password}}", v), "Asha (a@x.test) glv1 {{password}}");
   });
 });
 
@@ -136,7 +184,7 @@ describe("full system test of a signed-in CRM", () => {
       maxPages: 20,
       product: "crm",
       artifactsDir: dir,
-      agents: ["app.calls", "app.tables", "app.id-numbers", "app.csrf", "app.tokens", "app.access", "app.session", "app.user-enum", "app.private-pages"],
+      agents: ["app.calls", "app.tables", "app.id-numbers", "app.csrf", "app.tokens", "app.access", "app.session", "app.user-enum", "app.private-pages", "app.exposed", "app.login-redirect"],
       login: { kind: "web", loginUrl: `${crm.base}/login`, username: CRM_ADMIN.email, password: CRM_ADMIN.password, roleName: "Admin" },
       roles: [
         { id: "staff", name: "Sales staff", login: { kind: "web", loginUrl: `${crm.base}/login`, username: CRM_STAFF.email, password: CRM_STAFF.password }, mustNotOpen: "/api/admin/*" },
@@ -200,6 +248,37 @@ describe("full system test of a signed-in CRM", () => {
     assert.ok(!(r.get("app:id-numbers-shown")?.evidence ?? "").includes("2345 6789"), "ID numbers are masked in the report");
     assert.ok(result.calls?.some((c) => c.url.endsWith("/api/stats") && c.anon === "same"));
   });
+
+  it("round 2: GraphQL reads, open debug screens, admin screens, sign-in redirect, Back, expired session, live connections", () => {
+    const r = rules();
+    for (const rule of [
+      "app:graphql-schema-public",
+      "app:laravel-telescope",
+      "app:role-admin-screen",
+      "app:login-open-redirect",
+      "app:back-shows-private-data",
+      "app:expired-session-unhandled",
+      "app:socket-token-in-address",
+    ]) {
+      assert.ok(r.has(rule), `${rule} found`);
+    }
+    const deals = result.calls?.find((c) => c.what === "GraphQL query Deals");
+    assert.ok(deals, "the Deals screen's GraphQL query is listed as a read");
+    assert.equal(deals?.anon, "same", "and it answers with no login");
+    assert.ok(result.findings.some((f) => f.rule === "app:call-public" && /GraphQL query Deals/.test(f.evidence ?? "")));
+    const grid = result.access!;
+    const gqlRow = grid.rows.find((x) => x.kind === "call" && x.what === "GraphQL query Deals")!;
+    assert.equal(gqlRow.method, "POST");
+    assert.equal(gqlRow.cells.globex, "opens", "another company gets its own deals");
+    assert.equal(gqlRow.cells.anon, "same-data");
+    const admin = grid.rows.find((x) => x.known && x.url.endsWith("/admin"))!;
+    assert.equal(admin.cells.staff, "same-data");
+    assert.equal(admin.flags?.staff, "admin");
+    assert.equal(admin.cells.anon, "blocked");
+    assert.match(r.get("app:expired-session-unhandled")?.evidence ?? "", /stays on the old screen/);
+    assert.ok(!JSON.stringify(result.sockets).includes("eyJ"), "the token is hidden in the report");
+    assert.deepEqual(crm.changes, [], "still no data changed");
+  });
 });
 
 describe("sign-in with a two-step code, sign-in steps and role journeys", () => {
@@ -237,6 +316,22 @@ describe("sign-in with a two-step code, sign-in steps and role journeys", () => 
     }
   });
 
+  it("finds a two-step code that can be skipped, and a used code that works again", async () => {
+    const res = await scanSite({
+      url: `${crm.base}/app`,
+      maxPages: 1,
+      product: "crm",
+      artifactsDir: dir,
+      agents: ["app.two-step"],
+      explore: false,
+      login: { kind: "web", loginUrl: `${crm.base}/login`, username: CRM_2FA.email, password: CRM_2FA.password, totpSecret: CRM_2FA.secret },
+    });
+    const r = new Map(res.findings.map((f) => [f.rule, f]));
+    assert.equal(r.get("app:two-step-skippable")?.severity, "critical");
+    assert.ok(r.has("app:two-step-code-reused"));
+    assert.ok(!JSON.stringify(res).includes(CRM_2FA.secret));
+  });
+
   it("runs a journey as a role, with clean-up steps and the app's calls on each step", async () => {
     const browser = await chromium.launch();
     try {
@@ -270,6 +365,56 @@ describe("sign-in with a two-step code, sign-in steps and role journeys", () => 
     } finally {
       await browser.close();
     }
+  });
+});
+
+describe("test server: who can change what, and journeys with test data", () => {
+  let crm: DemoCrm;
+  let dir: string;
+  let result: ScanResult;
+  before(async () => {
+    crm = await startDemoCrm(4254);
+    dir = await mkdtemp(path.join(tmpdir(), "glv-crm-w-"));
+    result = await scanSite({
+      url: `${crm.base}/app`,
+      maxPages: 6,
+      product: "crm",
+      artifactsDir: dir,
+      agents: ["app.access"],
+      login: { kind: "web", loginUrl: `${crm.base}/login`, username: CRM_ADMIN.email, password: CRM_ADMIN.password, roleName: "Admin" },
+      roles: [{ id: "staff", name: "Sales staff", login: { kind: "web", loginUrl: `${crm.base}/login`, username: CRM_STAFF.email, password: CRM_STAFF.password } }],
+      journeys: [
+        { id: "add", name: "Admin adds a user", allowWrites: true, steps: "open /app#/admin/users\nfill New user email = new{{random}}@acme.test\nclick Add user\nsee Added" },
+        { id: "rows", name: "Open a contact", steps: "open /app#/contacts\nsee {{name}}", data: "name,phone\nAsha Verma,98450 11111\nRavi Kumar,98450 22222" },
+      ],
+    });
+  });
+  after(async () => {
+    crm.server.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("sends the journey's save again as the other accounts and reports the one that works", () => {
+    const row = result.access!.rows.find((x) => x.kind === "change")!;
+    assert.equal(row.method, "POST");
+    assert.equal(row.what, "Admin adds a user");
+    assert.equal(row.cells.staff, "opens");
+    assert.equal(row.flags?.staff, "hidden");
+    assert.equal(row.cells.anon, "blocked");
+    const f = result.findings.find((x) => x.rule === "app:role-hidden-change");
+    assert.ok(f, "staff can add users from a screen their menu hides");
+    assert.match(f!.evidence ?? "", /POST \/api\/admin\/users/);
+    // The journey's own save, and the same save sent again as staff and with no login (refused).
+    assert.equal(crm.changes.filter((c) => c === "POST /api/admin/users").length, 2);
+  });
+
+  it("runs a journey once per row of its test data", () => {
+    const rows = (result.journeys ?? []).filter((j) => j.name.startsWith("Open a contact"));
+    assert.deepEqual(rows.map((j) => [j.name, j.ok, j.row]), [
+      ["Open a contact (row 1: Asha Verma)", true, 1],
+      ["Open a contact (row 2: Ravi Kumar)", true, 2],
+    ]);
+    assert.equal(rows[0].steps[1].text, "see Asha Verma");
   });
 });
 

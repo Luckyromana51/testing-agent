@@ -31,6 +31,7 @@ const HELP: [string, string][] = [
   ["fill Code = {{code}}", "The two-step code from the saved secret"],
   ["fill Webhook URL = {{webhook}}", "Webhook inbox: the project's own address that catches webhooks"],
   ["webhook has lead.created", "Webhook inbox: a webhook with these words came in (waits up to 30 s)"],
+  ["fill Phone = {{phone}}", "Test data: a column of the journey's table. The journey runs once per row"],
 ];
 
 /** A record test on a test server: add a record, find it, change it, then remove it in the clean-up. */
@@ -86,7 +87,7 @@ export function JourneysEditor({ journeys, onSave, roles = [], signedIn = false 
             <label className="check">
               <input type="checkbox" checked={!j.off} onChange={(e) => set(i, { off: !e.target.checked })} /> Runs
             </label>
-            <label className="check" title="Only for staging or test sites">
+            <label className="check" title="Only for staging or test sites. The saves it makes are also sent again as the project's other accounts, to see who can change what.">
               <input type="checkbox" checked={Boolean(j.allowWrites)} onChange={(e) => set(i, { allowWrites: e.target.checked })} /> May send forms
             </label>
             <button className="btn ghost small danger" onClick={() => setDraft(draft.filter((_, k) => k !== i))}>
@@ -116,6 +117,22 @@ export function JourneysEditor({ journeys, onSave, roles = [], signedIn = false 
               placeholder={"open /contacts\nclick Test {{random}}\nclick Delete"}
               onChange={(e) => set(i, { cleanup: e.target.value || undefined })}
               aria-label={`Clean-up steps of ${j.name}`}
+              spellCheck={false}
+            />
+          </details>
+          <details className="journey-cleanup" open={Boolean(j.data)}>
+            <summary>Test data (the journey runs once per row, up to 20 rows)</summary>
+            <p className="muted small">
+              A small table, comma between values, the first line names the columns. Use a column in a step as {"{{name}}"}, like{" "}
+              <code>fill Phone = {"{{phone}}"}</code>. Good for phone formats, long names and Hindi text.
+            </p>
+            <textarea
+              className="input code"
+              rows={Math.min(10, Math.max(3, (j.data ?? "").split("\n").length + 1))}
+              value={j.data ?? ""}
+              placeholder={"name,phone\nAsha Verma,98450 11111\nरवि कुमार,+91 98450 22222"}
+              onChange={(e) => set(i, { data: e.target.value || undefined })}
+              aria-label={`Test data of ${j.name}`}
               spellCheck={false}
             />
           </details>

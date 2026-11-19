@@ -2,6 +2,8 @@ import path from "node:path";
 import type { BrowserContext, Locator, Page } from "playwright";
 import { readOnly } from "../agents/web/guard.js";
 import { totp } from "../app/totp.js";
+import type { WriteCall } from "../agents/types.js";
+import { safeRead } from "../app/reads.js";
 import type { Finding, HookInbox, Journey, JourneyResult, JourneyStepResult, Login } from "../types.js";
 import { finding } from "./finding.js";
 
@@ -40,6 +42,50 @@ export interface Step {
 
 const MAX_STEPS = 40;
 export const MAX_JOURNEYS = 10;
+/** Rows of test data a journey runs with, and runs in all. */
+export const MAX_ROWS = 20;
+const MAX_RUNS = 40;
+const DATA_KEY = /^[a-z][\w]{0,30}$/i;
+const RESERVED = /^(username|user|email|password|inbox|webhook|code|random|today|role)$/i;
+
+/** Reads a small CSV table: the first row names the columns. Quotes allow commas inside a value. */
+export function parseTable(text: string): { columns: string[]; rows: Record<string, string>[] } {
+  const lines: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  const src = text.replace(/\r\n?/g, "\n");
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"' && src[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"' && cell === "") quoted = true;
+    else if (ch === ",") {
+      row.push(cell.trim());
+      cell = "";
+    } else if (ch === "\n") {
+      row.push(cell.trim());
+      if (row.some((c) => c)) lines.push(row);
+      row = [];
+      cell = "";
+    } else cell += ch;
+  }
+  row.push(cell.trim());
+  if (row.some((c) => c)) lines.push(row);
+  if (!lines.length) return { columns: [], rows: [] };
+  const columns = lines[0].map((c) => c.replace(/^\{\{\s*|\s*\}\}$/g, ""));
+  for (const c of columns) {
+    if (!DATA_KEY.test(c)) throw new Error(`Test data: the column name "${c}" can only have letters, numbers and _ (like phone or lead_name).`);
+    if (RESERVED.test(c)) throw new Error(`Test data: "${c}" is already a word journeys use; name the column differently.`);
+  }
+  const rows = lines.slice(1).map((l) => Object.fromEntries(columns.map((c, i) => [c.toLowerCase(), (l[i] ?? "").slice(0, 500)])));
+  if (rows.length > MAX_ROWS) throw new Error(`Test data: up to ${MAX_ROWS} rows (it has ${rows.length}).`);
+  return { columns, rows };
+}
 
 const PATTERNS: [RegExp, StepKind][] = [
   [/^(?:open|click)\s+(?:the\s+)?(?:email|mail)\s+link\s+(.+)$/i, "email-link"],
@@ -101,6 +147,15 @@ export function cleanJourney(input: Partial<Journey>, i: number): Journey {
   }
   const role = String(input.role ?? "").replace(/[^\w-]/g, "").slice(0, 20);
   const cleanup = String(input.cleanup ?? "").slice(0, 3000).trim();
+  const data = String(input.data ?? "").slice(0, 20_000).trim();
+  if (data) {
+    try {
+      const t = parseTable(data);
+      if (!t.rows.length) throw new Error("Test data: add at least one row under the column names.");
+    } catch (err) {
+      throw new Error(`${name}: ${(err as Error).message}`);
+    }
+  }
   if (cleanup) {
     try {
       parseSteps(cleanup);
@@ -116,6 +171,7 @@ export function cleanJourney(input: Partial<Journey>, i: number): Journey {
     ...(input.off ? { off: true } : {}),
     ...(role ? { role } : {}),
     ...(cleanup ? { cleanup } : {}),
+    ...(data ? { data } : {}),
   };
 }
 
@@ -132,6 +188,8 @@ export interface StepVars {
   hook?: HookInbox;
   random: string;
   role?: string;
+  /** This run's row of test data, by column name (lower case). */
+  data?: Record<string, string>;
 }
 
 export const newVars = (v: Omit<StepVars, "random">): StepVars => ({ ...v, random: `glv${Date.now().toString(36).slice(-5)}${Math.random().toString(36).slice(2, 5)}` });
@@ -140,6 +198,7 @@ export function fillValue(value: string, v: StepVars): string {
   if (/\{\{\s*inbox\s*\}\}/i.test(value) && !v.mail) throw new Error("{{inbox}} needs the test mailbox: turn on \"Test mailbox (Mailpit)\" in Owner panel > Modules.");
   if (/\{\{\s*webhook\s*\}\}/i.test(value) && !v.hook) throw new Error("{{webhook}} needs the webhook inbox: open it on the project page first.");
   if (/\{\{\s*code\s*\}\}/i.test(value) && !v.login?.totpSecret) throw new Error("{{code}} needs the two-step secret in the saved login.");
+  if (v.data) value = value.replace(/\{\{\s*(\w+)\s*\}\}/g, (all, k: string) => v.data![k.toLowerCase()] ?? all);
   return value.replace(/\{\{\s*(username|user|email|password|inbox|webhook|code|random|today|role)\s*\}\}/gi, (_, k: string) => {
     switch (k.toLowerCase()) {
       case "password":
@@ -162,9 +221,27 @@ export function fillValue(value: string, v: StepVars): string {
   });
 }
 
+/** Fills the words a step looks for or clicks: test data columns and {{random}}, {{today}}, {{role}}, {{username}}. Never a password or code. */
+export function fillTarget(target: string, v: StepVars): string {
+  if (!target.includes("{{")) return target;
+  if (v.data) target = target.replace(/\{\{\s*(\w+)\s*\}\}/g, (all, k: string) => v.data![k.toLowerCase()] ?? all);
+  return target.replace(/\{\{\s*(username|user|email|random|today|role)\s*\}\}/gi, (_, k: string) => {
+    switch (k.toLowerCase()) {
+      case "random":
+        return v.random;
+      case "today":
+        return new Date().toISOString().slice(0, 10);
+      case "role":
+        return v.role ?? v.login?.roleName ?? "";
+      default:
+        return v.login?.username ?? "";
+    }
+  });
+}
+
 function shownValue(step: Step, vars?: StepVars): string {
   if (/\{\{\s*(password|code)\s*\}\}/i.test(step.value ?? "")) return step.text.replace(/=.*$/, "= ••••••");
-  if (!vars || !/\{\{\s*(random|today|role|inbox|webhook)\s*\}\}/i.test(step.text)) return step.text;
+  if (!vars || !(/\{\{\s*(random|today|role|inbox|webhook)\s*\}\}/i.test(step.text) || (vars.data && /\{\{\s*\w+\s*\}\}/.test(step.text)))) return step.text;
   try {
     return fillValue(step.text, { ...vars, login: vars.login ? { ...vars.login, password: "••••••" } : undefined });
   } catch {
@@ -271,7 +348,7 @@ export function emailLink(email: { html: string; text: string }, words: string):
 
 export async function runStep(page: Page, step: Step, base: string, vars: StepVars, signal?: AbortSignal, since = new Date().toISOString()): Promise<void> {
   const mail = vars.mail;
-  const t = step.target ?? "";
+  const t = fillTarget(step.target ?? "", vars);
   switch (step.kind) {
     case "open":
       await page.goto(resolveUrl(t, base), { waitUntil: "load", timeout: 30_000 });
@@ -374,11 +451,26 @@ export async function runJourneys(
     /** Signs in as a role, for journeys with `role`. */
     roleSession?: (roleId: string) => Promise<RoleSession>;
   },
-): Promise<{ results: JourneyResult[]; findings: Finding[] }> {
+): Promise<{ results: JourneyResult[]; findings: Finding[]; writes: WriteCall[] }> {
   const log = opts.log ?? (() => {});
   const results: JourneyResult[] = [];
   const findings: Finding[] = [];
-  for (const [ji, j] of journeys.filter((x) => !x.off).slice(0, MAX_JOURNEYS).entries()) {
+  const writes: WriteCall[] = [];
+  const startHost = (() => {
+    try {
+      return new URL(opts.startUrl).host;
+    } catch {
+      return "";
+    }
+  })();
+  // A journey with test data runs once per row.
+  const runs: { j: Journey; row?: number; data?: Record<string, string> }[] = [];
+  for (const j of journeys.filter((x) => !x.off).slice(0, MAX_JOURNEYS)) {
+    const rows = j.data ? parseTable(j.data).rows : [];
+    if (!rows.length) runs.push({ j });
+    else for (const [i, data] of rows.entries()) runs.push({ j: { ...j, name: `${j.name} (row ${i + 1}${Object.values(data)[0] ? `: ${Object.values(data)[0].slice(0, 30)}` : ""})` }, row: i + 1, data });
+  }
+  for (const [ji, { j, row, data }] of runs.slice(0, MAX_RUNS).entries()) {
     opts.signal?.throwIfAborted();
     const steps = parseSteps(j.steps);
     const cleanup = j.cleanup?.trim() ? parseSteps(j.cleanup) : [];
@@ -395,7 +487,7 @@ export async function runJourneys(
       } catch (err) {
         if (opts.signal?.aborted) throw err;
         const error = (err as Error).message.split("\n")[0].slice(0, 300);
-        results.push({ id: j.id, name: j.name, ok: false, ms: Date.now() - t0, steps: [{ line: 0, text: "Sign in as the role", ok: false, ms: 0, error }], total: steps.length, role: j.role });
+        results.push({ id: row ? `${j.id}-r${row}` : j.id, name: j.name, ok: false, ms: Date.now() - t0, steps: [{ line: 0, text: "Sign in as the role", ok: false, ms: 0, error }], total: steps.length, role: j.role });
         findings.push(
           finding({
             category: "functional",
@@ -415,7 +507,7 @@ export async function runJourneys(
     const mail: Mailbox | undefined = opts.mailUrl
       ? { url: opts.mailUrl, address: `glv-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}-${ji}@${process.env.MAIL_DOMAIN || "inbox.glv.test"}` }
       : undefined;
-    const vars = newVars({ login, mail, hook: opts.hook, role: roleName });
+    const vars = newVars({ login, mail, hook: opts.hook, role: roleName, ...(data ? { data } : {}) });
     const since = new Date().toISOString();
     const page = await ctx.newPage();
     const guard = j.allowWrites ? undefined : await readOnly(page, { loggedIn: opts.loggedIn || Boolean(roleName) });
@@ -429,9 +521,36 @@ export async function runJourneys(
     };
     page.on("requestfinished", onCall);
     page.on("requestfailed", onCall);
+    // On a test server, the saves this journey makes are kept, to try them again as the other accounts.
+    let inCleanup = false;
+    // Kept when the answer's headers arrive: a save whose body never finishes loading still counts.
+    const onWrite = (res: import("playwright").Response) => {
+      const req = res.request();
+      const method = req.method();
+      if (inCleanup || method === "GET" || method === "HEAD" || method === "OPTIONS" || writes.length >= 30) return;
+      let u: URL;
+      try {
+        u = new URL(req.url());
+      } catch {
+        return;
+      }
+      if (u.host !== startHost || /\b(log_?in|log_?out|sign_?in|sign_?out|session|auth|oauth|token|2fa|otp|password)\b/i.test(u.pathname)) return;
+      const body = req.postData() ?? undefined;
+      const type = req.headers()["content-type"] ?? "";
+      if (safeRead(method, req.url(), body, type)) return;
+      let pageUrl = page.url();
+      try {
+        pageUrl = req.frame().url();
+      } catch {
+        // A worker's call: the page's address will do.
+      }
+      writes.push({ method, url: req.url(), status: res.status(), ...(body && body.length <= 20_000 ? { body, contentType: type } : {}), pageUrl, journey: j.name });
+    };
+    if (j.allowWrites) page.on("response", onWrite);
     const out: JourneyStepResult[] = [];
     let failedAt: JourneyStepResult | undefined;
     const doStep = async (step: Step, n: number, isCleanup: boolean): Promise<JourneyStepResult> => {
+      inCleanup = isCleanup;
       const before = guard?.blocked.length ?? 0;
       const started = Date.now();
       stepCalls = [];
@@ -500,11 +619,12 @@ export async function runJourneys(
     } finally {
       page.off("requestfinished", onCall);
       page.off("requestfailed", onCall);
+      page.off("response", onWrite);
       await guard?.off();
       await page.close().catch(() => {});
     }
     const res: JourneyResult = {
-      id: j.id,
+      id: row ? `${j.id}-r${row}` : j.id,
       name: j.name,
       ok: !failedAt,
       ms: Date.now() - t0,
@@ -512,6 +632,7 @@ export async function runJourneys(
       total: steps.length + cleanup.length,
       ...(j.allowWrites ? { allowWrites: true } : {}),
       ...(roleName ? { role: roleName } : {}),
+      ...(row ? { row } : {}),
     };
     results.push(res);
     const failedNo = failedAt ? out.indexOf(failedAt) + 1 : 0;
@@ -535,5 +656,5 @@ export async function runJourneys(
       );
     }
   }
-  return { results, findings };
+  return { results, findings, writes };
 }

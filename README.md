@@ -267,9 +267,19 @@ For a web app, SaaS or CRM project, the test signs in with the saved login and t
 - **Journeys per role, with clean-up.** A journey can run as one of the accounts, record the app calls of each step, and end with clean-up steps that always run (delete the test record it made). New words: `{{random}}`, `{{today}}`, `{{code}}` (the two-step code), `{{role}}`, `{{webhook}}`, and the step `webhook has <text>`. **+ Record test** gives a create, read, update and delete template for test servers.
 - **Webhook inbox.** Open an inbox to get an address the client's app can send its webhooks to; the tab shows each one as it arrives, and a journey can check one came. Set `PUBLIC_URL` in `.env` to the address the client's app can reach this server at.
 - **Journey watch.** The website watch can also run the read-only journeys (sign in, open a lead...) every 15, 30 or 60 minutes, and alerts when one fails and again when it passes.
+- **Apps that read with POST.** Odoo, ERPNext, Salesforce Lightning and GraphQL apps load their screens with POST calls. Calls that plainly only read (GraphQL queries, never mutations; Odoo's search_read and other read methods; Frappe's get methods; Salesforce getters; search endpoints) pass the read-only guard, and the access grid sends them again as each account and with no login. A GraphQL schema anyone can read is reported too.
+- **Admin and debug screens left open.** With no login, the test asks for the screens well-known systems leave open: the Odoo database manager, Metabase's setup token, Strapi with no admin, Magento's env.php, Grafana without login, Laravel Telescope, Horizon, Debugbar and Ignition, Spring's actuator and heap dump, Django's debug page, Rails' route list, ASP.NET's ELMAH and trace, GraphQL playgrounds, phpMyAdmin and Adminer.
+- **Admin screens by address.** Each system's admin screens (users, roles, settings, plugins) and the usual ones of custom apps (/admin, /admin/users...) are tried directly by every account, even when no menu leads there.
+- **Two-step and sign-in checks.** After the password, the test opens the app before typing the code (it must not open), signs in again with the code already used (it must be refused), and signs in through `?next=` (or the app's own return parameter) pointing at an outside site (it must not go there).
+- **Back and expired sessions.** After signing out, Back must not show the private screen. When the session ends mid-work, clicking a menu item must lead to the sign-in page, not a blank or broken screen.
+- **Who can change what (test servers).** A journey ticked "May send forms" runs only on a test server; the saves it makes are sent again as each other account and with no login. A save the server accepts from the wrong account is reported. This can leave extra test records on the test server.
+- **Test data.** A journey can hold a small table (CSV with a header row). It runs once per row, with `{{column}}` words, for phone formats, long names or Hindi text.
+- **Live connections.** WebSocket addresses are listed with the app calls; a login token in the address, or plain ws:// on an https app, is reported.
 - **Step recorder for Chrome.** Download it from the Signed-in app tab, load it in Chrome (Extensions > Developer mode > Load unpacked), press Record, use the app, and copy the steps into a journey. It never records what is typed into password fields.
 
-The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data.
+The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data (except the saves of a journey allowed to send forms).
+
+Not built yet: the Salesforce guest-user data check (Mandiant's AuraInspector method), which needs a real Salesforce Experience site to prove; and account lock, file upload and mass assignment tests, which send many requests or change data and so need the client permission step.
 
 ## What the categories cover
 
