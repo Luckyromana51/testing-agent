@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { agentsFor } from "./agents/registry.js";
 import { aiEnabled, reusableSummary, summariseWithClaude, summaryKey } from "./ai/triage.js";
@@ -68,6 +68,17 @@ export class ScanQueue {
   /** The project's approved pictures, for visual compare. */
   baselineDir(projectId: string): string {
     return path.join(this.dataDir, "baselines", projectId.replace(/[^\w-]/g, ""));
+  }
+
+  /** The approved copy of an API project's file, for breaking changes and the mock server. */
+  apiBaselineFile(projectId: string): string {
+    return path.join(this.baselineDir(projectId), "api-spec.json");
+  }
+
+  /** Makes a test's copy of the API file the approved one. */
+  async approveApiFile(projectId: string, runId: string): Promise<void> {
+    await mkdir(this.baselineDir(projectId), { recursive: true });
+    await copyFile(path.join(this.artifactsDir(runId), "api-spec.json"), this.apiBaselineFile(projectId));
   }
 
   uploadsDir(): string {
@@ -191,7 +202,7 @@ export class ScanQueue {
         // Decrypted only for this run, kept in memory, and hidden from the report and the log.
         const login = this.stores.vault.get(project.id);
         if (login) log("Using the saved login (kept encrypted on this server)");
-        const roles = login?.kind === "web" ? this.stores.vault.roles(project.id) : [];
+        const roles = login?.kind === "web" || login?.kind === "api" ? this.stores.vault.roles(project.id) : [];
         if (roles.length) log(`Also testing as ${roles.length} other account${roles.length === 1 ? "" : "s"}: ${roles.map((r) => r.name).join(", ")}`);
         let cookie: string | undefined;
         const engine = runEngine({
@@ -218,6 +229,8 @@ export class ScanQueue {
           explore: moduleOn(settings.get().modules, "explorer"),
           system: project.target.system,
           hookInbox: moduleOn(settings.get().modules, "webhooks") ? this.stores.hooks.inboxFor(project.id) : undefined,
+          apiScenarios: project.type === "api" ? project.apiScenarios : undefined,
+          apiBaselineFile: project.type === "api" ? this.apiBaselineFile(project.id) : undefined,
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
@@ -261,6 +274,8 @@ export class ScanQueue {
         await rm(workDir, { recursive: true, force: true });
       }
       update({ result });
+      // The first API test's file becomes the approved copy that later tests are compared with.
+      if (project.type === "api" && result.api?.baselineSaved) await this.approveApiFile(project.id, run.id).catch(() => {});
 
       // Regression check: compare with the project's issue list.
       const current = projects.get(project.id) ?? project;

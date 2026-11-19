@@ -4,16 +4,20 @@ import { finding } from "../../runner/finding.js";
 import type { Finding } from "../../types.js";
 import type { EngineAgent } from "../types.js";
 import type { ApiCall, ApiContext } from "./context.js";
+import { apiAccessAgent } from "./access.js";
+import { apiChangesAgent } from "./changes.js";
+import { apiAuditAgent } from "./lint.js";
+import { apiOwaspAgent } from "./owasp.js";
+import { apiScenariosAgent } from "./scenarios.js";
+import { apiTokensAgent } from "./tokens.js";
+import { apiWritesAgent } from "./writes.js";
 
-export type ApiAgent = EngineAgent<ApiContext>;
+import { documentedResponse, type ApiAgent } from "./shared.js";
+export { documentedResponse, type ApiAgent };
 
 const ok = (c: ApiCall) => c.status !== null && c.status >= 200 && c.status < 300;
 const label = (c: ApiCall) => `GET ${c.op.path}`;
 
-/** The documented response for a status: exact code, then "2XX", then "default". */
-export function documentedResponse(op: ApiOperation, status: number) {
-  return op.responses[String(status)] ?? op.responses[`${String(status)[0]}XX`] ?? op.responses.default;
-}
 
 const base = { engine: "api" as const, products: ["api" as const] };
 
@@ -158,16 +162,39 @@ export const apiContractAgent: ApiAgent = {
         );
       }
       if (doc?.schema && c.json !== undefined) {
-        const problems = validateSchema(spec, doc.schema, c.json);
+        const extra: string[] = [];
+        const problems = validateSchema(spec, doc.schema, c.json, "$", [], 0, { extra });
         if (problems.length) {
           add(
             "api:schema-mismatch",
             "medium",
             "Response does not match the API file",
-            `${label(c)} sends data in a different shape from the one documented. Apps built from the file will break on these fields.`,
+            `${label(c)} sends data in a different shape from the one documented (types, formats like email or date-time, lengths, ranges, patterns and required fields are all checked). Apps built from the file will break on these fields.`,
             problems.slice(0, 3).join("; "),
           );
         }
+        const fields = [...new Set(extra.map((e) => e.replace(/\[\d+\]/g, "[]")))].sort();
+        if (fields.length) {
+          add(
+            "api:undocumented-fields",
+            "low",
+            "Answer has fields the API file does not list",
+            `${label(c)} sends ${fields.length} field${fields.length === 1 ? "" : "s"} the file does not mention. Either the file is out of date, or the endpoint sends more than clients need (often whole database rows: OWASP API3). Send only the documented fields.`,
+            fields.slice(0, 6).join(", "),
+          );
+        }
+      }
+      for (const h of doc?.headers ?? []) {
+        if (c.headers[h] === undefined) add("api:missing-header", "low", "A header the API file promises is not sent", `${label(c)} should send the ${h} header (it is in the file), but it did not.`, `missing: ${h}`);
+      }
+      if (c.op.deprecated && !c.headers.deprecation && !c.headers.sunset) {
+        add(
+          "api:deprecated-no-warning",
+          "low",
+          "A deprecated endpoint gives clients no warning",
+          `The file marks ${label(c)} as deprecated, and it still answers, but without a Deprecation or Sunset header. Apps that still use it get no notice before it goes. Send Deprecation: true and Sunset: <date>.`,
+          "no Deprecation or Sunset header",
+        );
       }
     }
     return out;
@@ -534,7 +561,7 @@ export const apiSpecAgent: ApiAgent = {
   },
 };
 
-/** Every agent of the API engine, in the order they run. */
+/** Every agent of the API engine, in the order they run. Writes come last: everything else only reads. */
 export const API_AGENTS: ApiAgent[] = [
   apiAvailabilityAgent,
   apiContractAgent,
@@ -543,4 +570,11 @@ export const API_AGENTS: ApiAgent[] = [
   apiErrorsAgent,
   apiTransportAgent,
   apiSpecAgent,
+  apiAuditAgent,
+  apiOwaspAgent,
+  apiTokensAgent,
+  apiChangesAgent,
+  apiAccessAgent,
+  apiScenariosAgent,
+  apiWritesAgent,
 ];
