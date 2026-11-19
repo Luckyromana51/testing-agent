@@ -377,6 +377,7 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
         ...(out.reports?.length ? { reports: out.reports } : {}),
         ...(out.images?.length ? { images: out.images } : {}),
         ...(out.tested ? { tested: out.tested } : {}),
+        ...(out.checked ? { checked: out.checked } : {}),
         ...(out.table ? { table: out.table } : {}),
       });
       log(`${tool.name}: ${stat.findings} findings${merged ? `, ${merged} already found by the platform's checks` : ""}`);

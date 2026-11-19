@@ -186,13 +186,14 @@ Tests started without a tool choice (the API, a quick test, projects made before
 
 **SARIF and JUnit.** Every finished test can be downloaded from its report (Download): SARIF for GitHub code scanning, GitLab, Azure DevOps and security dashboards (code findings point at the file and line), and JUnit XML for CI test reports (a failed test per issue, a skipped test for a check that could not run). The command line writes both next to `report.json`. Schemathesis and Newman also attach their own JUnit files.
 
-## Optional modules (inspect screen, visual compare, journeys, test mailbox, load charts, own tests)
+## Optional modules (inspect screen, visual compare, journeys, app explorer, webhooks, test mailbox, load charts, own tests)
 
 Owner panel > **Modules** switches these on and off. All run on our server; nothing goes to an outside service.
 
 - **Inspect screen** (on by default): Report > Pages > **Inspect page** opens a developer-tools view of the page, like Playwright's trace viewer: Steps (timeline of what the test did), Network (waterfall with timing and headers, filter by type), Console (logs, warnings, errors), Elements (the page's HTML, as source or a script-free snapshot), Tab order and outline (keyboard order, headings and landmarks drawn over the picture), Unused code (JavaScript and CSS coverage). **Download HAR** opens in Chrome or any HAR viewer. Cookies and login headers are always hidden.
 - **Visual compare** (on by default): each project keeps an approved picture of every page (desktop and phone) in `data/baselines/<project>`. The first test saves them; later tests show the approved picture, the new one and the changes in red (side by side, slider, changes only). A change over 0.5% becomes an issue; **Approve** makes the new picture the approved one.
 - **User journeys** (on by default): project page > User journeys. One step per line in plain words (`open /shop`, `click Add to cart`, `fill Email = {{username}}`, `see Your cart`, `url has /cart`); `{{password}}` uses the saved login and is never shown. Read-only by default: POST and other changes are stopped. Tick **May send forms** only for staging or test sites. Each step gets a picture; a journey that breaks becomes a high issue.
+- **App explorer**, **Webhook inbox** and **Journey watch** (on by default): the signed-in app parts described in [Signed-in apps](#signed-in-apps-crm-saas-erp-admin-panels). Switching one off leaves that part out of every test.
 - **Own checks folder** (off): put `.mjs` files in `data/modules/` (Docker: `/data/modules/`) and restart. Each exports `{ id, name, run({ page, url }) }` and returns findings; the Modules tab shows an example.
 - **Bring your own tests** (off): adds the tool tab **Your own tests (Playwright)**. Upload a zip of the client's Playwright tests folder (with `playwright.config` if they have one; no `node_modules`). They run with our Chromium against the project's address (`baseURL` is set for them, their `webServer` is ignored, one retry so flaky tests show). Each failed test is a high issue, each flaky one medium. Only for code you trust, and point it at a staging site: tests may change data.
 
@@ -246,11 +247,39 @@ A project can keep one login, used for every test of that project:
 
 Safety while signed in:
 
-- The agents only look. They never press buttons or submit forms, and the crawler and link checker skip links that log out or look like actions (delete, cancel, archive, approve, mark all read, switch account, and similar).
-- Use a test account, not a real customer's. Two-step codes and CAPTCHAs stop automated sign-in; the report says so when that happens.
+- The agents only look. They never submit forms, and the crawler and link checker skip links that log out or look like actions (delete, cancel, archive, approve, mark all read, switch account, and similar). The app explorer clicks menus, dropdowns and tabs to find screens, but never an item that sounds like a change (delete, save, send, pay, approve...), and every request it causes that is not a plain GET is stopped.
+- Use a test account, not a real customer's. Two-step codes from an authenticator app (TOTP) and codes sent by email work (see below); CAPTCHAs stop automated sign-in, and the report says so when that happens.
 - Secrets (passwords, tokens, keys) are encrypted with AES-256-GCM in the database, only unlocked in memory while a test runs, never sent back to the dashboard, and replaced with `[hidden]` anywhere they appear in a report, the progress log or an error.
 
 **The vault key.** Set `SECRET_KEY` in `.env` on a server (make one with `openssl rand -base64 32`, at least 16 characters). Without it, a random key is made once and kept in the data folder as `vault.key`, which is fine on your own computer but keeps the key next to the data it protects. When you add `SECRET_KEY` later, saved logins move to it on their own at the next start. If `SECRET_KEY` is lost or changed, saved logins cannot be unlocked: the project page asks for them again. Keep a copy of the key somewhere safe, like a password manager.
+
+## Signed-in apps (CRM, SaaS, ERP, admin panels)
+
+For a web app, SaaS or CRM project, the test signs in with the saved login and tests the whole app behind it, every screen it can find, with every website check plus these. The project page's **Signed-in app** tab holds the extra accounts, the webhook inbox and the step recorder; the report's **Signed-in app** tab shows what was found.
+
+- **Works with any system.** The test recognises 40 well-known systems from the sign-in page and the first screen (Salesforce, Zoho, HubSpot, Dynamics 365, SuiteCRM, EspoCRM, Vtiger, Perfex, Bitrix24, Odoo, ERPNext, Dolibarr, SAP Fiori, OrangeHRM, Freshdesk, Zendesk, osTicket, Moodle, WordPress admin, Magento, Shopify admin, OpenCart, PrestaShop, Strapi, Directus, Metabase, Grafana, Jira, Redmine, Laravel Filament and Nova, Django admin, React-admin, and apps built on Laravel, Django, Rails, ASP.NET, CodeIgniter, Spring or Node). For a known system it uses that system's sign-in fields, menus and its list of action links never to open. Anything else is tested with general rules.
+- **App explorer.** After signing in, it clicks through the menus, dropdowns, side bars and tabs (single-page apps too, with `#/` addresses), records every screen it reaches and tests each one like a page. The report lists the screens, how each was reached, and whether it was tested.
+- **Two-step sign-in.** Save the authenticator app's secret (the text under the QR code, or the `otpauth://` link) with the login, and the test makes the 6-digit code itself (RFC 6238). Or choose "code sent by email" with the test mailbox. For an unusual sign-in, write the steps in plain words, like a journey.
+- **More accounts.** Add up to 6 accounts with other roles (staff, viewer...) and one from another company. Each signs in, and the test tries every screen and app call the main account found. **Who can see what** shows the grid: a screen in another role's "must never open" list that opens, a screen that opens although it is not in that role's menu, or another company's records and data showing, each become an issue.
+- **App calls.** The app's own fetch and XHR calls are recorded: server errors, failures, slow calls, calls that send passwords or tokens back, calls that return far too much data, and calls that answer with the same data without any login.
+- **Session and login safety.** Session fixation (the session id stays the same after sign-in), sign-out that leaves the old session working, sessions that never end, login tokens kept in the browser's storage, unsigned or never-expiring JWTs and JWTs with secrets in them, forms that change data without a CSRF token, a sign-in page that tells whether an account exists, and Aadhaar, PAN and card numbers shown in full.
+- **Data tables.** Search that does nothing, no message when nothing is found, sort that does not change the order, next page showing the same rows, and CSV exports with cells that a spreadsheet would run as a formula.
+- **Journeys per role, with clean-up.** A journey can run as one of the accounts, record the app calls of each step, and end with clean-up steps that always run (delete the test record it made). New words: `{{random}}`, `{{today}}`, `{{code}}` (the two-step code), `{{role}}`, `{{webhook}}`, and the step `webhook has <text>`. **+ Record test** gives a create, read, update and delete template for test servers.
+- **Webhook inbox.** Open an inbox to get an address the client's app can send its webhooks to; the tab shows each one as it arrives, and a journey can check one came. Set `PUBLIC_URL` in `.env` to the address the client's app can reach this server at.
+- **Journey watch.** The website watch can also run the read-only journeys (sign in, open a lead...) every 15, 30 or 60 minutes, and alerts when one fails and again when it passes.
+- **Apps that read with POST.** Odoo, ERPNext, Salesforce Lightning and GraphQL apps load their screens with POST calls. Calls that plainly only read (GraphQL queries, never mutations; Odoo's search_read and other read methods; Frappe's get methods; Salesforce getters; search endpoints) pass the read-only guard, and the access grid sends them again as each account and with no login. A GraphQL schema anyone can read is reported too.
+- **Admin and debug screens left open.** With no login, the test asks for the screens well-known systems leave open: the Odoo database manager, Metabase's setup token, Strapi with no admin, Magento's env.php, Grafana without login, Laravel Telescope, Horizon, Debugbar and Ignition, Spring's actuator and heap dump, Django's debug page, Rails' route list, ASP.NET's ELMAH and trace, GraphQL playgrounds, phpMyAdmin and Adminer.
+- **Admin screens by address.** Each system's admin screens (users, roles, settings, plugins) and the usual ones of custom apps (/admin, /admin/users...) are tried directly by every account, even when no menu leads there.
+- **Two-step and sign-in checks.** After the password, the test opens the app before typing the code (it must not open), signs in again with the code already used (it must be refused), and signs in through `?next=` (or the app's own return parameter) pointing at an outside site (it must not go there).
+- **Back and expired sessions.** After signing out, Back must not show the private screen. When the session ends mid-work, clicking a menu item must lead to the sign-in page, not a blank or broken screen.
+- **Who can change what (test servers).** A journey ticked "May send forms" runs only on a test server; the saves it makes are sent again as each other account and with no login. A save the server accepts from the wrong account is reported. This can leave extra test records on the test server.
+- **Test data.** A journey can hold a small table (CSV with a header row). It runs once per row, with `{{column}}` words, for phone formats, long names or Hindi text.
+- **Live connections.** WebSocket addresses are listed with the app calls; a login token in the address, or plain ws:// on an https app, is reported.
+- **Step recorder for Chrome.** Download it from the Signed-in app tab, load it in Chrome (Extensions > Developer mode > Load unpacked), press Record, use the app, and copy the steps into a journey. It never records what is typed into password fields.
+
+The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data (except the saves of a journey allowed to send forms).
+
+Not built yet: the Salesforce guest-user data check (Mandiant's AuraInspector method), which needs a real Salesforce Experience site to prove; and account lock, file upload and mass assignment tests, which send many requests or change data and so need the client permission step.
 
 ## What the categories cover
 
@@ -277,6 +306,18 @@ Each category gets a score out of 100. Any critical issue caps the overall score
 - "Failed to load resource" console lines are not counted again on top of the broken resource itself. Console errors from third-party scripts are kept apart and rated low.
 - Speed uses Google's Core Web Vitals thresholds. It is one lab measurement from the testing server, so real visitors' numbers can differ. Because timing changes from run to run, speed issues (and slow API endpoints) are only verified as fixed, or reopened, when two tests in a row agree.
 - A missing alt text is High, not Critical: it does not cap the score.
+
+### Same site, same result
+
+A re-test of a site that has not changed gives the same issues and the same score. What used to make it move, and what the platform does now:
+
+- **Numbers in issue names.** "1 focused item is hidden" and "8 focused items are hidden", or "LCP 6.7 s" and "LCP 4.8 s", are one issue: the issue key ignores numbers, units, plurals and is/are. Issues saved under the older key are merged into one the first time (the extra ones are closed as "Merged into GLV-12").
+- **Checks that did not finish.** When a tool stopped half way last time (testssl.sh hit its time limit), what it finds the next time is shown as "checked for the first time", not as new problems. testssl.sh now has 15 minutes (`TESTSSL_MINUTES`).
+- **Tools that check some pages.** The W3C HTML checker (first 20 pages) and Lighthouse (start page) say which pages they checked; an issue on a page they did not check this time is never called fixed. The HTML checker tries each page twice and lists errors in page order. CSS errors of one kind (`Style rule ... not allowed outside @scope`) are one issue with every selector listed, not one issue per selector.
+- **Lighthouse.** Runs 3 times per page and keeps the middle run (Google's own advice); a speed tip counts only when most runs show it. The Lighthouse tab can change this to 1 or 5 runs.
+- **Page pictures.** Taken as the page loaded, before any agent presses keys or opens menus, with animations stopped, videos paused and web fonts loaded. Each picture is taken twice a moment apart, and what moves by itself (sliders, tickers, videos, embedded frames) is left out of visual compare, shown in blue. Pictures approved automatically by older versions are replaced once without a finding; pictures a person approved are kept.
+- **Signed-in apps.** The app's own calls are put in a fixed order before the checks read them, so the access grid and the call checks take the same calls every time, whichever screen loaded first.
+- Speed itself still changes from run to run (it is a measurement), so speed issues change state only when two tests in a row agree.
 - A page that fails to load is reported once, not also as "1 request failed".
 
 ## Quick start
@@ -412,6 +453,11 @@ Every route except `/api/health` and the sign-in routes needs a signed-in sessio
 | `GET`, `POST`, `DELETE` | `/api/owner/helpers` | Paired Macs, with what each can test; pair one (answers with its token, once); unpair one |
 | `GET` | `/api/owner/helpers/download` | The Mac helper and its Xcode project as a zip |
 | `POST`, `GET` | `/api/helper/*` | The Mac helper's own routes (hello, ping, jobs/next, the app file, progress, files, result), signed in with its token (`Authorization: Bearer glvh_...`), never a user's session |
+| `GET`, `POST`, `DELETE` | `/api/projects/:id/roles`, `/api/projects/:id/roles/:rid` | Extra accounts for the access grid (up to 6): `{ "name", "login": { "username", "password", "loginUrl" }, "otherCompany": false, "mustNotOpen": ["/admin*"] }`. Answers never include secrets |
+| `GET`, `POST`, `DELETE` | `/api/projects/:id/hooks` | The webhook inbox: its address and messages; `{ "fresh": true }` makes a new address, `{ "clear": true }` empties it; delete closes it |
+| `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | `/hooks/:token` | The inbox address itself, for the client's app (no login; only the secret address works) |
+| `POST` | `/api/projects/:id/watch/journeys` | Run the read-only journeys now (journey watch) |
+| `GET` | `/api/recorder/download` | The Chrome step recorder as a zip |
 | `GET` | `/api/health` | Health check |
 
 Local and private addresses (localhost, 10.x, 192.168.x and so on) are blocked by default so the server cannot be used to probe your internal network. This also applies to the server address inside an uploaded API file. Set `ALLOW_PRIVATE_TARGETS=1` to test internal staging sites. The check works on the address as typed; a public hostname that resolves to a private IP is not yet blocked.
@@ -442,7 +488,8 @@ src/
   issues.ts                 issue tracker sync and regression check
   auth.ts                   owner and team sign-in, and the AUTH_DISABLED switch
   vault.ts                  encrypted logins for logged-in testing (AES-256-GCM)
-  runner/login.ts           signs in through a site's own sign-in form
+  runner/login.ts           signs in through a site's own sign-in form (two-step codes, written steps)
+  app/                      signed-in app checks: systems, explorer, access grid, app calls, sessions, tables, TOTP, webhook inbox
   scheduler.ts              daily and weekly re-tests
   ai/triage.ts              Claude summary and top fixes
   queue.ts                  in-process job queue (swap for BullMQ + Redis later)
@@ -451,6 +498,7 @@ src/
   cli.ts                    glvtest command line
 web/                        React dashboard (Vite)
 helper/mac/                 the Mac helper (glv-helper.mjs) and its Xcode audit runner (GLVRunner)
+helper/chrome-recorder/     the Chrome step recorder extension (records journey steps)
 test/                       tests, plus a demo site, demo CRM behind a login, demo API, demo APK and demo IPA with deliberate bugs
 ```
 
@@ -468,8 +516,7 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 
 ## Not built yet (next steps from the plan)
 
-- Claude exploring flows while signed in (sign-up, checkout, forms), on a test copy of the client's system
-- Sign-in with a one-time code (TOTP) for test accounts that need two-step verification
+- Claude choosing and filling forms on its own while signed in, on a test copy of the client's system
 - Jira export, and AI fix pull requests
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium

@@ -113,6 +113,28 @@ export function readLighthouse(lhr: Lhr, pageUrl: string, device: string): { fin
   return { findings, summary };
 }
 
+/** Lighthouse's own advice: run it several times and keep the middle run, as its numbers move run to run. */
+const perfScore = (l: Lhr) => l.categories.performance?.score ?? 0;
+
+/**
+ * The middle run by performance score, and the speed tips that most runs agree on. A tip that
+ * shows in one run of three (a saving just over 100 ms) is noise, not a problem that came and went.
+ */
+export function medianRun(lhrs: Lhr[]): Lhr {
+  const sorted = [...lhrs].sort((a, b) => perfScore(a) - perfScore(b));
+  return sorted[Math.floor((sorted.length - 1) / 2)];
+}
+
+/** Reads several runs of the same page as one: the middle run, keeping only findings most runs share. */
+export function readLighthouseRuns(lhrs: Lhr[], pageUrl: string, device: string): { findings: ToolFinding[]; summary: string } {
+  const mid = medianRun(lhrs);
+  const read = readLighthouse(mid, pageUrl, device);
+  if (lhrs.length < 3) return read;
+  const rulesPerRun = lhrs.map((l) => new Set(readLighthouse(l, pageUrl, device).findings.map((f) => f.rule)));
+  const most = Math.floor(lhrs.length / 2) + 1;
+  return { ...read, findings: read.findings.filter((f) => rulesPerRun.filter((r) => r.has(f.rule)).length >= most) };
+}
+
 export const lighthouseTool: Tool = {
   id: "lighthouse",
   name: "Lighthouse",
@@ -127,7 +149,7 @@ export const lighthouseTool: Tool = {
   products: WEB_PRODUCTS,
   category: "performance",
   safety: "safe",
-  takes: "about 30 seconds a page",
+  takes: "about 30 seconds a page per run",
   licence: "Apache-2.0, free",
   homepage: "https://developer.chrome.com/docs/lighthouse",
   signedIn: "uses-login",
@@ -150,6 +172,16 @@ export const lighthouseTool: Tool = {
         { value: "5", label: "First 5 pages" },
       ],
       default: "1",
+    },
+    {
+      id: "runs",
+      label: "Runs per page",
+      choices: [
+        { value: "3", label: "3, keep the middle one (steady results)" },
+        { value: "1", label: "1 (faster, numbers move more)" },
+        { value: "5", label: "5 (steadiest)" },
+      ],
+      default: "3",
     },
   ],
 
@@ -174,46 +206,63 @@ export const lighthouseTool: Tool = {
     const chromeFlags = ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage", ...(proxy ? [`--proxy-server=${proxy}`] : [])];
     const out: ToolOutput = { findings: [], summary: [], reports: [] };
     const failed: string[] = [];
+    const checked: string[] = [];
+    const runs = Math.min(5, Math.max(1, Number(ctx.options.runs) || 3));
     for (const [i, url] of pages.entries()) {
       ctx.signal.throwIfAborted();
-      ctx.log(`Lighthouse (${device}): ${url}`);
-      // Written to scratch space first: Lighthouse copies the request headers (the session cookie)
-      // into its report, so only the HTML report is kept, and the runner hides the secrets in it.
-      const base = path.join(ctx.workDir, `lighthouse-${i + 1}`);
-      const args = [
-        cli,
-        url,
-        "--output=json",
-        "--output=html",
-        `--output-path=${base}`,
-        "--quiet",
-        `--chrome-flags=${chromeFlags.join(" ")}`,
-        "--only-categories=performance,accessibility,best-practices,seo",
-        "--max-wait-for-load=45000",
-        ...(device === "desktop" ? ["--preset=desktop"] : []),
-        ...(ctx.cookie ? [`--extra-headers=${headersFile}`] : []),
-      ];
-      const env = { ...process.env, CHROME_PATH: process.env.CHROME_PATH || chromium.executablePath() };
-      const res = await runProcess(process.execPath, args, { signal: ctx.signal, timeoutMs: 180_000, env });
-      let lhr: Lhr;
-      try {
-        lhr = JSON.parse(await readFile(`${base}.report.json`, "utf8")) as Lhr;
-      } catch {
-        failed.push(`${url}: ${lastLine(res.stderr) || `Lighthouse stopped with code ${res.code}`}`);
+      const lhrs: Lhr[] = [];
+      const bases = new Map<Lhr, string>();
+      let why = "";
+      for (let n = 1; n <= runs; n++) {
+        ctx.signal.throwIfAborted();
+        ctx.log(`Lighthouse (${device})${runs > 1 ? `, run ${n} of ${runs}` : ""}: ${url}`);
+        // Written to scratch space first: Lighthouse copies the request headers (the session cookie)
+        // into its report, so only the HTML report is kept, and the runner hides the secrets in it.
+        const base = path.join(ctx.workDir, `lighthouse-${i + 1}-${n}`);
+        const args = [
+          cli,
+          url,
+          "--output=json",
+          "--output=html",
+          `--output-path=${base}`,
+          "--quiet",
+          `--chrome-flags=${chromeFlags.join(" ")}`,
+          "--only-categories=performance,accessibility,best-practices,seo",
+          "--max-wait-for-load=45000",
+          ...(device === "desktop" ? ["--preset=desktop"] : []),
+          ...(ctx.cookie ? [`--extra-headers=${headersFile}`] : []),
+        ];
+        const env = { ...process.env, CHROME_PATH: process.env.CHROME_PATH || chromium.executablePath() };
+        const res = await runProcess(process.execPath, args, { signal: ctx.signal, timeoutMs: 180_000, env });
+        let lhr: Lhr;
+        try {
+          lhr = JSON.parse(await readFile(`${base}.report.json`, "utf8")) as Lhr;
+        } catch {
+          why = lastLine(res.stderr) || `Lighthouse stopped with code ${res.code}`;
+          continue;
+        }
+        if (lhr.runtimeError) {
+          why = lhr.runtimeError.message || lhr.runtimeError.code;
+          continue;
+        }
+        lhrs.push(lhr);
+        bases.set(lhr, base);
+      }
+      if (!lhrs.length) {
+        failed.push(`${url}: ${why}`);
         continue;
       }
-      if (lhr.runtimeError) {
-        failed.push(`${url}: ${lhr.runtimeError.message || lhr.runtimeError.code}`);
-        continue;
-      }
-      await copyFile(`${base}.report.html`, path.join(ctx.outDir, `tool-lighthouse-${i + 1}.html`));
-      const read = readLighthouse(lhr, url, device);
+      // The report kept is the middle run's, so its numbers match the findings.
+      await copyFile(`${bases.get(medianRun(lhrs))}.report.html`, path.join(ctx.outDir, `tool-lighthouse-${i + 1}.html`));
+      const read = readLighthouseRuns(lhrs, url, device);
       out.findings.push(...read.findings);
-      out.summary!.push(`${pages.length > 1 ? `${new URL(url).pathname}: ` : ""}${read.summary}`);
+      out.summary!.push(`${pages.length > 1 ? `${new URL(url).pathname}: ` : ""}${read.summary}${lhrs.length > 1 ? ` (middle of ${lhrs.length} runs)` : ""}`);
       out.reports!.push({ file: `tool-lighthouse-${i + 1}.html`, label: `Lighthouse report${pages.length > 1 ? ` ${i + 1}` : ""}` });
+      checked.push(url);
     }
     if (failed.length === pages.length) throw new Error(`Lighthouse could not test the page. ${failed[0]}`);
     if (failed.length) out.summary!.push(...failed.map((f) => `Not tested: ${f}`));
+    out.checked = checked;
     out.tested = `${device === "phone" ? "Phone" : "Desktop"} test of ${pages.length - failed.length} page${pages.length - failed.length === 1 ? "" : "s"}${ctx.cookie ? ", signed in" : ""}`;
     return out;
   },

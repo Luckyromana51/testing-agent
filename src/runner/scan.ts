@@ -5,7 +5,7 @@ import { agentsFor, WEB_AGENTS } from "../agents/registry.js";
 import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../agents/types.js";
 import { listen } from "../agents/web/signals.js";
 import type { LiveSink } from "../live.js";
-import type { AgentStat, CookieInfo, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
+import type { AgentStat, Box, CookieInfo, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
 import { Inspector } from "./inspect.js";
 import { runJourneys } from "./journeys.js";
 import { compareVisuals } from "./visual.js";
@@ -13,6 +13,10 @@ import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
+import { APPS, captureCalls, hideSocketSecrets, reportCall, sortCalls } from "../app/calls.js";
+import { exploreApp } from "../app/explore.js";
+import { chosenSystem, detectSystem, profileOf } from "../app/systems.js";
+import type { RoleSession } from "./journeys.js";
 import { categoriesFor } from "../products.js";
 import { isCrawlable, normaliseUrl, siteOf } from "./urls.js";
 import { scoreFindings } from "./score.js";
@@ -164,6 +168,77 @@ async function castScreen(page: Page, slot: number, live: LiveSink): Promise<() 
   };
 }
 
+/** Waits (up to 3 s) for the page's web fonts, so text is measured and drawn in its real font. */
+export async function waitForFonts(page: Page): Promise<void> {
+  await page
+    .evaluate("Promise.race([document.fonts ? document.fonts.ready.then(function () { return true; }) : true, new Promise(function (r) { setTimeout(r, 3000); })])")
+    .catch(() => {});
+}
+
+/**
+ * Waits until the page stops changing size after a resize (menus collapse, scripts re-lay the page),
+ * at most 2 s, so the phone checks see the finished phone layout every time.
+ */
+export async function settleLayout(page: Page): Promise<void> {
+  let last = "";
+  for (let i = 0; i < 8; i++) {
+    await page.waitForTimeout(250);
+    const now = await page.evaluate("document.documentElement.scrollWidth + 'x' + document.documentElement.scrollHeight").catch(() => "");
+    if (now === last) return;
+    last = String(now);
+  }
+}
+
+/** Starts noting which elements a script changes, before the picture. */
+const WATCH_JS = `(function () {
+  var seen = new Set();
+  var mo = new MutationObserver(function (list) {
+    list.forEach(function (m) { var el = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (el) seen.add(el); });
+  });
+  mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+  window.__glvMoving = { mo: mo, seen: seen };
+})()`;
+
+/**
+ * Stops noting, and returns the boxes of what moves by itself: elements a script changed while the
+ * pictures were taken, and sliders, videos, animations drawn on a canvas and embedded frames,
+ * which change on their own even when they did not just now. Boxes as big as the screen are left
+ * out, so a real change of the whole page is still seen.
+ */
+const MOVING_JS = `(function () {
+  var w = window.__glvMoving; var els = w ? Array.from(w.seen) : [];
+  if (w) { w.mo.disconnect(); delete window.__glvMoving; }
+  var sel = 'video, canvas, iframe, marquee, [aria-roledescription=carousel], [class*=carousel], [class*=slider], [class*=swiper], [class*=slick], [class*=owl-], [class*=marquee], [class*=ticker], [class*=countdown]';
+  els = els.concat(Array.from(document.querySelectorAll(sel)));
+  var vw = innerWidth, vh = innerHeight, out = [];
+  els.forEach(function (el) {
+    if (!el.getBoundingClientRect || el === document.body || el === document.documentElement) return;
+    var r = el.getBoundingClientRect();
+    var x = Math.max(0, r.left), y = Math.max(0, r.top), x2 = Math.min(vw, r.right), y2 = Math.min(vh, r.bottom);
+    if (x2 <= x || y2 <= y) return;
+    if ((x2 - x) * (y2 - y) > vw * vh * 0.6) return;
+    out.push({ x: Math.floor(x), y: Math.floor(y), w: Math.ceil(x2 - x), h: Math.ceil(y2 - y) });
+  });
+  return out.slice(0, 200);
+})()`;
+
+/**
+ * A picture of the page that is the same on every run of an unchanged page: CSS animations and
+ * transitions stopped at their end, videos paused, no blinking text cursor. With `twice`, a second
+ * picture a moment later, and the boxes of what moves by itself (a slider run by a script, a
+ * ticker), which visual compare then leaves out. Returns those boxes.
+ */
+export async function stillPicture(page: Page, file: string, twice = false): Promise<Box[] | undefined> {
+  await page.evaluate("window.scrollTo(0, 0); document.querySelectorAll('video').forEach(function (v) { try { v.pause(); v.currentTime = 0; } catch (e) {} })").catch(() => {});
+  const take = (to: string) => page.screenshot({ path: to, type: "jpeg", quality: 60, animations: "disabled", caret: "hide", timeout: 15_000 });
+  if (twice) await page.evaluate(WATCH_JS).catch(() => {});
+  await take(file);
+  if (!twice) return undefined;
+  await page.waitForTimeout(1200);
+  await take(file.replace(/\.jpg$/, "-b.jpg")).catch(() => {});
+  return ((await page.evaluate(MOVING_JS).catch(() => [])) as Box[]) ?? [];
+}
+
 interface PageOutcome {
   result: PageResult;
   findings: Finding[];
@@ -294,6 +369,9 @@ async function scanPage(
     if (url !== requestedUrl) result.redirectedFrom = requestedUrl;
     // Give late scripts a moment to throw errors or fire requests.
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+    // Web fonts change the size of text: checks of overlapping or cut-off text, and the pictures,
+    // must see the page with its fonts, or they find different things from run to run.
+    await waitForFonts(page);
     result.status = res?.status() ?? null;
     throttled ||= result.status === 429;
     result.title = (await page.title()).slice(0, 200);
@@ -331,29 +409,32 @@ async function scanPage(
     }
     links = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href).filter(Boolean));
 
-    await runStage("page");
-
-    // The picture (and the boxes drawn over it) start at the top, so pictures compare run to run.
-    await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
+    // The picture is taken as the page loaded, before any agent presses keys, zooms or opens menus,
+    // with animations stopped: an unchanged page then gives the same picture on every run.
+    // The boxes drawn over it are read at the same moment.
     if (inspector) {
-      await inspector.stopCoverage();
       await inspector.readLayout();
       inspector.step("Desktop picture");
     }
     const shot = `page-${index}.jpg`;
-    await page.screenshot({ path: path.join(opts.artifactsDir, shot), type: "jpeg", quality: 60 });
+    const moving = await stillPicture(page, path.join(opts.artifactsDir, shot), Boolean(opts.baselineDir));
+    if (moving?.length) result.moving = { desktop: moving };
     result.screenshot = shot;
+
+    await runStage("page");
+    await inspector?.stopCoverage();
 
     view = "phone";
     show("Resizing to a phone");
     await page.setViewportSize(MOBILE);
-    await page.waitForTimeout(300);
-    inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
-    await runStage("mobile");
     await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
+    await settleLayout(page);
+    inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
     const mshot = `page-${index}-mobile.jpg`;
-    await page.screenshot({ path: path.join(opts.artifactsDir, mshot), type: "jpeg", quality: 60 });
+    const mmoving = await stillPicture(page, path.join(opts.artifactsDir, mshot), Boolean(opts.baselineDir));
+    if (mmoving?.length) result.moving = { ...result.moving, phone: mmoving };
     result.mobileScreenshot = mshot;
+    await runStage("mobile");
   } catch (err) {
     result.error = (err as Error).message.split("\n")[0];
   } finally {
@@ -425,7 +506,19 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const done: { index: number; requested: string; gen: number; result: PageResult; findings: Finding[] }[] = [];
   const findings: Finding[] = [];
   const notes: string[] = [];
-  const site: SiteState = { seo: new Map(), loggedIn: Boolean(opts.login), loginUser: opts.login?.username };
+  const site: SiteState = {
+    seo: new Map(),
+    loggedIn: Boolean(opts.login),
+    loginUser: opts.login?.username,
+    login: opts.login,
+    roles: opts.roles,
+    mailUrl: opts.mailUrl,
+    signal: opts.signal,
+  };
+  const isApp = APPS.includes(opts.product ?? "website");
+  let stopCalls: (() => void) | undefined;
+  /** Browsers signed in as the project's roles, for journeys that run as a role. */
+  const roleContexts = new Map<string, Promise<RoleSession>>();
   let signedIn: SignedIn | undefined;
   let signOuts = 0;
   const loginOrigin = opts.login?.loginUrl ? new URL(opts.login.loginUrl).origin : "";
@@ -466,7 +559,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const addLinks = (pageUrl: string, links: string[]) => {
     for (const link of links) {
       if (!linkSources.has(link)) linkSources.set(link, pageUrl);
-      if (isCrawlable(link, origin, site.loggedIn) && !seen.has(link)) {
+      if (isCrawlable(link, origin, site.loggedIn) && !site.unsafe?.test(link) && !seen.has(link)) {
         seen.add(link);
         queue.push(link);
       }
@@ -487,7 +580,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     if (gen === signInGen && !signingIn) {
       signOuts++;
       log("The site signed the agent out; signing in again");
-      signingIn = signIn(context, opts.login!, log)
+      signingIn = signIn(context, opts.login!, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints })
         .then((s) => {
           signedIn = s;
           signInGen++;
@@ -582,9 +675,36 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     return true;
   };
 
+  // A system chosen on the project wins over spotting it.
+  const chosen = chosenSystem(opts.system);
+  if (chosen) {
+    site.system = chosen;
+    site.unsafe = profileOf(chosen.id)?.unsafe;
+    log(`System chosen on the project: ${chosen.name}`);
+  }
+  let loginHints: { username?: string; password?: string; submit?: string } | undefined = chosen && !opts.login?.usernameSelector ? profileOf(chosen.id)?.login : undefined;
   try {
     if (opts.login) {
-      signedIn = await signIn(context, opts.login, log);
+      // Spot the system on its sign-in page (Odoo, Zoho, WordPress...) to use its own sign-in fields.
+      if (!chosen && opts.login.loginUrl && !opts.login.usernameSelector && !opts.login.steps) {
+        const html = await context.request
+          .get(opts.login.loginUrl, { timeout: 15_000 })
+          .then((r) => r.text())
+          .catch(() => "");
+        const sys = detectSystem({ url: opts.login.loginUrl, html });
+        if (sys) {
+          site.system = sys;
+          loginHints = profileOf(sys.id)?.login;
+          log(`The sign-in page looks like ${sys.name}`);
+        }
+      }
+      signedIn = await signIn(context, opts.login, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints });
+      if (isApp) {
+        const cap = captureCalls(context, new URL(startUrl).origin);
+        site.calls = cap.calls;
+        site.sockets = cap.sockets;
+        stopCalls = cap.stop;
+      }
       notes.push(`Signed in as ${opts.login.username} at ${opts.login.loginUrl} before testing, so the pages behind the login were tested too.`);
       notes.push("While signed in, links that look like actions (log out, delete, cancel, archive and similar) were not opened, to keep the account and its data unchanged.");
     }
@@ -594,6 +714,35 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     while (!done.length && (queue.length || retests.length)) {
       opts.signal?.throwIfAborted();
       await testPage(nextUrl()!, 0, true);
+    }
+
+    // A signed-in app: spot the system on its first screen, then click through its menus to find
+    // every screen, including those with no ordinary link (a full system test after login).
+    if (isApp && done.length) {
+      const first = done[0].result.url;
+      const html = await context.request
+        .get(first, { timeout: 15_000 })
+        .then((r) => r.text())
+        .catch(() => "");
+      const cookieNames = (await context.cookies().catch(() => [])).map((c) => c.name);
+      const sys = chosen ?? detectSystem({ url: first, html, cookies: cookieNames }) ?? site.system;
+      if (sys) {
+        if (!site.system || site.system.id !== sys.id) log(`Recognised the system: ${sys.name}${sys.framework ? ` (built on ${sys.framework})` : ""}`);
+        site.system = sys;
+        site.unsafe = profileOf(sys.id)?.unsafe;
+      }
+      if (signedIn && (opts.explore ?? true)) {
+        log("Full system test: clicking through the app's menus to find every screen");
+        const screens = await exploreApp(context, first, { system: profileOf(site.system?.id), unsafe: site.unsafe, log, signal: opts.signal }).catch((err: Error) => {
+          if (opts.signal?.aborted) throw err;
+          log(`App explorer stopped: ${err.message.split("\n")[0]}`);
+          return [];
+        });
+        site.screens = screens;
+        addLinks(first, screens.map((x) => x.url));
+        const fromMenu = screens.filter((x) => x.via && x.via !== "Start screen").length;
+        if (fromMenu) notes.push(`Full system test: the app explorer clicked through the menus and found ${screens.length} screens (${fromMenu} from menus, tabs and dropdowns), and tested them like any page.`);
+      }
     }
 
     // Then a pool of screens: each takes the next address from the queue until the page limit.
@@ -662,17 +811,35 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
         login: opts.login,
         loggedIn: Boolean(signedIn),
         mailUrl: opts.mailUrl,
+        hook: opts.hookInbox,
         log,
         signal: opts.signal,
+        roleSession: (roleId: string) => {
+          if (!roleContexts.has(roleId)) {
+            roleContexts.set(
+              roleId,
+              (async () => {
+                const role = opts.roles?.find((r) => r.id === roleId);
+                if (!role) throw new Error("The journey's role was deleted from the project.");
+                const ctx = await browser.newContext({ viewport: DESKTOP });
+                await signIn(ctx, role.login, log, { mailUrl: opts.mailUrl, signal: opts.signal });
+                return { context: ctx, login: role.login, name: role.name };
+              })(),
+            );
+          }
+          return roleContexts.get(roleId)!;
+        },
       });
       journeys = r.results;
       findings.push(...r.findings);
+      if (r.writes.length) site.writes = r.writes;
     }
     if (opts.baselineDir) findings.push(...(await compareVisuals(context, pages, opts.artifactsDir, opts.baselineDir, log)));
     cookies = cookieList(await context.cookies().catch(() => []), origin);
 
     // Site-wide agents (links, exposed files, duplicates...) run at the same time, except those
     // that measure speed or could end the session: they run afterwards, one at a time.
+    if (site.calls) sortCalls(site.calls);
     const siteAgents = runner.siteAgents();
     if (siteAgents.length) log(`Site-wide checks: ${siteAgents.map((a) => a.name).join(", ")}`);
     const last = (a: SiteAgent) => a.runsLast === true || (a.runsLast === "signed-in" && Boolean(signedIn));
@@ -694,7 +861,9 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     findings.push(...(await Promise.all(siteAgents.filter((a) => !last(a)).map(runSite))).flat());
     for (const agent of siteAgents.filter(last)) findings.push(...(await runSite(agent)));
   } finally {
+    stopCalls?.();
     opts.signal?.removeEventListener("abort", stop);
+    for (const r of roleContexts.values()) await r.then((x) => x.context.close(), () => {}).catch(() => {});
     await browser.close().catch(() => {});
   }
 
@@ -725,6 +894,11 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     ...(notes.length ? { notes } : {}),
     ...(journeys ? { journeys } : {}),
     ...(cookies?.length ? { cookies } : {}),
+    ...(site.screens?.length ? { screens: site.screens.map((x) => ({ ...x, tested: pages.some((p) => normaliseUrl(p.url) === x.url || (p.redirectedFrom && normaliseUrl(p.redirectedFrom) === x.url)) })) } : {}),
+    ...(site.calls?.length ? { calls: site.calls.map(reportCall) } : {}),
+    ...(site.sockets?.length ? { sockets: site.sockets.map((x) => ({ url: hideSocketSecrets(x.url), pageUrl: x.pageUrl })) } : {}),
+    ...(site.access ? { access: site.access } : {}),
+    ...(site.system ? { system: site.system } : {}),
   };
 }
 

@@ -7,6 +7,7 @@ import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { PermissionCard } from "./Permission.tsx";
 import { JourneysEditor } from "./Journeys.tsx";
+import { AppSetup } from "./AppSetup.tsx";
 import { TrendsCard } from "./Trends.tsx";
 import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
@@ -85,7 +86,7 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
-type ProjectTab = "overview" | "trends" | "watch" | "journeys" | "tests";
+type ProjectTab = "overview" | "app" | "trends" | "watch" | "journeys" | "tests";
 
 export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: User }) {
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
@@ -115,8 +116,10 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
 
   const journeysOn = isWeb && meta.modules.some((m) => m.id === "journeys" && m.on);
   const hasPermissionTools = meta.tools.some((t) => t.safety === "permission" && t.products.includes(p.type));
+  const isApp = ["webapp", "saas", "crm"].includes(p.type);
   const tabs: [ProjectTab, string, string?][] = [
     ["overview", "Overview"],
+    ...(isApp ? ([["app", "Signed-in app", p.roles?.length ? `${p.roles.length + 1} accounts` : undefined]] as [ProjectTab, string, string?][]) : []),
     ["trends", "Trends", flaky.length ? `${flaky.length} flaky` : undefined],
     ...(watch && p.target.url ? ([["watch", "Uptime and SSL", watch.down ? "down" : p.watch?.on ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
@@ -256,8 +259,10 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
 
       {current === "trends" && <TrendsCard points={trends} flaky={flaky} />}
 
+      {current === "app" && isApp && <AppSetup project={p} onChanged={reload} meta={meta} />}
+
       {current === "watch" && watch && (
-        <WatchCard key={JSON.stringify(p.watch ?? null)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />
+        <WatchCard key={JSON.stringify(p.watch ?? null)} hasJourneys={Boolean(p.journeys?.some((j) => !j.off && !j.allowWrites)) && meta.modules.some((m) => m.id === "journey-watch" && m.on)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />
       )}
 
       {current === "overview" && (
@@ -288,7 +293,12 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
                 <td>
                   {r.diff ? (
                     <span className="diff">
-                      {r.diff.new > 0 && <span className="diff-new">{r.diff.new} new</span>}
+                      {r.diff.new - (r.diff.firstChecked ?? 0) > 0 && <span className="diff-new">{r.diff.new - (r.diff.firstChecked ?? 0)} new</span>}
+                      {(r.diff.firstChecked ?? 0) > 0 && (
+                        <span className="muted" title="Found by a check that could not run or finish in the test before">
+                          {r.diff.firstChecked} checked for the first time
+                        </span>
+                      )}
                       {r.diff.fixed > 0 && <span className="diff-fixed">{r.diff.fixed} fixed</span>}
                       {r.diff.reopened > 0 && <span className="diff-reopened">{r.diff.reopened} came back</span>}
                       <span className="muted">{plural(r.diff.open, "open issue")}</span>
@@ -342,7 +352,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
       )}
 
       {current === "journeys" && journeysOn && (
-        <JourneysEditor key={JSON.stringify(p.journeys ?? [])} journeys={p.journeys ?? []} onSave={(journeys) => save({ journeys })} />
+        <JourneysEditor key={JSON.stringify(p.journeys ?? [])} journeys={p.journeys ?? []} roles={p.roles ?? []} signedIn={Boolean(p.login)} onSave={(journeys) => save({ journeys })} />
       )}
     </div>
   );

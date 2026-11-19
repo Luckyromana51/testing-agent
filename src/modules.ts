@@ -28,7 +28,7 @@ export interface ModuleInfo {
   env?: string;
 }
 
-export type ModuleId = "inspect" | "visual" | "journeys" | "own-checks" | "mail" | "load-charts" | "byo-tests";
+export type ModuleId = "inspect" | "visual" | "journeys" | "own-checks" | "mail" | "load-charts" | "byo-tests" | "explorer" | "webhooks" | "journey-watch";
 
 export const MODULES: ModuleInfo[] = [
   {
@@ -54,6 +54,33 @@ export const MODULES: ModuleInfo[] = [
     name: "User journeys",
     description:
       "Steps written in plain words for each project (open the shop, click Add to cart, see the total) that run on every test, with a picture after each step. Read-only by default: forms are not sent unless the journey is allowed to.",
+    builtOn: "Playwright, GLV code",
+    license: "Apache-2.0",
+    defaultOn: true,
+  },
+  {
+    id: "explorer",
+    name: "App explorer (full system test after login)",
+    description:
+      "For web apps, SaaS and CRMs tested signed in: clicks through the app's menus, sidebars, dropdowns and tabs to find every screen, also screens with no ordinary link, and tests each one. It knows 40 systems (Salesforce, Zoho, HubSpot, Odoo, ERPNext, WordPress admin, Moodle...) and never clicks items that change data.",
+    builtOn: "Playwright, GLV code",
+    license: "Apache-2.0",
+    defaultOn: true,
+  },
+  {
+    id: "webhooks",
+    name: "Webhook inbox",
+    description:
+      "An address on this server per project that catches the webhooks the client's app sends (WhatsApp CRM messages, payment and form notifications). Journeys can wait for one with the step 'webhook has <words>', and {{webhook}} fills in the address.",
+    builtOn: "GLV code",
+    license: "GLV",
+    defaultOn: true,
+  },
+  {
+    id: "journey-watch",
+    name: "Journey watch",
+    description:
+      "Runs a project's user journeys (sign-in, add a lead, open a report) every few minutes between tests, like Datadog or Checkly synthetic checks, and alerts when one fails. Turned on per project in its Watch settings.",
     builtOn: "Playwright, GLV code",
     license: "Apache-2.0",
     defaultOn: true,

@@ -21,8 +21,11 @@ import { startScheduler } from "./scheduler.js";
 import { TOOLS, cleanChoices, defaultChoices, describeTool, toolStatus } from "./tools/index.js";
 import { toJunit, toSarif } from "./export.js";
 import { openStores, type Settings, type Stores } from "./store.js";
-import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
-import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
+import { buildLogin, buildRole, buildTarget, defaultName, MAX_ROLES, type TargetInput } from "./targets.js";
+import { MAX_HOOK_BODY } from "./app/hooks.js";
+import { watchJourneys } from "./app/journey-watch.js";
+import { SYSTEM_KINDS, SYSTEMS } from "./app/systems.js";
+import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, RoleLogin, Run, Schedule, Severity, User } from "./types.js";
 import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
 import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
@@ -49,8 +52,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const HELPER_SKIP = /^(\.DS_Store|DerivedData|xcuserdata|build|.*\.xcresult)$/;
 
 /** Zips helper/mac (the Mac helper and its Xcode project) under a glv-helper/ folder. */
-export async function helperZip(dir = path.resolve(here, "../helper/mac")): Promise<Uint8Array> {
-  if (!existsSync(dir)) throw new HttpError(404, "The Mac helper files are not on this server.");
+export async function helperZip(dir = path.resolve(here, "../helper/mac"), top = "glv-helper/"): Promise<Uint8Array> {
+  if (!existsSync(dir)) throw new HttpError(404, "The helper files are not on this server.");
   const files: Zippable = {};
   const walk = async (from: string, prefix: string) => {
     for (const e of await readdir(from, { withFileTypes: true })) {
@@ -60,7 +63,7 @@ export async function helperZip(dir = path.resolve(here, "../helper/mac")): Prom
       else if (e.isFile()) files[`${prefix}${e.name}`] = await readFile(full);
     }
   };
-  await walk(dir, "glv-helper/");
+  await walk(dir, top);
   return zipSync(files, { level: 6 });
 }
 
@@ -162,6 +165,18 @@ export async function createApp(opts: AppOptions) {
   const stopScheduler = opts.scheduler ? startScheduler(stores.projects, queue) : () => {};
   helperHub.attach(stores.helpers);
   const watcher = new Watcher(stores.watch, () => stores.projects.list());
+  watcher.journeyRunner = (p) => {
+    if (!moduleOn(stores.settings.get().modules, "journey-watch") || !moduleOn(stores.settings.get().modules, "journeys")) {
+      return Promise.resolve({ at: new Date().toISOString(), ok: true, ms: 0, results: [], error: "Journey watch is off in Owner panel > Modules." });
+    }
+    const login = stores.vault.get(p.id, { quiet: true });
+    return watchJourneys(p, {
+      login,
+      roles: login?.kind === "web" ? stores.vault.roles(p.id, { quiet: true }) : [],
+      mailUrl: moduleOn(stores.settings.get().modules, "mail") ? process.env.MAILPIT_URL : undefined,
+      hook: moduleOn(stores.settings.get().modules, "webhooks") ? stores.hooks.inboxFor(p.id) : undefined,
+    });
+  };
   const stopWatcher = opts.scheduler ? watcher.start() : () => {};
   // Own checks are loaded once: switching the module takes effect after a restart.
   if (moduleOn(stores.settings.get().modules, "own-checks") && !ownChecksLoaded) {
@@ -310,6 +325,9 @@ export async function createApp(opts: AppOptions) {
       maxParallelProjects: MAX_PARALLEL_PROJECTS,
       vault: stores.vault.status(),
       modules: MODULES.map((m) => ({ ...m, on: moduleOn(settings.modules, m.id), ready: moduleReady(m) })),
+      // The business systems the signed-in test knows, for the project's "which system is it" choice.
+      systems: SYSTEMS.map((s) => ({ id: s.id, name: s.name, kind: s.kind })),
+      systemKinds: SYSTEM_KINDS,
     };
   });
 
@@ -324,6 +342,11 @@ export async function createApp(opts: AppOptions) {
       waiting: queue.waitingFor(p.id),
       // Never the secrets themselves: only whether they are saved.
       login: stores.vault.summary(p.id) ?? null,
+      roles: stores.vault.roleSummaries(p.id),
+      hookAddress: (() => {
+        const t = stores.hooks.token(p.id);
+        return t ? stores.hooks.address(t) : null;
+      })(),
       permissions: (p.permissions ?? []).map((x) => ({ ...x, status: permissionStatus(x) })),
     };
   };
@@ -417,7 +440,7 @@ export async function createApp(opts: AppOptions) {
       agents: agentsFor(p.type, stores.settings.get().agents).map(describeAgent),
       trends: trendPoints(runs),
       flaky: flakyIssues(stores.issues.list(p.id), runs),
-      watch: WEB_PRODUCTS.includes(p.type) ? stores.watch.summary(p) : null,
+      watch: WEB_PRODUCTS.includes(p.type) ? { ...stores.watch.summary(p), journeys: Boolean(p.watch?.journeys), journeysEveryMin: p.watch?.journeysEveryMin ?? 15, lastJourneys: watcher.journeyRuns.get(p.id) ?? null } : null,
     };
   });
 
@@ -427,6 +450,11 @@ export async function createApp(opts: AppOptions) {
     if (!p.target.url) throw new HttpError(400, "This project has no address to watch.");
     await watcher.checkProject(p);
     return stores.watch.summary(p);
+  });
+  app.post<{ Params: { id: string } }>("/api/projects/:id/watch/journeys", async (req) => {
+    const p = getProject(req.params.id);
+    if (!p.journeys?.some((j) => !j.off && !j.allowWrites)) throw new HttpError(400, "This project has no read-only journeys to watch.");
+    return (await watcher.checkJourneys(p)) ?? null;
   });
   app.get("/api/watch", async () => {
     const projects = new Map(stores.projects.list().map((p) => [p.id, p]));
@@ -543,11 +571,84 @@ export async function createApp(opts: AppOptions) {
     for (const runId of stores.runs.deleteForProject(p.id)) await queue.removeArtifacts(runId);
     stores.issues.deleteForProject(p.id);
     stores.vault.delete(p.id);
+    stores.vault.deleteRole(p.id);
+    stores.hooks.close(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     await rm(queue.baselineDir(p.id), { recursive: true, force: true });
     stores.watch.deleteProject(p.id);
     stores.projects.delete(p.id);
     return reply.code(204).send();
+  });
+
+  // ---- Signed-in apps: other accounts (roles), the webhook inbox, the step recorder ------------
+  app.get<{ Params: { id: string } }>("/api/projects/:id/roles", async (req) => stores.vault.roleSummaries(getProject(req.params.id).id));
+  app.post<{ Params: { id: string } }>("/api/projects/:id/roles", async (req, reply) => {
+    const p = getProject(req.params.id);
+    const b = body<Partial<RoleLogin> & { login?: Partial<Login> }>(req);
+    const existing = stores.vault.roleSummaries(p.id);
+    const prev = b.id ? existing.find((r) => r.id === b.id) : undefined;
+    if (!prev && existing.length >= MAX_ROLES) throw new HttpError(400, `A project can have up to ${MAX_ROLES} other accounts.`);
+    let role: RoleLogin;
+    try {
+      role = buildRole(p.type, b, stores.vault.summary(p.id), prev);
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+    stores.vault.saveRole(p.id, role);
+    return reply.code(prev ? 200 : 201).send(stores.vault.roleSummaries(p.id).find((r) => r.id === role.id));
+  });
+  app.delete<{ Params: { id: string; rid: string } }>("/api/projects/:id/roles/:rid", async (req, reply) => {
+    const p = getProject(req.params.id);
+    stores.vault.deleteRole(p.id, req.params.rid);
+    // Journeys that ran as this role go back to the main account.
+    if (p.journeys?.some((j) => j.role === req.params.rid)) {
+      stores.projects.save({ ...p, journeys: p.journeys.map((j) => (j.role === req.params.rid ? { ...j, role: undefined } : j)) });
+    }
+    return reply.code(204).send();
+  });
+
+  app.get<{ Params: { id: string } }>("/api/projects/:id/hooks", async (req) => {
+    const p = getProject(req.params.id);
+    const token = stores.hooks.token(p.id);
+    return { address: token ? stores.hooks.address(token) : null, messages: token ? stores.hooks.list(p.id, 50) : [] };
+  });
+  app.post<{ Params: { id: string } }>("/api/projects/:id/hooks", async (req) => {
+    const p = getProject(req.params.id);
+    const b = body<{ fresh?: boolean; clear?: boolean }>(req);
+    if (b.clear) stores.hooks.clear(p.id);
+    const token = stores.hooks.open(p.id, Boolean(b.fresh));
+    return { address: stores.hooks.address(token), messages: stores.hooks.list(p.id, 50) };
+  });
+  app.delete<{ Params: { id: string } }>("/api/projects/:id/hooks", async (req, reply) => {
+    stores.hooks.close(getProject(req.params.id).id);
+    return reply.code(204).send();
+  });
+
+  // The step recorder: a Chrome extension (ours, loaded unpacked) that turns clicks into journey steps.
+  app.get("/api/recorder/download", async (_req, reply) => {
+    const zip = await helperZip(path.resolve(here, "../helper/chrome-recorder"), "glv-recorder/");
+    reply
+      .header("content-type", "application/zip")
+      .header("Content-Disposition", 'attachment; filename="glv-recorder.zip"')
+      .header("X-Content-Type-Options", "nosniff");
+    return reply.send(zip);
+  });
+
+  // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
+  await app.register(async (scope) => {
+    scope.removeAllContentTypeParsers();
+    scope.addContentTypeParser("*", { parseAs: "string", bodyLimit: MAX_HOOK_BODY }, (_req, b, done) => done(null, b));
+    scope.route<{ Params: { token: string } }>({
+      method: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      url: "/hooks/:token",
+      handler: async (req, reply) => {
+        const projectId = stores.hooks.projectFor(req.params.token);
+        if (!projectId || !moduleOn(stores.settings.get().modules, "webhooks")) return reply.code(404).send({ error: "No such inbox." });
+        const raw = typeof req.body === "string" ? req.body : req.body === undefined ? "" : JSON.stringify(req.body);
+        stores.hooks.add(projectId, { method: req.method, path: req.url, headers: req.headers, body: raw });
+        return reply.code(200).send({ ok: true });
+      },
+    });
   });
 
   app.post<{ Params: { id: string } }>("/api/projects/:id/runs", async (req, reply) => {
@@ -799,7 +900,7 @@ export async function createApp(opts: AppOptions) {
     if (!page || (view !== "desktop" && view !== "phone")) throw new HttpError(400, "Pick a page and desktop or phone.");
     const shot = view === "desktop" ? page.screenshot : page.mobileScreenshot;
     if (!shot) throw new HttpError(409, "This page has no picture to approve.");
-    await approvePicture(queue.baselineDir(run.projectId), queue.artifactsDir(run.id), shot, page.url, view, run.id);
+    await approvePicture(queue.baselineDir(run.projectId), queue.artifactsDir(run.id), shot, page.url, view, run.id, page.moving?.[view]);
     page.visual = { ...page.visual, [view]: { ...page.visual?.[view], status: "approved", approvedAt: new Date().toISOString() } };
     stores.runs.save(run);
     return { ok: true, visual: page.visual };

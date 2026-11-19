@@ -1,6 +1,6 @@
 import { connect as tlsConnect } from "node:tls";
 import type { DatabaseSync } from "node:sqlite";
-import type { Project, WatchConfig } from "./types.js";
+import type { JourneyWatchRun, Project, WatchConfig } from "./types.js";
 import { validateTarget } from "./runner/urls.js";
 
 /**
@@ -58,6 +58,10 @@ export function cleanWatch(input: Partial<WatchConfig> | null | undefined): Watc
   }
   const warn = Number(input.sslWarnDays);
   out.sslWarnDays = Number.isFinite(warn) && warn >= 1 && warn <= 90 ? Math.round(warn) : 21;
+  if (input.journeys) {
+    out.journeys = true;
+    out.journeysEveryMin = [15, 30, 60].includes(Number(input.journeysEveryMin)) ? Number(input.journeysEveryMin) : 15;
+  }
   return out;
 }
 
@@ -215,7 +219,7 @@ export interface Alert {
   projectId: string;
   projectName: string;
   url: string;
-  kind: "down" | "up" | "ssl";
+  kind: "down" | "up" | "ssl" | "journey-failed" | "journey-ok";
   text: string;
   at: string;
 }
@@ -240,6 +244,12 @@ export class Watcher {
   private due = new Map<string, number>();
   private sslDue = new Map<string, number>();
   private running = new Set<string>();
+  private journeysDue = new Map<string, number>();
+  private journeysRunning = new Set<string>();
+  /** The last journey watch run of each project. */
+  readonly journeyRuns = new Map<string, JourneyWatchRun>();
+  /** Runs a project's journeys for the journey watch; set by the server. */
+  journeyRunner?: (p: Project) => Promise<JourneyWatchRun>;
   readonly alerts: Alert[] = [];
   private timer?: NodeJS.Timeout;
 
@@ -277,8 +287,36 @@ export class Watcher {
           .finally(() => this.running.delete(p.id)),
       );
     }
+    for (const p of this.projects()) {
+      if (!this.journeyRunner || !p.watch?.on || !p.watch.journeys || !p.journeys?.some((j) => !j.off && !j.allowWrites)) continue;
+      if (this.journeysRunning.has(p.id) || (this.journeysDue.get(p.id) ?? 0) > now) continue;
+      this.journeysDue.set(p.id, now + (p.watch.journeysEveryMin ?? 15) * 60_000);
+      this.journeysRunning.add(p.id);
+      // Journeys take a while: they run in the background, not holding up the uptime checks.
+      void this.checkJourneys(p).finally(() => this.journeysRunning.delete(p.id));
+    }
     await Promise.all(work);
     if (Math.random() < 0.01) this.store.prune(now);
+  }
+
+  /** Runs the project's journeys once and alerts when they start or stop failing. */
+  async checkJourneys(p: Project): Promise<JourneyWatchRun | undefined> {
+    if (!this.journeyRunner) return undefined;
+    const before = this.journeyRuns.get(p.id);
+    let run: JourneyWatchRun;
+    try {
+      run = await this.journeyRunner(p);
+    } catch (err) {
+      run = { at: new Date().toISOString(), ok: false, ms: 0, results: [], error: (err as Error).message.split("\n")[0].slice(0, 300) };
+    }
+    this.journeyRuns.set(p.id, run);
+    if (!run.ok && (!before || before.ok)) {
+      const bad = run.results.find((r) => !r.ok);
+      await this.alert(p, "journey-failed", `${p.name}: journey ${bad ? `"${bad.name}" fails at "${bad.failedStep ?? "?"}"${bad.error ? ` (${bad.error})` : ""}` : `watch could not run (${run.error ?? "error"})`}.`);
+    } else if (run.ok && before && !before.ok) {
+      await this.alert(p, "journey-ok", `${p.name}: every journey passes again.`);
+    }
+    return run;
   }
 
   async checkProject(p: Project, now = Date.now()): Promise<WatchCheck> {

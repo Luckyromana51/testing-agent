@@ -2,11 +2,33 @@ import type { Finding, Severity } from "./types.js";
 
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 
+/** Numbers with their unit ("6.7 s", "20,480 ms", "25 KiB", "0.18"), which change from run to run. */
+const MEASURE = /\d[\d,]*(\.\d+)?\s*(ms|s|kib|kb|mib|mb|gb|%)?(?![a-z])/gi;
+const BE = /\b(is|are|was|were)\b/g;
+
+/** "places" -> "place", "boxes" -> "box", "items are" -> "item": one problem counted 1 or 8 times reads the same. */
+const singular = (w: string) =>
+  w.length < 4 || w.endsWith("ss") || !w.endsWith("s") ? w : /(x|ch|sh|ss)es$/.test(w) ? w.slice(0, -2) : w.slice(0, -1);
+
 /**
  * Two findings are the same issue when they come from the same rule and their titles match once
- * numbers are ignored ("3 console errors" and "1 console error" are one issue).
+ * numbers, units, plurals and "is/are" are ignored: "1 focused item is hidden" and "8 focused items
+ * are hidden" are one issue, and so are "takes 6.7 s" and "takes 4.8 s". Measured numbers change
+ * from run to run on an unchanged site, so they must never make a new issue.
  */
 export function issueKey(f: Pick<Finding, "rule" | "title">): string {
+  const words = f.title
+    .toLowerCase()
+    .replace(MEASURE, "#")
+    .replace(BE, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.replace(/^([^a-z#]*)([a-z]+)([^a-z]*)$/, (_m, a: string, b: string, c: string) => a + singular(b) + c));
+  return `${f.rule}|${words.join(" ")}`;
+}
+
+/** The key the platform used before numbers' units and plurals were ignored, to match older issues. */
+export function oldIssueKey(f: Pick<Finding, "rule" | "title">): string {
   return `${f.rule}|${f.title.replace(/\d+(\.\d+)?/g, "#")}`;
 }
 

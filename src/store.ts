@@ -1,3 +1,4 @@
+import { HookStore } from "./app/hooks.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -259,6 +260,8 @@ export interface Stores {
   helpers: HelperStore;
   /** Uptime checks, incidents and certificates of watched projects. */
   watch: WatchStore;
+  /** Webhook inboxes of projects. */
+  hooks: HookStore;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -272,5 +275,6 @@ export function openStores(dataDir: string): Stores {
     vault: new Vault(db, dataDir),
     helpers: new HelperStore(db),
     watch: new WatchStore(db),
+    hooks: new HookStore(db),
   };
 }

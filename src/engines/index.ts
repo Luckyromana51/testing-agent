@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { scanSite } from "../runner/scan.js";
 import type { LiveSink } from "../live.js";
-import type { Journey, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
+import type { HookInbox, Journey, Login, ProductType, ProjectTarget, RoleLogin, ScanResult } from "../types.js";
 import { redact, secretsOf } from "../vault.js";
 import { scanApi } from "./api.js";
 
@@ -37,6 +37,13 @@ export interface EngineInput {
   journeys?: Journey[];
   /** Web tests: the test mailbox (Mailpit) address, when the mail module is on. */
   mailUrl?: string;
+  /** Web tests: the project's other accounts (roles, another company), decrypted for this run only. */
+  roles?: RoleLogin[];
+  /** Web tests: the project's webhook inbox, for journeys. */
+  hookInbox?: HookInbox;
+  /** Web tests: click through the signed-in app's menus (on unless turned off). */
+  explore?: boolean;
+  system?: string;
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -51,7 +58,7 @@ export function uploadedPath(uploadsDir: string, file: string): string {
  * the result or in an error (a page that prints a token, for example) is replaced with [hidden].
  */
 export async function runEngine(input: EngineInput): Promise<ScanResult> {
-  const secrets = secretsOf(input.login, input.target.repoUrl);
+  const secrets = [...secretsOf(input.login, input.target.repoUrl), ...(input.roles ?? []).flatMap((r) => secretsOf(r.login))];
   const onProgress = input.onProgress && ((m: string) => input.onProgress!(redact(m, secrets)));
   try {
     return redact(await pickEngine({ ...input, onProgress }), secrets);
@@ -112,6 +119,10 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         baselineDir: input.baselineDir,
         journeys: input.journeys,
         mailUrl: input.mailUrl,
+        roles: login?.kind === "web" ? input.roles : undefined,
+        hookInbox: input.hookInbox,
+        explore: input.explore,
+        system: input.system,
       });
   }
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { WatchConfig } from "../../../src/types.ts";
+import type { JourneyWatchRun, WatchConfig } from "../../../src/types.ts";
 import type { WatchSummary } from "../../../src/watch.ts";
 import { api } from "../api.ts";
 import { timeAgo } from "../lib.ts";
@@ -15,10 +15,13 @@ export function WatchCard({
   summary,
   onSave,
   onChanged,
+  hasJourneys = false,
 }: {
   projectId: string;
   config?: WatchConfig;
-  summary: WatchSummary;
+  summary: WatchSummary & { journeys?: boolean; journeysEveryMin?: number; lastJourneys?: JourneyWatchRun | null };
+  /** The project has read-only journeys the watch can run. */
+  hasJourneys?: boolean;
   onSave: (w: WatchConfig) => Promise<void>;
   onChanged: () => void;
 }) {
@@ -81,6 +84,23 @@ export function WatchCard({
           </text>
         </svg>
       )}
+      {hasJourneys && s.lastJourneys && (
+        <div className="journey-watch">
+          <div className="strong">
+            {s.lastJourneys.ok ? <span className="ok">● Journeys pass</span> : <span className="bad">● A journey fails</span>}
+            <span className="muted small"> · ran {timeAgo(s.lastJourneys.at)}, {(s.lastJourneys.ms / 1000).toFixed(1)} s</span>
+          </div>
+          {s.lastJourneys.error && <div className="bad small">{s.lastJourneys.error}</div>}
+          <ul className="small">
+            {s.lastJourneys.results.map((r) => (
+              <li key={r.id}>
+                {r.ok ? "✓" : "✗"} {r.name} <span className="muted">({(r.ms / 1000).toFixed(1)} s)</span>
+                {!r.ok && r.failedStep && <span className="bad"> at "{r.failedStep}": {r.error}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="watch-form">
         <label className="inline-field">
           <span>Check every</span>
@@ -100,6 +120,20 @@ export function WatchCard({
           <input className="input" type="number" min={1} max={90} value={draft.sslWarnDays ?? 21} onChange={(e) => setDraft({ ...draft, sslWarnDays: Number(e.target.value) })} />
           <span className="muted small">days</span>
         </label>
+        {hasJourneys && (
+          <label className="inline-field wide">
+            <span>Journey watch</span>
+            <label className="check dark small">
+              <input type="checkbox" checked={Boolean(draft.journeys)} onChange={(e) => setDraft({ ...draft, journeys: e.target.checked || undefined, journeysEveryMin: draft.journeysEveryMin ?? 15 })} /> Also run the
+              read-only journeys (sign-in, open a lead...) every
+            </label>
+            <select className="input" value={draft.journeysEveryMin ?? 15} disabled={!draft.journeys} onChange={(e) => setDraft({ ...draft, journeysEveryMin: Number(e.target.value) })}>
+              <option value={15}>15 minutes</option>
+              <option value={30}>30 minutes</option>
+              <option value={60}>hour</option>
+            </select>
+          </label>
+        )}
         <label className="inline-field wide">
           <span>Alert webhook</span>
           <input className="input" placeholder="optional: your Slack, Teams or Google Chat webhook (https)" value={draft.webhook ?? ""} onChange={(e) => setDraft({ ...draft, webhook: e.target.value })} />
@@ -141,6 +175,26 @@ export function WatchCard({
         >
           Check now
         </button>
+        {hasJourneys && (
+          <button
+            className="btn ghost"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                await api.watchJourneysNow(projectId);
+                onChanged();
+              } catch (err) {
+                setError((err as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Running…" : "Run journeys now"}
+          </button>
+        )}
         <span className="muted small grow">Checks run from this server. Two failed checks in a row count as down; alerts show in the dashboard{draft.webhook ? " and go to the webhook" : ""}.</span>
       </div>
       <h3 className="sub-title">Outages</h3>

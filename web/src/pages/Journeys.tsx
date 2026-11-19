@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Journey } from "../../../src/types.ts";
+import type { Journey, RoleSummary } from "../../../src/types.ts";
 
 const EXAMPLE = `# One step per line. Lines starting with # are notes.
 open /
@@ -26,10 +26,31 @@ const HELP: [string, string][] = [
   ["fill Email = {{inbox}}", "Test mailbox module: a fresh email address for this journey"],
   ["email has Welcome", "Test mailbox module: an email to {{inbox}} has these words (waits up to 30 s)"],
   ["open email link Confirm", "Test mailbox module: open the link in that email with these words"],
+  ["fill Name = Test {{random}}", "A made-up word, the same for the whole journey: name a test record, then find it again"],
+  ["fill Date = {{today}}", "Today's date (2026-11-19)"],
+  ["fill Code = {{code}}", "The two-step code from the saved secret"],
+  ["fill Webhook URL = {{webhook}}", "Webhook inbox: the project's own address that catches webhooks"],
+  ["webhook has lead.created", "Webhook inbox: a webhook with these words came in (waits up to 30 s)"],
+  ["fill Phone = {{phone}}", "Test data: a column of the journey's table. The journey runs once per row"],
 ];
 
+/** A record test on a test server: add a record, find it, change it, then remove it in the clean-up. */
+const RECORD_TEST = `open /contacts
+click New contact
+fill Name = Test {{random}}
+fill Email = {{random}}@example.com
+click Save
+see Test {{random}}
+fill Search = {{random}}
+see Test {{random}}`;
+const RECORD_CLEANUP = `open /contacts
+fill Search = {{random}}
+click Test {{random}}
+click Delete
+click Yes, delete`;
+
 /** The project's user journeys: written in plain words, followed on every test. */
-export function JourneysEditor({ journeys, onSave }: { journeys: Journey[]; onSave: (j: Journey[]) => Promise<void> }) {
+export function JourneysEditor({ journeys, onSave, roles = [], signedIn = false }: { journeys: Journey[]; onSave: (j: Journey[]) => Promise<void>; roles?: RoleSummary[]; signedIn?: boolean }) {
   const [draft, setDraft] = useState<Journey[]>(journeys);
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
@@ -66,14 +87,55 @@ export function JourneysEditor({ journeys, onSave }: { journeys: Journey[]; onSa
             <label className="check">
               <input type="checkbox" checked={!j.off} onChange={(e) => set(i, { off: !e.target.checked })} /> Runs
             </label>
-            <label className="check" title="Only for staging or test sites">
+            <label className="check" title="Only for staging or test sites. The saves it makes are also sent again as the project's other accounts, to see who can change what.">
               <input type="checkbox" checked={Boolean(j.allowWrites)} onChange={(e) => set(i, { allowWrites: e.target.checked })} /> May send forms
             </label>
             <button className="btn ghost small danger" onClick={() => setDraft(draft.filter((_, k) => k !== i))}>
               Remove
             </button>
           </div>
+          {roles.length > 0 && (
+            <label className="inline-field">
+              <span>Signed in as</span>
+              <select className="input" value={j.role ?? ""} onChange={(e) => set(i, { role: e.target.value || undefined })}>
+                <option value="">{signedIn ? "The main account" : "No login"}</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <textarea className="input code" rows={Math.min(14, Math.max(5, j.steps.split("\n").length + 1))} value={j.steps} onChange={(e) => set(i, { steps: e.target.value })} aria-label={`Steps of ${j.name}`} spellCheck={false} />
+          <details className="journey-cleanup" open={Boolean(j.cleanup)}>
+            <summary>Clean-up steps (always run at the end, even when the journey fails)</summary>
+            <textarea
+              className="input code"
+              rows={Math.min(10, Math.max(3, (j.cleanup ?? "").split("\n").length + 1))}
+              value={j.cleanup ?? ""}
+              placeholder={"open /contacts\nclick Test {{random}}\nclick Delete"}
+              onChange={(e) => set(i, { cleanup: e.target.value || undefined })}
+              aria-label={`Clean-up steps of ${j.name}`}
+              spellCheck={false}
+            />
+          </details>
+          <details className="journey-cleanup" open={Boolean(j.data)}>
+            <summary>Test data (the journey runs once per row, up to 20 rows)</summary>
+            <p className="muted small">
+              A small table, comma between values, the first line names the columns. Use a column in a step as {"{{name}}"}, like{" "}
+              <code>fill Phone = {"{{phone}}"}</code>. Good for phone formats, long names and Hindi text.
+            </p>
+            <textarea
+              className="input code"
+              rows={Math.min(10, Math.max(3, (j.data ?? "").split("\n").length + 1))}
+              value={j.data ?? ""}
+              placeholder={"name,phone\nAsha Verma,98450 11111\nरवि कुमार,+91 98450 22222"}
+              onChange={(e) => set(i, { data: e.target.value || undefined })}
+              aria-label={`Test data of ${j.name}`}
+              spellCheck={false}
+            />
+          </details>
         </div>
       ))}
       <div className="row">
@@ -82,6 +144,18 @@ export function JourneysEditor({ journeys, onSave }: { journeys: Journey[]; onSa
             + Add a journey
           </button>
         )}
+        {draft.length < 10 && (
+          <button
+            className="btn ghost"
+            title="Add a record, find it, then delete it in the clean-up. Only for a test server."
+            onClick={() => setDraft([...draft, { id: "", name: "Record test", steps: RECORD_TEST, cleanup: RECORD_CLEANUP, allowWrites: true }])}
+          >
+            + Record test (test server)
+          </button>
+        )}
+        <a className="btn ghost" href="/api/recorder/download" title="A Chrome extension that turns your clicks into steps">
+          Record steps in Chrome
+        </a>
         <div className="grow" />
         {changed && (
           <button
