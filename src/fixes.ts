@@ -15,6 +15,17 @@ const header = (name: string, value: string): Fix["code"] => [
 ];
 
 const FIXES: Record<string, Fix> = {
+  // Visual compare and user journeys
+  "visual:changed": {
+    steps:
+      "Open the page in the report and press Inspect page, then Visual compare: the red parts show what moved. If the change was planned (a new banner, a redesign), press Approve so it becomes the new picture. If not, compare the last deploy's CSS and template changes for that part of the page; a missing stylesheet, a font that did not load, or a script error that stopped a slider are the usual causes.",
+    effort: "minutes",
+  },
+  "journey:failed": {
+    steps:
+      "Open the journey in the report: the picture after each step shows where it went wrong. If the page changed on purpose (a button renamed), update the journey's steps on the project page. If a request was stopped because it could change data and this is a staging or test site, allow the journey to send forms. Otherwise the step found a real bug: fix the button, link or page the step names, then test again.",
+    effort: "hours",
+  },
   // Functional
   "page-load-failed": {
     steps: "Open the page yourself. If it times out, check the server error log and the hosting resource limits; if the domain does not resolve, check DNS.",

@@ -186,6 +186,15 @@ Tests started without a tool choice (the API, a quick test, projects made before
 
 **SARIF and JUnit.** Every finished test can be downloaded from its report (Download): SARIF for GitHub code scanning, GitLab, Azure DevOps and security dashboards (code findings point at the file and line), and JUnit XML for CI test reports (a failed test per issue, a skipped test for a check that could not run). The command line writes both next to `report.json`. Schemathesis and Newman also attach their own JUnit files.
 
+## Inspect screen, visual compare and user journeys (optional modules)
+
+Owner panel > **Modules** switches these on and off. All run on our server; nothing goes to an outside service.
+
+- **Inspect screen** (on by default): Report > Pages > **Inspect page** opens a developer-tools view of the page, like Playwright's trace viewer: Steps (timeline of what the test did), Network (waterfall with timing and headers, filter by type), Console (logs, warnings, errors), Elements (the page's HTML, as source or a script-free snapshot), Tab order and outline (keyboard order, headings and landmarks drawn over the picture), Unused code (JavaScript and CSS coverage). **Download HAR** opens in Chrome or any HAR viewer. Cookies and login headers are always hidden.
+- **Visual compare** (on by default): each project keeps an approved picture of every page (desktop and phone) in `data/baselines/<project>`. The first test saves them; later tests show the approved picture, the new one and the changes in red (side by side, slider, changes only). A change over 0.5% becomes an issue; **Approve** makes the new picture the approved one.
+- **User journeys** (on by default): project page > User journeys. One step per line in plain words (`open /shop`, `click Add to cart`, `fill Email = {{username}}`, `see Your cart`, `url has /cart`); `{{password}}` uses the saved login and is never shown. Read-only by default: POST and other changes are stopped. Tick **May send forms** only for staging or test sites. Each step gets a picture; a journey that breaks becomes a high issue.
+- **Own checks folder** (off): put `.mjs` files in `data/modules/` (Docker: `/data/modules/`) and restart. Each exports `{ id, name, run({ page, url }) }` and returns findings; the Modules tab shows an example.
+
 ## Mac helper (Safari, VoiceOver, iOS Simulator)
 
 Safari, VoiceOver and the iOS Simulator only run on macOS, so a small program, `helper/mac/glv-helper.mjs`, runs them on a Mac with Xcode (GLV's own Mac). It needs Node.js 22 and nothing from npm, and only runs Apple's own tools (xcrun, xcodebuild, safaridriver, osascript, ditto) with fixed arguments, never through a shell.

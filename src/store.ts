@@ -160,6 +160,8 @@ export interface Settings {
   aiSummary: boolean;
   /** Pages a web test opens at the same time (1 to 16). Unset: PARALLEL_PAGES, or 4. */
   parallelPages?: number;
+  /** Optional modules on/off (see src/modules.ts). Unset: each module's default. */
+  modules?: Record<string, boolean>;
 }
 
 const DEFAULT_SETTINGS: Settings = { agents: {}, defaultMaxPages: 20, aiSummary: true };

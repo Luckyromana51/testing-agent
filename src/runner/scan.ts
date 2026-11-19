@@ -5,7 +5,10 @@ import { agentsFor, WEB_AGENTS } from "../agents/registry.js";
 import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../agents/types.js";
 import { listen } from "../agents/web/signals.js";
 import type { LiveSink } from "../live.js";
-import type { AgentStat, Finding, PageResult, ScanOptions, ScanResult } from "../types.js";
+import type { AgentStat, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
+import { Inspector } from "./inspect.js";
+import { runJourneys } from "./journeys.js";
+import { compareVisuals } from "./visual.js";
 import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
@@ -197,6 +200,8 @@ async function scanPage(
   // Becomes the final address after redirects (http -> https, example.com -> www.example.com).
   let url = requestedUrl;
   const signals = listen(page);
+  const inspector = opts.inspect ? new Inspector(page, url, DESKTOP) : undefined;
+  if (inspector) await inspector.startCoverage();
   const findings: Finding[] = [];
   const result: PageResult = { url, status: null, title: "", loadMs: null };
   let links: string[] = [];
@@ -223,8 +228,11 @@ async function scanPage(
   const runAgent = async (agent: PageAgent) => {
     busy.add(agent.name);
     show("Checking");
+    const at = inspector?.now() ?? 0;
     try {
-      return await runner.run(agent, url, () => agent.run(ctx()));
+      const found = await runner.run(agent, url, () => agent.run(ctx()));
+      inspector?.step(agent.name, { at, ms: inspector.now() - at, ok: true, detail: found.length ? `${found.length} finding${found.length === 1 ? "" : "s"}` : undefined });
+      return found;
     } finally {
       busy.delete(agent.name);
       show("Checking");
@@ -242,6 +250,16 @@ async function scanPage(
     for (const agent of agents.filter((a) => a.interacts)) findings.push(...(await runAgent(agent)));
   };
 
+  const saveInspect = async () => {
+    if (!inspector) return;
+    try {
+      await inspector.stopCoverage();
+      result.inspect = await inspector.save(opts.artifactsDir, index);
+    } catch {
+      // The inspect screen is extra: a page closed early still has its report.
+    }
+  };
+
   try {
     show("Waiting its turn to open the page");
     // Pages load one at a time even when several are checked at once, so the site's speed is
@@ -251,9 +269,16 @@ async function scanPage(
       loading(async () => {
         show("Opening the page");
         started = Date.now();
-        const answer = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
-        result.loadMs = Date.now() - started;
-        return answer;
+        const at = inspector?.now() ?? 0;
+        try {
+          const answer = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+          result.loadMs = Date.now() - started;
+          inspector?.step(`Open ${url}`, { at, ms: inspector.now() - at, ok: true, detail: answer ? `HTTP ${answer.status()}` : undefined });
+          return answer;
+        } catch (err) {
+          inspector?.step(`Open ${url}`, { at, ms: inspector.now() - at, ok: false, detail: (err as Error).message.split("\n")[0] });
+          throw err;
+        }
       });
     res = await open();
     if (res && RETRY_STATUSES.includes(res.status())) {
@@ -285,6 +310,7 @@ async function scanPage(
       }),
     );
     await runStage("end");
+    await saveInspect();
     await stopCast?.();
     await page.close();
     return { result, findings, links, throttled };
@@ -307,6 +333,13 @@ async function scanPage(
 
     await runStage("page");
 
+    // The picture (and the boxes drawn over it) start at the top, so pictures compare run to run.
+    await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
+    if (inspector) {
+      await inspector.stopCoverage();
+      await inspector.readLayout();
+      inspector.step("Desktop picture");
+    }
     const shot = `page-${index}.jpg`;
     await page.screenshot({ path: path.join(opts.artifactsDir, shot), type: "jpeg", quality: 60 });
     result.screenshot = shot;
@@ -315,7 +348,9 @@ async function scanPage(
     show("Resizing to a phone");
     await page.setViewportSize(MOBILE);
     await page.waitForTimeout(300);
+    inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
     await runStage("mobile");
+    await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
     const mshot = `page-${index}-mobile.jpg`;
     await page.screenshot({ path: path.join(opts.artifactsDir, mshot), type: "jpeg", quality: 60 });
     result.mobileScreenshot = mshot;
@@ -323,6 +358,7 @@ async function scanPage(
     result.error = (err as Error).message.split("\n")[0];
   } finally {
     await runStage("end");
+    await saveInspect();
     await stopCast?.();
     await page.close();
   }
@@ -399,6 +435,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   };
 
   const pages: PageResult[] = [];
+  let journeys: JourneyResult[] | undefined;
   const parallel = parallelPages(opts.parallel);
   const live = opts.live;
   live?.setScreens(Math.min(parallel, maxPages));
@@ -614,6 +651,21 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       if (cookies.length) opts.onSession(cookies.map((c) => `${c.name}=${c.value}`).join("; "));
     }
 
+    // User journeys, while the session is still signed in, then the pictures against the approved ones.
+    if (opts.journeys?.some((j) => !j.off)) {
+      const r = await runJourneys(context, opts.journeys, {
+        startUrl: pages[0]?.url ?? startUrl,
+        artifactsDir: opts.artifactsDir,
+        login: opts.login,
+        loggedIn: Boolean(signedIn),
+        log,
+        signal: opts.signal,
+      });
+      journeys = r.results;
+      findings.push(...r.findings);
+    }
+    if (opts.baselineDir) findings.push(...(await compareVisuals(context, pages, opts.artifactsDir, opts.baselineDir, log)));
+
     // Site-wide agents (links, exposed files, duplicates...) run at the same time, except those
     // that measure speed or could end the session: they run afterwards, one at a time.
     const siteAgents = runner.siteAgents();
@@ -666,5 +718,6 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     ...score,
     agentStats,
     ...(notes.length ? { notes } : {}),
+    ...(journeys ? { journeys } : {}),
   };
 }

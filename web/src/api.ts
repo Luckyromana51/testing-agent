@@ -2,12 +2,15 @@ import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
 import type { HelperInfo } from "../../src/helpers.ts";
+import type { ModuleInfo } from "../../src/modules.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   Issue,
   IssueStatus,
+  Journey,
   Login,
   LoginSummary,
+  PageResult,
   ProductType,
   Project,
   Run,
@@ -108,6 +111,8 @@ export interface Meta {
   maxParallel: number;
   /** Where the login vault's key comes from, and how many logins it holds. */
   vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
+  /** Optional modules (inspect screen, visual compare, journeys...) and whether each is on. */
+  modules: (ModuleInfo & { on: boolean })[];
 }
 
 export interface Settings {
@@ -117,6 +122,7 @@ export interface Settings {
   /** Pages a web test opens at the same time. */
   parallelPages: number;
   maxParallel: number;
+  modules?: Record<string, boolean>;
 }
 
 export interface Overview {
@@ -182,7 +188,7 @@ export const api = {
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
   createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[] } & TargetFields) =>
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
-  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[] } & TargetFields>) =>
+  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[]; journeys: Journey[] } & TargetFields>) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
   /** Sends a file as the raw request body; returns the stored name to put in the project. */
   upload: async (file: File, onProgress?: (pct: number) => void) =>
@@ -213,6 +219,8 @@ export const api = {
   cancelRun: (id: string) => call<Run>("POST", `/api/runs/${id}/cancel`),
   summarise: (id: string) => call<Run>("POST", `/api/runs/${id}/summary`),
   artifact: (id: string, file: string) => `/api/runs/${id}/artifacts/${file}`,
+  approvePicture: (id: string, index: number, view: "desktop" | "phone") =>
+    call<{ ok: true; visual: NonNullable<PageResult["visual"]> }>("POST", `/api/runs/${id}/pages/${index}/approve`, { view }),
 
   issues: (projectId?: string) => call<IssueSummary[]>("GET", `/api/issues${projectId ? `?projectId=${projectId}` : ""}`),
   issue: (id: string) => call<IssueDetail>("GET", `/api/issues/${id}`),

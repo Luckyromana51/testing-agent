@@ -24,6 +24,10 @@ import { openStores, type Settings, type Stores } from "./store.js";
 import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
 import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
 import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
+import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
+import { approve as approvePicture, type View } from "./runner/visual.js";
+import { loadOwnChecks, moduleOn, MODULES } from "./modules.js";
+import { WEB_PRODUCTS } from "./products.js";
 import { validateTarget } from "./runner/urls.js";
 
 export { validateTarget } from "./runner/urls.js";
@@ -135,6 +139,8 @@ export interface AppOptions {
   scheduler?: boolean;
 }
 
+let ownChecksLoaded = false;
+
 export async function createApp(opts: AppOptions) {
   const stores = openStores(opts.dataDir);
   migrateLooseRuns(stores);
@@ -143,6 +149,11 @@ export async function createApp(opts: AppOptions) {
   auth.bootstrapFromEnv();
   const stopScheduler = opts.scheduler ? startScheduler(stores.projects, queue) : () => {};
   helperHub.attach(stores.helpers);
+  // Own checks are loaded once: switching the module takes effect after a restart.
+  if (moduleOn(stores.settings.get().modules, "own-checks") && !ownChecksLoaded) {
+    ownChecksLoaded = true;
+    await loadOwnChecks(path.join(opts.dataDir, "modules"), (m) => console.log(m));
+  }
 
   const app = Fastify({
     logger: opts.logger ? { level: process.env.LOG_LEVEL ?? "info" } : false,
@@ -281,6 +292,7 @@ export async function createApp(opts: AppOptions) {
       parallelPages: parallelPages(settings.parallelPages),
       maxParallel: MAX_PARALLEL,
       vault: stores.vault.status(),
+      modules: MODULES.map((m) => ({ ...m, on: moduleOn(settings.modules, m.id) })),
     };
   });
 
@@ -391,12 +403,19 @@ export async function createApp(opts: AppOptions) {
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, ...targetInput } = b;
+    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, ...targetInput } = b;
     let login: Login | undefined;
     try {
+      if (journeysInput !== undefined) {
+        if (!WEB_PRODUCTS.includes(p.type)) throw new Error("User journeys are for websites and web apps.");
+        if (!Array.isArray(journeysInput)) throw new Error("Journeys must be a list.");
+        if (journeysInput.length > MAX_JOURNEYS) throw new Error(`A project can have up to ${MAX_JOURNEYS} journeys.`);
+        next.journeys = journeysInput.map((j, i) => cleanJourney(j as Record<string, unknown>, i));
+        if (!next.journeys.length) delete next.journeys;
+      }
       if (toolsInput === null) delete next.tools;
       else if (toolsInput !== undefined) next.tools = cleanChoices(p.type, toolsInput, p.permissions ?? []);
       if (Object.keys(targetInput).length) {
@@ -483,6 +502,7 @@ export async function createApp(opts: AppOptions) {
     stores.issues.deleteForProject(p.id);
     stores.vault.delete(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
+    await rm(queue.baselineDir(p.id), { recursive: true, force: true });
     stores.projects.delete(p.id);
     return reply.code(204).send();
   });
@@ -655,6 +675,21 @@ export async function createApp(opts: AppOptions) {
     return reply.code(204).send();
   });
 
+  // Visual compare: make this run's picture of a page the approved one.
+  app.post<{ Params: { id: string; index: string } }>("/api/runs/:id/pages/:index/approve", async (req) => {
+    const run = stores.runs.get(req.params.id);
+    if (!run?.result || !run.projectId) throw new HttpError(404, "Run not found.");
+    const page = run.result.pages[Number(req.params.index)];
+    const { view } = body<{ view: View }>(req);
+    if (!page || (view !== "desktop" && view !== "phone")) throw new HttpError(400, "Pick a page and desktop or phone.");
+    const shot = view === "desktop" ? page.screenshot : page.mobileScreenshot;
+    if (!shot) throw new HttpError(409, "This page has no picture to approve.");
+    await approvePicture(queue.baselineDir(run.projectId), queue.artifactsDir(run.id), shot, page.url, view, run.id);
+    page.visual = { ...page.visual, [view]: { ...page.visual?.[view], status: "approved", approvedAt: new Date().toISOString() } };
+    stores.runs.save(run);
+    return { ok: true, visual: page.visual };
+  });
+
   app.get<{ Params: { id: string; file: string } }>("/api/runs/:id/artifacts/:file", async (req, reply) => {
     const { id, file } = req.params;
     if (!/^[\w-]+$/.test(id) || !/^[\w.-]+\.(jpg|png)$/.test(file)) {
@@ -671,6 +706,13 @@ export async function createApp(opts: AppOptions) {
           reply.header("Content-Disposition", `attachment; filename="${file}"`);
           reply.type("application/xml");
         }
+        return reply.sendFile(file, queue.artifactsDir(id));
+      }
+      // A page's network log as HAR, for Chrome's or any HAR viewer: downloaded, never shown.
+      if (/^[\w-]+$/.test(id) && /^page-\d+-network\.har$/.test(file)) {
+        reply.header("Content-Disposition", `attachment; filename="${file}"`);
+        reply.header("X-Content-Type-Options", "nosniff");
+        reply.type("application/json");
         return reply.sendFile(file, queue.artifactsDir(id));
       }
       // What agents saved about a page: the screen reader's view (text) and the network log (JSON).
@@ -762,6 +804,10 @@ export async function createApp(opts: AppOptions) {
     if (b.defaultMaxPages !== undefined) patch.defaultMaxPages = Math.min(Math.max(Number(b.defaultMaxPages) || 20, 1), 200);
     if (b.aiSummary !== undefined) patch.aiSummary = Boolean(b.aiSummary);
     if (b.parallelPages !== undefined) patch.parallelPages = parallelPages(Number(b.parallelPages) || 1);
+    if (b.modules && typeof b.modules === "object") {
+      patch.modules = { ...stores.settings.get().modules };
+      for (const [id, on] of Object.entries(b.modules)) if (MODULES.some((m) => m.id === id)) patch.modules[id] = Boolean(on);
+    }
     const saved = stores.settings.update(patch);
     return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL };
   });

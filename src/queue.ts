@@ -9,6 +9,7 @@ import { LiveHub } from "./live.js";
 import { defaultChoices, runTools, toolById } from "./tools/index.js";
 import { secretsOf } from "./vault.js";
 import type { Stores } from "./store.js";
+import { moduleOn } from "./modules.js";
 import type { Project, Run } from "./types.js";
 
 /**
@@ -42,6 +43,11 @@ export class ScanQueue {
 
   artifactsDir(runId: string): string {
     return path.join(this.dataDir, "artifacts", runId);
+  }
+
+  /** The project's approved pictures, for visual compare. */
+  baselineDir(projectId: string): string {
+    return path.join(this.dataDir, "baselines", projectId.replace(/[^\w-]/g, ""));
   }
 
   uploadsDir(): string {
@@ -182,6 +188,9 @@ export class ScanQueue {
           onSession: (c) => (cookie = c),
           parallel: settings.get().parallelPages,
           live,
+          inspect: moduleOn(settings.get().modules, "inspect"),
+          baselineDir: moduleOn(settings.get().modules, "visual") ? this.baselineDir(project.id) : undefined,
+          journeys: moduleOn(settings.get().modules, "journeys") ? project.journeys : undefined,
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});

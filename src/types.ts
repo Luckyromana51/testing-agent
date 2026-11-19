@@ -53,7 +53,63 @@ export interface PageResult {
   mobileScreenshot?: string;
   /** More files about the page that agents saved (the screen reader view, the network log...). */
   files?: { label: string; file: string }[];
+  /** The inspect screen's recording (page-N-inspect.json), with the page's HTML and HAR. */
+  inspect?: { file: string; dom?: string; har: string };
+  /** Compared with the project's approved pictures. */
+  visual?: { desktop?: VisualResult; phone?: VisualResult };
   error?: string;
+}
+
+/** A page's picture compared with its approved picture. */
+export interface VisualResult {
+  /** new: nothing to compare with, so this picture became the approved one. */
+  status: "new" | "same" | "changed" | "approved";
+  /** Share of the picture that changed, in percent. */
+  changed?: number;
+  /** The approved picture, copied into the run so the report keeps showing what it was compared with. */
+  baseline?: string;
+  /** The new picture faded, with the changes in red. */
+  diff?: string;
+  approvedAt?: string;
+  /** Where the changes are, in the picture's pixels. */
+  box?: { x: number; y: number; w: number; h: number };
+}
+
+/** Steps a person takes on the site, written in plain words (see src/runner/journeys.ts). */
+export interface Journey {
+  id: string;
+  name: string;
+  /** One step per line: open, click, fill … = …, see, url has… */
+  steps: string;
+  /** May send forms (POST and other changes). Only for staging or test sites. */
+  allowWrites?: boolean;
+  /** Kept, but not run. */
+  off?: boolean;
+}
+
+export interface JourneyStepResult {
+  /** Line number in the journey's text. */
+  line: number;
+  text: string;
+  ok: boolean;
+  ms: number;
+  error?: string;
+  /** Picture after the step. */
+  shot?: string;
+  url?: string;
+  /** Requests stopped because they could change data. */
+  blocked?: string[];
+}
+
+export interface JourneyResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  ms: number;
+  /** Steps in the journey (the results stop at the first that fails). */
+  total: number;
+  steps: JourneyStepResult[];
+  allowWrites?: boolean;
 }
 
 export interface ScanOptions {
@@ -81,6 +137,12 @@ export interface ScanOptions {
   parallel?: number;
   /** Where the live view of the test goes (screens and what each agent is doing). */
   live?: LiveSink;
+  /** Record the inspect screen (network, console, steps, HTML, HAR) for every page. */
+  inspect?: boolean;
+  /** Folder with the project's approved pictures: compare each page with them. Unset: no visual compare. */
+  baselineDir?: string;
+  /** User journeys to follow after the pages are tested. */
+  journeys?: Journey[];
 }
 
 export interface AgentStat {
@@ -126,6 +188,8 @@ export interface ScanResult {
   complete?: boolean;
   /** What each outside tool (Lighthouse, ZAP...) did in this run. */
   tools?: ToolStat[];
+  /** The user journeys followed in this run. */
+  journeys?: JourneyResult[];
 }
 
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -245,6 +309,8 @@ export interface Project {
   tools?: ToolChoice[];
   /** The client's written permissions for load and attack tests, newest last (withdrawn ones are kept). */
   permissions?: Permission[];
+  /** Steps a person takes on the site, followed on every test (websites and web apps). */
+  journeys?: Journey[];
 }
 
 export type IssueStatus = "open" | "in_progress" | "fixed" | "verified" | "reopened" | "wont_fix";

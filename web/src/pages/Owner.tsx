@@ -4,10 +4,11 @@ import { api, type HelperView, type Meta } from "../api.ts";
 import { CATEGORY_LABEL, go, plural, timeAgo, usePoll } from "../lib.ts";
 import { OpenCounts, Toggle } from "../ui.tsx";
 
-type Tab = "overview" | "agents" | "team" | "macs" | "settings";
+type Tab = "overview" | "agents" | "modules" | "team" | "macs" | "settings";
 const TABS: [Tab, string][] = [
   ["overview", "Overview"],
   ["agents", "Agents"],
+  ["modules", "Modules"],
   ["team", "Team"],
   ["macs", "Mac helpers"],
   ["settings", "Settings"],
@@ -52,6 +53,7 @@ export function Owner({
       </div>
       {current === "overview" && <OverviewTab />}
       {current === "agents" && <AgentsTab meta={meta} reloadMeta={reloadMeta} />}
+      {current === "modules" && <ModulesTab meta={meta} reloadMeta={reloadMeta} />}
       {current === "team" && <TeamTab me={user} />}
       {current === "macs" && <MacsTab />}
       {current === "settings" && <SettingsTab meta={meta} reloadMeta={reloadMeta} loginOff={loginOff} />}
@@ -176,6 +178,77 @@ function AgentsTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void })
           </div>
         </div>
       ))}
+    </>
+  );
+}
+
+/** Optional modules: open-source parts of the system the owner switches on or off. */
+function ModulesTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void }) {
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [restart, setRestart] = useState(false);
+  const set = async (id: string, on: boolean, needsRestart?: boolean) => {
+    setPending(id);
+    setError("");
+    try {
+      await api.updateSettings({ modules: { [id]: on } });
+      if (needsRestart) setRestart(true);
+      reloadMeta();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setPending(null);
+    }
+  };
+  return (
+    <>
+      <p className="muted">
+        Optional parts of the system. Each is open source and runs on this server: nothing is sent to an outside service. A
+        module that is off costs no time in a test. Changes apply from the next test.
+      </p>
+      {restart && <div className="notice">Restart the server for the own checks folder to load or unload (docker compose restart).</div>}
+      {error && <div className="error">{error}</div>}
+      <div className="card agent-list">
+        {meta.modules.map((m) => (
+          <div className="agent-row" key={m.id}>
+            <div className="grow">
+              <div className="strong">
+                {m.name} {m.defaultOn ? <span className="tag">On by default</span> : <span className="tag muted">Optional</span>}
+              </div>
+              <div className="muted small">{m.description}</div>
+              <div className="muted small">
+                Built on {m.builtOn} · licence {m.license}
+                {m.needsRestart ? " · needs a restart" : ""}
+              </div>
+            </div>
+            <Toggle on={m.on} label={`${m.name} on or off`} onChange={(v) => pending !== m.id && set(m.id, v, m.needsRestart)} />
+          </div>
+        ))}
+      </div>
+      <h2 className="section-title">Write your own check</h2>
+      <div className="card">
+        <p className="muted small">
+          Turn on <b>Own checks folder</b>, put a file like this in <code>data/modules/</code> (in Docker: the agent-data volume,{" "}
+          <code>/data/modules/</code>) and restart. It runs on every page, next to the GLV agents, and its findings show in the
+          report and on the Issues board.
+        </p>
+        <pre className="code-block">{`// data/modules/no-whatsapp-button.mjs
+export default {
+  id: "no-whatsapp-button",
+  name: "WhatsApp button",
+  description: "Every page should have our WhatsApp chat button.",
+  category: "functional",
+  async run({ page, url }) {
+    const has = await page.locator('a[href*="wa.me"], a[href*="whatsapp"]').count();
+    return has ? [] : [{
+      rule: "no-whatsapp-button", severity: "low", category: "functional",
+      title: "No WhatsApp button on the page",
+      detail: "Clients reach us on WhatsApp; add the chat button.",
+      pageUrl: url,
+    }];
+  },
+};`}</pre>
+      </div>
     </>
   );
 }

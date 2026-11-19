@@ -6,6 +6,7 @@ import { go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts
 import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { PermissionCard } from "./Permission.tsx";
+import { JourneysEditor } from "./Journeys.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
@@ -251,6 +252,13 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
 
       <h2 className="section-title">What runs in each test</h2>
       <ProjectTools key={JSON.stringify(p.tools ?? null)} meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
+
+      {isWeb && meta.modules.some((m) => m.id === "journeys" && m.on) && (
+        <>
+          <h2 className="section-title">User journeys</h2>
+          <JourneysEditor key={JSON.stringify(p.journeys ?? [])} journeys={p.journeys ?? []} onSave={(journeys) => save({ journeys })} />
+        </>
+      )}
 
       {meta.tools.some((t) => t.safety === "permission" && t.products.includes(p.type)) && (
         <>
