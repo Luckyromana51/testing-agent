@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Login, RoleSummary } from "../../../src/types.ts";
 import { api, type HookMessageView, type Meta, type ProjectSummary } from "../api.ts";
-import { LoginFields, type LoginDraft } from "./LoginFields.tsx";
+import { describeLogin, LoginFields, type LoginDraft } from "./LoginFields.tsx";
 
 /**
  * The project page's "Signed-in app" tab: the other accounts the access grid tests with (roles,
@@ -98,10 +98,19 @@ function SystemCard({ project, meta, onChanged }: { project: ProjectSummary; met
   );
 }
 
-function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged: () => void }) {
+export function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged: () => void }) {
   const [editing, setEditing] = useState<RoleSummary | "new" | null>(null);
   const roles = project.roles ?? [];
-  if (!project.login || project.login.kind !== "web") {
+  const kind = project.type === "api" ? "api" : "web";
+  if (!project.login || project.login.kind !== kind) {
+    if (kind === "api") {
+      return (
+        <div className="card muted">
+          Save the API's main key or token on the Overview tab first. Then add the keys of other accounts here (a user of another
+          client company, a staff or read-only role), and every test checks who can read what.
+        </div>
+      );
+    }
     return (
       <div className="card muted">
         Save the main login on the Overview tab first. Then add the other accounts here (sales staff, a viewer, a user of another
@@ -112,8 +121,14 @@ function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged:
   return (
     <div className="card roles-card">
       <p className="muted small">
-        Each account below signs in in its own browser and opens every screen and app call the main account reached. The report's
-        access grid then shows who can open what. A user of <b>another company</b> must never see this company's records.
+        {kind === "api"
+          ? "Each account below calls every endpoint the main key read, with the same record ids. The report's access grid shows who can read what. A user of another company must never get this company's records (BOLA / IDOR), and a lower role must never use admin endpoints."
+          : "Each account below signs in in its own browser and opens every screen and app call the main account reached. The report's access grid then shows who can open what."}{" "}
+        {kind === "web" && (
+          <>
+            A user of <b>another company</b> must never see this company's records.
+          </>
+        )}
       </p>
       {roles.length > 0 && (
         <table className="table roles-table">
@@ -128,7 +143,7 @@ function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged:
           <tbody>
             <tr className="muted">
               <td>{project.login.roleName || "Main account"}</td>
-              <td>{project.login.username}</td>
+              <td>{kind === "api" ? describeLogin(project.login) : project.login.username}</td>
               <td>–</td>
               <td />
             </tr>
@@ -139,7 +154,7 @@ function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged:
                   {r.login.unreadable && <span className="badge bad">enter again</span>}
                 </td>
                 <td>
-                  {r.login.username}
+                  {kind === "api" ? describeLogin(r.login) : r.login.username}
                   {r.login.hasTotp && <span className="muted small"> · two-step</span>}
                 </td>
                 <td className="small">{r.mustNotOpen ? r.mustNotOpen.split(/\n/).join(", ") : <span className="muted">–</span>}</td>
@@ -159,6 +174,7 @@ function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged:
           projectId={project.id}
           role={editing === "new" ? undefined : editing}
           mainLoginUrl={project.login.loginUrl}
+          kind={kind}
           onDone={() => {
             setEditing(null);
             onChanged();
@@ -175,12 +191,12 @@ function RolesCard({ project, onChanged }: { project: ProjectSummary; onChanged:
   );
 }
 
-function RoleForm({ projectId, role, mainLoginUrl, onDone }: { projectId: string; role?: RoleSummary; mainLoginUrl?: string; onDone: () => void }) {
+function RoleForm({ projectId, role, mainLoginUrl, onDone, kind = "web" }: { projectId: string; role?: RoleSummary; mainLoginUrl?: string; onDone: () => void; kind?: "web" | "api" }) {
   const [name, setName] = useState(role?.name ?? "");
   const [otherCompany, setOtherCompany] = useState(Boolean(role?.otherCompany));
   const [mustNotOpen, setMustNotOpen] = useState(role?.mustNotOpen ?? "");
   const [login, setLogin] = useState<LoginDraft>(() => {
-    if (!role) return { loginUrl: mainLoginUrl };
+    if (!role) return kind === "api" ? { authType: "bearer" } : { loginUrl: mainLoginUrl };
     const { hasPassword: _p, hasToken: _t, hasTotp: _h, unreadable: _u, updatedAt: _d, ...rest } = role.login;
     return rest as Partial<Login>;
   });
@@ -197,11 +213,11 @@ function RoleForm({ projectId, role, mainLoginUrl, onDone }: { projectId: string
           <input type="checkbox" checked={otherCompany} onChange={(e) => setOtherCompany(e.target.checked)} /> A user of another client company
         </label>
       </div>
-      <LoginFields kind="web" value={login} onChange={setLogin} saved={role?.login} />
+      <LoginFields kind={kind} value={login} onChange={setLogin} saved={role?.login} />
       {!otherCompany && (
         <label className="form-field">
-          <span>Addresses this role must never open (one per line, * for anything)</span>
-          <textarea className="input code" rows={3} value={mustNotOpen} onChange={(e) => setMustNotOpen(e.target.value)} placeholder={"/admin\n/settings/billing\n/api/users/*"} spellCheck={false} />
+          <span>{kind === "api" ? "Endpoints this account must never use (paths, one per line, * for anything)" : "Addresses this role must never open (one per line, * for anything)"}</span>
+          <textarea className="input code" rows={3} value={mustNotOpen} onChange={(e) => setMustNotOpen(e.target.value)} placeholder={kind === "api" ? "/admin*\n/users/*/salary\n/reports/finance" : "/admin\n/settings/billing\n/api/users/*"} spellCheck={false} />
         </label>
       )}
       {error && <div className="error">{error}</div>}

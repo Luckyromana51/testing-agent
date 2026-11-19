@@ -7,6 +7,7 @@ import type { FlakyIssue, TrendPoint } from "../../src/trends.ts";
 import type { Alert, Incident, WatchSummary } from "../../src/watch.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
+  ApiScenario,
   Issue,
   IssueStatus,
   Journey,
@@ -51,6 +52,8 @@ export type ProjectSummary = Project & {
   roles: RoleSummary[];
   /** The project's webhook inbox address, when it is open. */
   hookAddress: string | null;
+  /** The API mock server's address, when it is on. */
+  mockAddress: string | null;
 };
 
 export interface HookMessageView {
@@ -94,7 +97,7 @@ export interface ProjectDetail {
   trends: TrendPoint[];
   flaky: FlakyIssue[];
   /** Uptime and SSL watch (websites and web apps only). */
-  watch: (WatchSummary & { journeys: boolean; journeysEveryMin: number; lastJourneys: JourneyWatchRun | null }) | null;
+  watch: (WatchSummary & { checkUrl: string | null; expectText: string | null; journeys: boolean; journeysEveryMin: number; lastJourneys: JourneyWatchRun | null }) | null;
 }
 
 export interface WatchOverview {
@@ -118,6 +121,10 @@ export interface TargetFields {
   checkLinks?: boolean;
   /** Signed-in apps: a known system's id, or "" to let the test spot it. */
   system?: string;
+  /** API: a GraphQL endpoint instead of a REST API file. */
+  graphqlUrl?: string;
+  /** API: the project is a test server (tests may change data, and clean up). */
+  testServer?: boolean;
   /** A login to save (secrets left empty keep the saved ones), or null to remove it. */
   login?: Partial<Login> | null;
 }
@@ -241,7 +248,10 @@ export const api = {
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
   createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[] } & TargetFields) =>
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
-  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[]; journeys: Journey[]; watch: WatchConfig } & TargetFields>) =>
+  updateProject: (
+    id: string,
+    b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[]; journeys: Journey[]; watch: WatchConfig; apiScenarios: ApiScenario[]; mock: boolean | "new" | null } & TargetFields>,
+  ) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
   /** Sends a file as the raw request body; returns the stored name to put in the project. */
   upload: async (file: File, onProgress?: (pct: number) => void) =>
@@ -294,4 +304,16 @@ export const api = {
   addHelper: (name: string) => call<{ helper: HelperView; token: string }>("POST", "/api/owner/helpers", { name }),
   removeHelper: (id: string) => call("DELETE", `/api/owner/helpers/${id}`),
   helperDownload: "/api/owner/helpers/download",
+
+  /** API projects: approve a test's API file as the new version, the Postman file, and the mock server. */
+  approveApiFile: (runId: string) => call<{ ok: true }>("POST", `/api/runs/${runId}/api-baseline`, {}),
+  postmanUrl: (runId: string) => `/api/runs/${runId}/postman`,
+  mock: (id: string) => call<MockView>("GET", `/api/projects/${id}/mock`),
 };
+
+export interface MockView {
+  address: string | null;
+  ready: boolean;
+  endpoints?: number;
+  calls: { at: string; method: string; path: string; status: number; problems?: string[] }[];
+}

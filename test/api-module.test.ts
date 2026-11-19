@@ -269,3 +269,107 @@ describe("API module: same API, same result", () => {
     assert.deepEqual(a.api!.access, b.api!.access);
   });
 });
+
+describe("API module: the server (approve, Postman, mock, scenarios, accounts)", async () => {
+  const { createApp } = await import("../src/server.js");
+  let app: Awaited<ReturnType<typeof createApp>>["app"];
+  let demo: DemoApi2;
+  let dir: string;
+  let cookie = "";
+  const call = async (method: string, url: string, payload?: unknown, headers: Record<string, string> = {}) => {
+    const res = await app.inject({ method: method as "GET", url, payload: payload as object, headers: { ...(cookie ? { cookie } : {}), ...headers } });
+    let json: any = null;
+    try {
+      json = res.body ? res.json() : null;
+    } catch {
+      json = res.body;
+    }
+    return { status: res.statusCode, body: json, headers: res.headers, raw: res.body };
+  };
+  const waitForRun = async (id: string) => {
+    for (let i = 0; i < 240; i++) {
+      const { body } = await call("GET", `/api/runs/${id}`);
+      if (body.status === "done" || body.status === "failed") return body;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error("run did not finish");
+  };
+  before(async () => {
+    process.env.DEFAULT_TOOLS = "none";
+    demo = await startDemoApi2(4233);
+    dir = await mkdtemp(path.join(os.tmpdir(), "glv-api-srv-"));
+    ({ app } = await createApp({ dataDir: dir }));
+    const res = await call("POST", "/api/auth/setup", { email: "owner@glv.test", name: "Owner", password: "a-long-password" });
+    cookie = String(res.headers["set-cookie"]).split(";")[0];
+  });
+  after(async () => {
+    await app.close();
+    demo.server.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("tests an API project, exports Postman, approves the file, and serves a mock", async () => {
+    const created = await call("POST", "/api/projects", {
+      type: "api",
+      specUrl: "http://localhost:4233/openapi.json",
+      login: { kind: "api", authType: "bearer", token: TOKEN_A },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const { project, run } = created.body;
+    const done = await waitForRun(run.id);
+    assert.equal(done.status, "done", done.error);
+    assert.ok(done.result.api.calls.length > 0);
+    assert.equal(done.result.api.baselineSaved, true, "the first test's file becomes the approved copy");
+    assert.ok(!JSON.stringify(done.result.api).includes(TOKEN_A), "the token never shows in the report");
+
+    const postman = await call("GET", `/api/runs/${run.id}/postman`);
+    assert.equal(postman.status, 200);
+    assert.match(String(postman.headers["content-disposition"]), /postman_collection\.json/);
+    assert.ok(postman.body.item.some((i: { name: string }) => i.name === "GET /customers"));
+    assert.ok(!postman.raw.includes(TOKEN_A), "the token is a variable in the collection");
+
+    assert.equal((await call("POST", `/api/runs/${run.id}/api-baseline`)).status, 200);
+
+    // Scenarios: a line it does not understand is refused with its number.
+    const bad = await call("PATCH", `/api/projects/${project.id}`, { apiScenarios: [{ name: "x", steps: "GET /a\nfly to the moon" }] });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /line 2/i);
+    const ok = await call("PATCH", `/api/projects/${project.id}`, { apiScenarios: [{ name: "List", steps: "GET /customers\nexpect status 200" }] });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.apiScenarios.length, 1);
+
+    // Another account for the API, checked like the main login.
+    const role = await call("POST", `/api/projects/${project.id}/roles`, { name: "Other company", otherCompany: true, login: { kind: "api", authType: "bearer", token: TOKEN_B } });
+    assert.equal(role.status, 201, JSON.stringify(role.body));
+    assert.ok(!JSON.stringify(role.body).includes(TOKEN_B));
+    const again = await call("POST", `/api/projects/${project.id}/runs`, { trigger: "retest" });
+    const second = await waitForRun(again.body.id);
+    assert.deepEqual(second.result.api.access.accounts, ["Main login", "Other company", "No login"]);
+
+    // The mock: off until turned on, then answers from the file and checks what it is sent.
+    const on = await call("PATCH", `/api/projects/${project.id}`, { mock: true });
+    assert.equal(on.status, 200);
+    const address: string = on.body.mockAddress;
+    assert.match(address, /\/mock\/[0-9a-f]{32}$/);
+    const base = new URL(address).pathname;
+    const list = await call("GET", `${base}/customers`, undefined, { cookie: "" });
+    assert.equal(list.status, 200);
+    assert.ok(Array.isArray(list.body.data));
+    assert.equal(list.headers["access-control-allow-origin"], "*");
+    const one = await call("GET", `${base}/customers/42`);
+    assert.equal(one.body.id, 42, "the id in the address shows in the answer");
+    const wrong = await call("POST", `${base}/customers`, JSON.stringify({ name: 5 }), { "content-type": "application/json" });
+    assert.equal(wrong.status, 400);
+    assert.ok(wrong.body.problems.length > 0);
+    assert.equal((await call("GET", `${base}/nothing-here`)).status, 404);
+    const view = await call("GET", `/api/projects/${project.id}/mock`);
+    assert.equal(view.body.ready, true);
+    assert.ok(view.body.calls.length >= 3);
+    assert.equal((await call("GET", "/mock/not-a-token/customers")).status, 404);
+
+    const fresh = await call("PATCH", `/api/projects/${project.id}`, { mock: "new" });
+    assert.notEqual(fresh.body.mockAddress, address, "a new address stops the old one");
+    assert.equal((await call("GET", `${base}/customers`)).status, 404);
+    assert.equal((await call("PATCH", `/api/projects/${project.id}`, { mock: false })).body.mockAddress, null);
+  });
+});

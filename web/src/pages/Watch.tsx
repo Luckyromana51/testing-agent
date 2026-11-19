@@ -16,12 +16,15 @@ export function WatchCard({
   onSave,
   onChanged,
   hasJourneys = false,
+  api: isApi = false,
 }: {
   projectId: string;
   config?: WatchConfig;
   summary: WatchSummary & { journeys?: boolean; journeysEveryMin?: number; lastJourneys?: JourneyWatchRun | null };
   /** The project has read-only journeys the watch can run. */
   hasJourneys?: boolean;
+  /** An API project: the endpoint to check, and scenarios in place of journeys. */
+  api?: boolean;
   onSave: (w: WatchConfig) => Promise<void>;
   onChanged: () => void;
 }) {
@@ -47,7 +50,7 @@ export function WatchCard({
           </div>
           {s.last?.error && <div className="bad small">{s.last.error}</div>}
         </div>
-        <Toggle on={draft.on} label="Watch this site" onChange={(on) => setDraft({ ...draft, on })} />
+        <Toggle on={draft.on} label={isApi ? "Watch this API" : "Watch this site"} onChange={(on) => setDraft({ ...draft, on })} />
         <span className="small">{draft.on ? "Watching" : "Off"}</span>
       </div>
       <div className="watch-tiles">
@@ -111,9 +114,15 @@ export function WatchCard({
             <option value={60}>hour</option>
           </select>
         </label>
+        {isApi && (
+          <label className="inline-field wide">
+            <span>Endpoint to check</span>
+            <input className="input" placeholder="optional: an address or path like /health (the saved login is sent)" value={draft.checkUrl ?? ""} onChange={(e) => setDraft({ ...draft, checkUrl: e.target.value || undefined })} />
+          </label>
+        )}
         <label className="inline-field">
-          <span>Page must show</span>
-          <input className="input" placeholder="optional, like Add to cart" value={draft.expectText ?? ""} onChange={(e) => setDraft({ ...draft, expectText: e.target.value })} />
+          <span>{isApi ? "Answer must hold" : "Page must show"}</span>
+          <input className="input" placeholder={isApi ? 'optional, like "status":"ok"' : "optional, like Add to cart"} value={draft.expectText ?? ""} onChange={(e) => setDraft({ ...draft, expectText: e.target.value })} />
         </label>
         <label className="inline-field">
           <span>Warn before SSL ends</span>
@@ -125,7 +134,7 @@ export function WatchCard({
             <span>Journey watch</span>
             <label className="check dark small">
               <input type="checkbox" checked={Boolean(draft.journeys)} onChange={(e) => setDraft({ ...draft, journeys: e.target.checked || undefined, journeysEveryMin: draft.journeysEveryMin ?? 15 })} /> Also run the
-              read-only journeys (sign-in, open a lead...) every
+              {isApi ? "scenarios (read-only steps only)" : "read-only journeys (sign-in, open a lead...)"} every
             </label>
             <select className="input" value={draft.journeysEveryMin ?? 15} disabled={!draft.journeys} onChange={(e) => setDraft({ ...draft, journeysEveryMin: Number(e.target.value) })}>
               <option value={15}>15 minutes</option>
@@ -192,7 +201,7 @@ export function WatchCard({
               }
             }}
           >
-            {busy ? "Running…" : "Run journeys now"}
+            {busy ? "Running…" : isApi ? "Run scenarios now" : "Run journeys now"}
           </button>
         )}
         <span className="muted small grow">Checks run from this server. Two failed checks in a row count as down; alerts show in the dashboard{draft.webhook ? " and go to the webhook" : ""}.</span>

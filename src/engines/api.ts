@@ -405,7 +405,7 @@ export async function scanApi(opts: ApiScanOptions): Promise<ScanResult> {
     if (foundAt) notes.push(`No API file was given: it was found at ${foundAt}.`);
     if (kind !== "openapi") notes.push(`The endpoints come from the uploaded ${kind === "postman" ? "Postman collection" : kind === "har" ? "HAR file" : "cURL commands"}.`);
     const withIds = calls.filter((c) => c.idFrom).length;
-    if (withIds) notes.push(`${withIds} detail endpoints were called with real ids taken from the list endpoints' answers.`);
+    if (withIds) notes.push(`${withIds} detail endpoint${withIds === 1 ? " was" : "s were"} called with real ids taken from the list endpoints' answers.`);
     if (opts.auth) {
       if (anonymous.length) notes.push(`Also called the ${anonymous.length} endpoints that need a login without it, to check they refuse strangers.`);
       const refused = calls.filter((c) => c.status === 401);

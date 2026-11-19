@@ -171,7 +171,8 @@ export class Vault {
       }
       const info = JSON.parse(row.info) as Omit<RoleLogin, "id">;
       const secret = JSON.parse(open(key, row.secret, roleAad(projectId, row.role_id))) as SecretPart;
-      out.push({ ...info, id: row.role_id, login: { ...info.login, ...secret, kind: "web" } });
+      // Roles of web apps were saved before the kind was stored, so a missing kind means web.
+      out.push({ ...info, id: row.role_id, login: { ...info.login, ...secret, kind: info.login.kind === "api" ? "api" : "web" } as RoleLogin["login"] });
     }
     return out;
   }
@@ -188,9 +189,9 @@ export class Vault {
         id: row.role_id,
         login: {
           ...(info.login as Omit<Login, "password" | "token" | "totpSecret">),
-          kind: "web",
+          kind: (info.login as { kind?: string }).kind === "api" ? "api" : "web",
           hasPassword: Boolean(saved.password),
-          hasToken: false,
+          hasToken: Boolean(saved.token),
           ...(saved.totpSecret ? { hasTotp: true } : {}),
           unreadable: !key || undefined,
           updatedAt: row.updated_at,
