@@ -1,3 +1,4 @@
+import { AppReport } from "./AppReport.tsx";
 import { useMemo, useState } from "react";
 import { fixFor } from "../../../src/fixes.ts";
 import { groupFindings, type IssueGroup } from "../../../src/group.ts";
@@ -50,7 +51,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
+  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "app" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -300,6 +301,11 @@ export function Report({ id }: { id: string }) {
             {unit.tab} ({result.pages.length})
           </button>
         )}
+        {(result.screens?.length || result.access || result.calls?.length) && (
+          <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}>
+            Signed-in app ({result.screens?.length ?? 0} screens)
+          </button>
+        )}
         {result.journeys && result.journeys.length > 0 && (
           <button className={tab === "journeys" ? "active" : ""} onClick={() => setTab("journeys")}>
             Journeys ({result.journeys.filter((j) => j.ok).length}/{result.journeys.length} pass)
@@ -354,6 +360,7 @@ export function Report({ id }: { id: string }) {
       )}
       {tab === "issues" && <IssueList groups={groups} categories={categories} unit={unit.many} />}
       {tab === "pages" && <Pages run={run} onRunChange={reload} />}
+      {tab === "app" && <AppReport result={result} />}
       {tab === "journeys" && <Journeys run={run} />}
       {tab === "visual" && <VisualTab run={run} onRunChange={reload} />}
       {tab === "wcag" && <WcagTab run={run} />}
@@ -642,6 +649,15 @@ function VisualBadge({ p }: { p: PageResult }) {
   return <span className="ok">Looks the same</span>;
 }
 
+const shortPath = (u: string) => {
+  try {
+    const x = new URL(u);
+    return x.pathname + x.search;
+  } catch {
+    return u;
+  }
+};
+
 /** Each journey with a picture after every step, like a test runner's command log. */
 function Journeys({ run }: { run: Run }) {
   const list = run.result!.journeys ?? [];
@@ -660,6 +676,7 @@ function Journeys({ run }: { run: Run }) {
             <span className={j.ok ? "ok strong" : "bad strong"}>{j.ok ? "✓ Passed" : "✗ Failed"}</span>
             <span className="strong grow">{j.name}</span>
             <span className="muted small">
+              {j.role ? `as ${j.role} · ` : ""}
               {j.steps.filter((s) => s.ok).length} of {j.total} steps · {(j.ms / 1000).toFixed(1)} s{j.allowWrites ? " · may send forms" : " · read-only"}
             </span>
           </button>
@@ -673,8 +690,29 @@ function Journeys({ run }: { run: Run }) {
                     </button>
                   )}
                   <div className="grow">
-                    <code>{s.text}</code> <span className="muted small">{(s.ms / 1000).toFixed(1)} s</span>
+                    {s.cleanup && <span className="badge">clean-up</span>} <code>{s.text}</code> <span className="muted small">{(s.ms / 1000).toFixed(1)} s</span>
                     {s.error && <div className="bad small">{s.error}</div>}
+                    {s.calls && s.calls.length > 0 && (
+                      <details className="step-calls">
+                        <summary className="small">
+                          {s.calls.length} app call{s.calls.length === 1 ? "" : "s"}
+                          {s.calls.some((c) => c.status >= 400 || c.status === 0) ? <span className="bad"> · {s.calls.filter((c) => c.status >= 400 || c.status === 0).length} failed</span> : ""}
+                        </summary>
+                        <table className="kv small">
+                          <tbody>
+                            {s.calls.map((c, k) => (
+                              <tr key={k}>
+                                <td className={c.status >= 400 || c.status === 0 ? "bad" : ""}>{c.status || "failed"}</td>
+                                <td className="mono">
+                                  {c.method} {shortPath(c.url)}
+                                </td>
+                                <td className="muted">{c.ms} ms</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </details>
+                    )}
                     {s.blocked && <div className="muted small">Stopped (could change data): {s.blocked.join(", ")}</div>}
                     {s.url && <div className="muted small">{s.url}</div>}
                   </div>

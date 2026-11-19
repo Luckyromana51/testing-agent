@@ -23,6 +23,10 @@ import {
   structuredDataAgent,
 } from "./web/page.js";
 import { PRODUCT_AGENTS } from "./web/products.js";
+import { accessAgent } from "../app/access.js";
+import { appCallsAgent } from "../app/calls.js";
+import { csrfAgent, idNumbersAgent, sessionAgent, tokensAgent, userEnumAgent } from "../app/session.js";
+import { tablesAgent } from "../app/tables.js";
 import { appInstallAgent } from "./web/pwa.js";
 import { linkGraphAgent, thinContentAgent, urlsAgent } from "./web/seo-site.js";
 import { jsErrorsAgent, mixedContentAgent, resourcesAgent } from "./web/signals.js";
@@ -104,6 +108,16 @@ export const WEB_AGENTS: WebAgent[] = [
   cspAgent,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
   ...PRODUCT_AGENTS,
+  // Signed-in apps (CRM, ERP, SaaS...): app calls, lists and tables, ID numbers, CSRF, tokens, and
+  // the checks that sign in again in their own browser: who can see what, then the session.
+  appCallsAgent,
+  tablesAgent,
+  idNumbersAgent,
+  csrfAgent,
+  tokensAgent,
+  accessAgent,
+  sessionAgent,
+  userEnumAgent,
 ];
 
 /** All agents of every engine. */

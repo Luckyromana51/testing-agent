@@ -13,6 +13,10 @@ import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
+import { APPS, captureCalls, reportCall } from "../app/calls.js";
+import { exploreApp } from "../app/explore.js";
+import { chosenSystem, detectSystem, profileOf } from "../app/systems.js";
+import type { RoleSession } from "./journeys.js";
 import { categoriesFor } from "../products.js";
 import { isCrawlable, normaliseUrl, siteOf } from "./urls.js";
 import { scoreFindings } from "./score.js";
@@ -425,7 +429,19 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const done: { index: number; requested: string; gen: number; result: PageResult; findings: Finding[] }[] = [];
   const findings: Finding[] = [];
   const notes: string[] = [];
-  const site: SiteState = { seo: new Map(), loggedIn: Boolean(opts.login), loginUser: opts.login?.username };
+  const site: SiteState = {
+    seo: new Map(),
+    loggedIn: Boolean(opts.login),
+    loginUser: opts.login?.username,
+    login: opts.login,
+    roles: opts.roles,
+    mailUrl: opts.mailUrl,
+    signal: opts.signal,
+  };
+  const isApp = APPS.includes(opts.product ?? "website");
+  let stopCalls: (() => void) | undefined;
+  /** Browsers signed in as the project's roles, for journeys that run as a role. */
+  const roleContexts = new Map<string, Promise<RoleSession>>();
   let signedIn: SignedIn | undefined;
   let signOuts = 0;
   const loginOrigin = opts.login?.loginUrl ? new URL(opts.login.loginUrl).origin : "";
@@ -466,7 +482,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const addLinks = (pageUrl: string, links: string[]) => {
     for (const link of links) {
       if (!linkSources.has(link)) linkSources.set(link, pageUrl);
-      if (isCrawlable(link, origin, site.loggedIn) && !seen.has(link)) {
+      if (isCrawlable(link, origin, site.loggedIn) && !site.unsafe?.test(link) && !seen.has(link)) {
         seen.add(link);
         queue.push(link);
       }
@@ -487,7 +503,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     if (gen === signInGen && !signingIn) {
       signOuts++;
       log("The site signed the agent out; signing in again");
-      signingIn = signIn(context, opts.login!, log)
+      signingIn = signIn(context, opts.login!, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints })
         .then((s) => {
           signedIn = s;
           signInGen++;
@@ -582,9 +598,35 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     return true;
   };
 
+  // A system chosen on the project wins over spotting it.
+  const chosen = chosenSystem(opts.system);
+  if (chosen) {
+    site.system = chosen;
+    site.unsafe = profileOf(chosen.id)?.unsafe;
+    log(`System chosen on the project: ${chosen.name}`);
+  }
+  let loginHints: { username?: string; password?: string; submit?: string } | undefined = chosen && !opts.login?.usernameSelector ? profileOf(chosen.id)?.login : undefined;
   try {
     if (opts.login) {
-      signedIn = await signIn(context, opts.login, log);
+      // Spot the system on its sign-in page (Odoo, Zoho, WordPress...) to use its own sign-in fields.
+      if (!chosen && opts.login.loginUrl && !opts.login.usernameSelector && !opts.login.steps) {
+        const html = await context.request
+          .get(opts.login.loginUrl, { timeout: 15_000 })
+          .then((r) => r.text())
+          .catch(() => "");
+        const sys = detectSystem({ url: opts.login.loginUrl, html });
+        if (sys) {
+          site.system = sys;
+          loginHints = profileOf(sys.id)?.login;
+          log(`The sign-in page looks like ${sys.name}`);
+        }
+      }
+      signedIn = await signIn(context, opts.login, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints });
+      if (isApp) {
+        const cap = captureCalls(context, new URL(startUrl).origin);
+        site.calls = cap.calls;
+        stopCalls = cap.stop;
+      }
       notes.push(`Signed in as ${opts.login.username} at ${opts.login.loginUrl} before testing, so the pages behind the login were tested too.`);
       notes.push("While signed in, links that look like actions (log out, delete, cancel, archive and similar) were not opened, to keep the account and its data unchanged.");
     }
@@ -594,6 +636,35 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     while (!done.length && (queue.length || retests.length)) {
       opts.signal?.throwIfAborted();
       await testPage(nextUrl()!, 0, true);
+    }
+
+    // A signed-in app: spot the system on its first screen, then click through its menus to find
+    // every screen, including those with no ordinary link (a full system test after login).
+    if (isApp && done.length) {
+      const first = done[0].result.url;
+      const html = await context.request
+        .get(first, { timeout: 15_000 })
+        .then((r) => r.text())
+        .catch(() => "");
+      const cookieNames = (await context.cookies().catch(() => [])).map((c) => c.name);
+      const sys = chosen ?? detectSystem({ url: first, html, cookies: cookieNames }) ?? site.system;
+      if (sys) {
+        if (!site.system || site.system.id !== sys.id) log(`Recognised the system: ${sys.name}${sys.framework ? ` (built on ${sys.framework})` : ""}`);
+        site.system = sys;
+        site.unsafe = profileOf(sys.id)?.unsafe;
+      }
+      if (signedIn && (opts.explore ?? true)) {
+        log("Full system test: clicking through the app's menus to find every screen");
+        const screens = await exploreApp(context, first, { system: profileOf(site.system?.id), unsafe: site.unsafe, log, signal: opts.signal }).catch((err: Error) => {
+          if (opts.signal?.aborted) throw err;
+          log(`App explorer stopped: ${err.message.split("\n")[0]}`);
+          return [];
+        });
+        site.screens = screens;
+        addLinks(first, screens.map((x) => x.url));
+        const fromMenu = screens.filter((x) => x.via && x.via !== "Start screen").length;
+        if (fromMenu) notes.push(`Full system test: the app explorer clicked through the menus and found ${screens.length} screens (${fromMenu} from menus, tabs and dropdowns), and tested them like any page.`);
+      }
     }
 
     // Then a pool of screens: each takes the next address from the queue until the page limit.
@@ -662,8 +733,24 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
         login: opts.login,
         loggedIn: Boolean(signedIn),
         mailUrl: opts.mailUrl,
+        hook: opts.hookInbox,
         log,
         signal: opts.signal,
+        roleSession: (roleId: string) => {
+          if (!roleContexts.has(roleId)) {
+            roleContexts.set(
+              roleId,
+              (async () => {
+                const role = opts.roles?.find((r) => r.id === roleId);
+                if (!role) throw new Error("The journey's role was deleted from the project.");
+                const ctx = await browser.newContext({ viewport: DESKTOP });
+                await signIn(ctx, role.login, log, { mailUrl: opts.mailUrl, signal: opts.signal });
+                return { context: ctx, login: role.login, name: role.name };
+              })(),
+            );
+          }
+          return roleContexts.get(roleId)!;
+        },
       });
       journeys = r.results;
       findings.push(...r.findings);
@@ -694,7 +781,9 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     findings.push(...(await Promise.all(siteAgents.filter((a) => !last(a)).map(runSite))).flat());
     for (const agent of siteAgents.filter(last)) findings.push(...(await runSite(agent)));
   } finally {
+    stopCalls?.();
     opts.signal?.removeEventListener("abort", stop);
+    for (const r of roleContexts.values()) await r.then((x) => x.context.close(), () => {}).catch(() => {});
     await browser.close().catch(() => {});
   }
 
@@ -725,6 +814,10 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     ...(notes.length ? { notes } : {}),
     ...(journeys ? { journeys } : {}),
     ...(cookies?.length ? { cookies } : {}),
+    ...(site.screens?.length ? { screens: site.screens.map((x) => ({ ...x, tested: pages.some((p) => normaliseUrl(p.url) === x.url || (p.redirectedFrom && normaliseUrl(p.redirectedFrom) === x.url)) })) } : {}),
+    ...(site.calls?.length ? { calls: site.calls.map(reportCall) } : {}),
+    ...(site.access ? { access: site.access } : {}),
+    ...(site.system ? { system: site.system } : {}),
   };
 }
 

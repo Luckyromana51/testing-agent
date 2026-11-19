@@ -7,10 +7,13 @@ export const SKIP_EXT =
 export const UNSAFE_LINK =
   /\/(log-?out|sign-?out|logoff|delete|remove|destroy|unsubscribe)(\/|\?|$)|[?&](action|do)=(delete|remove|logout)/i;
 
-/** Normalises a URL for de-duplication: drops the #hash and trailing slash. */
+/**
+ * Normalises a URL for de-duplication: drops the #hash and trailing slash. A hash that is a screen
+ * of a one-page app (#/contacts, #!/leads) is kept: it is a different screen, not a place on the page.
+ */
 export function normaliseUrl(raw: string): string {
   const u = new URL(raw);
-  u.hash = "";
+  if (!/^#!?\/./.test(u.hash)) u.hash = "";
   if (u.pathname !== "/" && u.pathname.endsWith("/")) u.pathname = u.pathname.slice(0, -1);
   return u.toString();
 }

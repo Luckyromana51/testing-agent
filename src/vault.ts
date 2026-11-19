@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } f
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { Login, LoginKind, LoginSummary } from "./types.js";
+import type { Login, LoginKind, LoginSummary, RoleLogin, RoleSummary } from "./types.js";
 
 /**
  * Encrypted store for client logins: website and app sign-ins, API tokens and Git access tokens.
@@ -14,7 +14,7 @@ import type { Login, LoginKind, LoginSummary } from "./types.js";
  */
 
 /** The parts of a login that are secret. Everything else (address, user name) can be shown. */
-const SECRET_FIELDS = ["password", "token"] as const;
+const SECRET_FIELDS = ["password", "token", "totpSecret"] as const;
 type SecretPart = Partial<Record<(typeof SECRET_FIELDS)[number], string>>;
 
 interface Key {
@@ -70,6 +70,17 @@ function open(key: Key, sealed: string, aad: string): string {
   return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString("utf8");
 }
 
+const roleAad = (projectId: string, roleId: string) => `${projectId}|role|${roleId}`;
+
+interface RoleRow {
+  project_id: string;
+  role_id: string;
+  info: string;
+  secret: string;
+  key_id: string;
+  updated_at: string;
+}
+
 interface Row {
   project_id: string;
   kind: LoginKind;
@@ -93,6 +104,10 @@ export class Vault {
       project_id TEXT PRIMARY KEY, kind TEXT NOT NULL, info TEXT NOT NULL, secret TEXT NOT NULL,
       key_id TEXT NOT NULL, updated_at TEXT NOT NULL
     )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS role_logins (
+      project_id TEXT NOT NULL, role_id TEXT NOT NULL, info TEXT NOT NULL, secret TEXT NOT NULL,
+      key_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (project_id, role_id)
+    )`);
     const { current, others, source } = loadKeys(dataDir, env);
     this.current = current;
     this.source = source;
@@ -112,6 +127,81 @@ export class Vault {
         .prepare("UPDATE logins SET secret = ?, key_id = ? WHERE project_id = ?")
         .run(seal(this.current, plain, aad), this.current.id, row.project_id);
     }
+    const roles = this.db.prepare("SELECT * FROM role_logins WHERE key_id != ?").all(this.current.id) as unknown as RoleRow[];
+    for (const row of roles) {
+      const old = this.keys.get(row.key_id);
+      if (!old) continue;
+      const aad = roleAad(row.project_id, row.role_id);
+      this.db
+        .prepare("UPDATE role_logins SET secret = ?, key_id = ? WHERE project_id = ? AND role_id = ?")
+        .run(seal(this.current, open(old, row.secret, aad), aad), this.current.id, row.project_id, row.role_id);
+    }
+  }
+
+  /** Saves another account for the project. Secrets left empty keep the ones saved before. */
+  saveRole(projectId: string, role: RoleLogin): void {
+    const prev = this.roles(projectId, { quiet: true }).find((r) => r.id === role.id);
+    const secret: SecretPart = {};
+    const login: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(role.login)) {
+      if (v === undefined || v === "") continue;
+      if ((SECRET_FIELDS as readonly string[]).includes(k)) secret[k as keyof SecretPart] = String(v);
+      else login[k] = v;
+    }
+    for (const k of SECRET_FIELDS) if (!secret[k] && prev?.login[k]) secret[k] = prev.login[k];
+    const info = { name: role.name, login, otherCompany: role.otherCompany || undefined, mustNotOpen: role.mustNotOpen || undefined };
+    const aad = roleAad(projectId, role.id);
+    this.db
+      .prepare(
+        `INSERT INTO role_logins (project_id, role_id, info, secret, key_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project_id, role_id) DO UPDATE SET info = excluded.info, secret = excluded.secret, key_id = excluded.key_id, updated_at = excluded.updated_at`,
+      )
+      .run(projectId, role.id, JSON.stringify(info), seal(this.current, JSON.stringify(secret), aad), this.current.id, new Date().toISOString());
+  }
+
+  /** The project's other accounts with their secrets, for a test run only. */
+  roles(projectId: string, opts: { quiet?: boolean } = {}): RoleLogin[] {
+    const rows = this.db.prepare("SELECT * FROM role_logins WHERE project_id = ? ORDER BY updated_at").all(projectId) as unknown as RoleRow[];
+    const out: RoleLogin[] = [];
+    for (const row of rows) {
+      const key = this.keys.get(row.key_id);
+      if (!key) {
+        if (opts.quiet) continue;
+        throw new Error(`The saved login of role ${JSON.parse(row.info).name} was encrypted with a different SECRET_KEY. Enter it again on the project page.`);
+      }
+      const info = JSON.parse(row.info) as Omit<RoleLogin, "id">;
+      const secret = JSON.parse(open(key, row.secret, roleAad(projectId, row.role_id))) as SecretPart;
+      out.push({ ...info, id: row.role_id, login: { ...info.login, ...secret, kind: "web" } });
+    }
+    return out;
+  }
+
+  /** What the dashboard may see of the other accounts. */
+  roleSummaries(projectId: string): RoleSummary[] {
+    const rows = this.db.prepare("SELECT * FROM role_logins WHERE project_id = ? ORDER BY updated_at").all(projectId) as unknown as RoleRow[];
+    return rows.map((row) => {
+      const info = JSON.parse(row.info) as Omit<RoleLogin, "id">;
+      const key = this.keys.get(row.key_id);
+      const saved: SecretPart = key ? (JSON.parse(open(key, row.secret, roleAad(projectId, row.role_id))) as SecretPart) : {};
+      return {
+        ...info,
+        id: row.role_id,
+        login: {
+          ...(info.login as Omit<Login, "password" | "token" | "totpSecret">),
+          kind: "web",
+          hasPassword: Boolean(saved.password),
+          hasToken: false,
+          ...(saved.totpSecret ? { hasTotp: true } : {}),
+          unreadable: !key || undefined,
+          updatedAt: row.updated_at,
+        },
+      };
+    });
+  }
+
+  deleteRole(projectId: string, roleId?: string): void {
+    if (roleId) this.db.prepare("DELETE FROM role_logins WHERE project_id = ? AND role_id = ?").run(projectId, roleId);
+    else this.db.prepare("DELETE FROM role_logins WHERE project_id = ?").run(projectId);
   }
 
   private row(projectId: string): Row | undefined {
@@ -165,10 +255,11 @@ export class Vault {
     let saved: SecretPart = {};
     if (readable) saved = JSON.parse(open(this.keys.get(row.key_id)!, row.secret, `${row.project_id}|${row.kind}`)) as SecretPart;
     return {
-      ...(JSON.parse(row.info) as Omit<Login, "password" | "token">),
+      ...(JSON.parse(row.info) as Omit<Login, "password" | "token" | "totpSecret">),
       kind: row.kind,
       hasPassword: Boolean(saved.password),
       hasToken: Boolean(saved.token),
+      ...(saved.totpSecret ? { hasTotp: true } : {}),
       unreadable: !readable || undefined,
       updatedAt: row.updated_at,
     };
@@ -179,7 +270,10 @@ export class Vault {
   }
 
   status(): VaultStatus {
-    const rows = this.db.prepare("SELECT key_id FROM logins").all() as { key_id: string }[];
+    const rows = [
+      ...(this.db.prepare("SELECT key_id FROM logins").all() as { key_id: string }[]),
+      ...(this.db.prepare("SELECT key_id FROM role_logins").all() as { key_id: string }[]),
+    ];
     return {
       source: this.source,
       keyId: this.current.id,
@@ -192,7 +286,7 @@ export class Vault {
 /** Every secret in a login, for hiding them in reports and error messages. */
 export function secretsOf(login: Login | undefined, repoUrl?: string): string[] {
   if (!login) return [];
-  const out = [login.password, login.token].filter((s): s is string => Boolean(s && s.length >= 4));
+  const out = [login.password, login.token, login.totpSecret].filter((s): s is string => Boolean(s && s.length >= 4));
   if (login.password && login.username) out.push(Buffer.from(`${login.username}:${login.password}`).toString("base64"));
   if (login.token) out.push(Buffer.from(`${gitUser(login.username, repoUrl)}:${login.token}`).toString("base64"));
   return out;

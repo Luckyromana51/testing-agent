@@ -191,6 +191,8 @@ export class ScanQueue {
         // Decrypted only for this run, kept in memory, and hidden from the report and the log.
         const login = this.stores.vault.get(project.id);
         if (login) log("Using the saved login (kept encrypted on this server)");
+        const roles = login?.kind === "web" ? this.stores.vault.roles(project.id) : [];
+        if (roles.length) log(`Also testing as ${roles.length} other account${roles.length === 1 ? "" : "s"}: ${roles.map((r) => r.name).join(", ")}`);
         let cookie: string | undefined;
         const engine = runEngine({
           product: project.type,
@@ -212,6 +214,10 @@ export class ScanQueue {
           baselineDir: moduleOn(settings.get().modules, "visual") ? this.baselineDir(project.id) : undefined,
           journeys: moduleOn(settings.get().modules, "journeys") ? project.journeys : undefined,
           mailUrl: moduleOn(settings.get().modules, "mail") ? process.env.MAILPIT_URL : undefined,
+          roles,
+          explore: moduleOn(settings.get().modules, "explorer"),
+          system: project.target.system,
+          hookInbox: moduleOn(settings.get().modules, "webhooks") ? this.stores.hooks.inboxFor(project.id) : undefined,
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
@@ -238,7 +244,7 @@ export class ScanQueue {
             choices,
             cookie,
             login,
-            secrets: [...secretsOf(login, project.target.repoUrl), ...cookieValues],
+            secrets: [...secretsOf(login, project.target.repoUrl), ...roles.flatMap((r) => secretsOf(r.login)), ...cookieValues],
             artifactsDir: this.artifactsDir(run.id),
             uploadsDir: this.uploadsDir(),
             workDir,

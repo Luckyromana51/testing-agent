@@ -10,7 +10,7 @@ const withoutHash = (u: string) => u.split("#")[0];
  */
 export async function readOnly(
   page: Page,
-  opts: { loggedIn?: boolean; stayOnPage?: boolean } = {},
+  opts: { loggedIn?: boolean; stayOnPage?: boolean; unsafe?: RegExp } = {},
 ): Promise<{ blocked: string[]; stayOn: (url: string) => void; off: () => Promise<void> }> {
   const blocked: string[] = [];
   let home = "";
@@ -20,7 +20,7 @@ export async function readOnly(
     const url = req.url();
     let unsafe = false;
     try {
-      unsafe = /^https?:/.test(url) && isUnsafeLink(url, opts.loggedIn);
+      unsafe = /^https?:/.test(url) && (isUnsafeLink(url, opts.loggedIn) || Boolean(opts.unsafe?.test(url)));
     } catch {
       unsafe = false;
     }

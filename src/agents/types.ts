@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Response } from "playwright";
-import type { Category, Finding, PageResult, ProductType } from "../types.js";
+import type { AccessGrid, AppScreen, Category, Finding, Login, PageResult, ProductType, RoleLogin, SystemInfo } from "../types.js";
 
 /** Which test engine runs an agent: the browser, the API caller, the offline code reader, or the app reader. */
 export type Engine = "web" | "api" | "code" | "mobile";
@@ -55,6 +55,43 @@ export interface SiteState {
   loggedIn?: boolean;
   /** The user name or email the test signed in with, to recognise private pages. */
   loginUser?: string;
+  /** The main login, for agents that sign in again in their own browser (session checks). Never reported. */
+  login?: Login;
+  /** Other accounts of the project (roles, another company). */
+  roles?: RoleLogin[];
+  /** The test mailbox, for sign-ins that email a code. */
+  mailUrl?: string;
+  /** The app's own calls (fetch, XHR) seen while signed in, with their answers, in memory only. */
+  calls?: CapturedCall[];
+  /** Screens the explorer found. */
+  screens?: AppScreen[];
+  /** The system the test recognised. */
+  system?: SystemInfo;
+  /** Addresses this system uses for actions: never opened. */
+  unsafe?: RegExp;
+  /** Filled in by the access agent for the report. */
+  access?: AccessGrid;
+  signal?: AbortSignal;
+}
+
+/** One app call with its answer, kept in memory while the test runs. */
+export interface CapturedCall {
+  method: string;
+  url: string;
+  status: number;
+  ms: number;
+  bytes: number;
+  pageUrl: string;
+  type: string;
+  contentType: string;
+  /** The answer, when it is text and not too big. */
+  body?: string;
+  /** Request headers worth replaying (Authorization, X-...), never reported. */
+  auth?: Record<string, string>;
+  /** How many times the same call was made. */
+  count: number;
+  /** What the same call answered with no login (filled in by the calls agent). */
+  anon?: number | "same";
 }
 
 export interface PageContext {

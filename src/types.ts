@@ -85,6 +85,10 @@ export interface Journey {
   allowWrites?: boolean;
   /** Kept, but not run. */
   off?: boolean;
+  /** Run signed in as this role (its id) instead of the main account. */
+  role?: string;
+  /** Steps that always run at the end, even when the journey fails (delete the test record...). */
+  cleanup?: string;
 }
 
 export interface JourneyStepResult {
@@ -99,6 +103,10 @@ export interface JourneyStepResult {
   url?: string;
   /** Requests stopped because they could change data. */
   blocked?: string[];
+  /** The app's own calls during the step. */
+  calls?: { method: string; url: string; status: number; ms: number }[];
+  /** A clean-up step. */
+  cleanup?: boolean;
 }
 
 export interface JourneyResult {
@@ -110,6 +118,8 @@ export interface JourneyResult {
   total: number;
   steps: JourneyStepResult[];
   allowWrites?: boolean;
+  /** The role it ran as. */
+  role?: string;
 }
 
 export interface ScanOptions {
@@ -145,6 +155,21 @@ export interface ScanOptions {
   journeys?: Journey[];
   /** The test mailbox (Mailpit) address, for journeys that check emails. */
   mailUrl?: string;
+  /** Other accounts (roles, another company) for the access grid and role journeys. */
+  roles?: RoleLogin[];
+  /** Click through the signed-in app's menus to find its screens. Defaults to on for signed-in web apps, SaaS and CRMs. */
+  explore?: boolean;
+  /** The system chosen on the project (a known system's id); otherwise the test spots it. */
+  system?: string;
+  /** Webhook inbox for journeys: where to read what the app sent. */
+  hookInbox?: HookInbox;
+}
+
+/** Reads the project's webhook inbox (see src/app/hooks.ts). */
+export interface HookInbox {
+  address: string;
+  /** Messages that arrived after `since` (ISO time), newest first. */
+  since(since: string): { at: string; method: string; body: string; headers: Record<string, string> }[];
 }
 
 export interface AgentStat {
@@ -194,6 +219,24 @@ export interface ScanResult {
   journeys?: JourneyResult[];
   /** Every cookie the site set during the test (never their values). */
   cookies?: CookieInfo[];
+  /** Signed-in app: the screens found (links and menus). */
+  screens?: AppScreen[];
+  /** Signed-in app: the calls the screens made to the app's server. */
+  calls?: AppCall[];
+  /** Signed-in app: who can open which screen and call. */
+  access?: AccessGrid;
+  /** The business system or framework the test recognised (Odoo, Salesforce, Laravel...). */
+  system?: SystemInfo;
+}
+
+export interface SystemInfo {
+  id: string;
+  name: string;
+  kind: string;
+  /** What gave it away: "address", "page", "cookie". */
+  by: string[];
+  tip?: string;
+  framework?: string;
 }
 
 /** A cookie the site set, without its value. */
@@ -262,6 +305,8 @@ export interface ProjectTarget {
   url?: string;
   maxPages?: number;
   checkLinks?: boolean;
+  /** Signed-in apps: the system it is (a known system's id), when the test cannot spot it on its own. */
+  system?: string;
   /** API: address of the OpenAPI (Swagger) file, JSON or YAML. */
   specUrl?: string;
   /** Source code: Git repository to clone (https). */
@@ -299,12 +344,84 @@ export interface Login {
   paramName?: string;
   /** api and git: the token or key. */
   token?: string;
+  /** web: the secret behind the two-step code (the text under the QR code), for sign-ins that ask for a one-time code. */
+  totpSecret?: string;
+  /** web: where the one-time code comes from: the saved secret (authenticator app) or an email to the test mailbox. */
+  codeFrom?: "totp" | "email";
+  /** web: sign-in steps, in journey words, for sign-ins the form filler cannot do on its own (several pages, a company picker...). */
+  steps?: string;
+  /** web: what this account is, shown in the access grid ("Admin", "Sales staff"). */
+  roleName?: string;
+}
+
+/** Another account to test the app with: a lower role, or a user of another client company. */
+export interface RoleLogin {
+  id: string;
+  name: string;
+  login: Login;
+  /** A user of another company (tenant): it must never see the main account's records. */
+  otherCompany?: boolean;
+  /** Addresses this role must never open, one per line: /admin, /settings/billing, /users/* */
+  mustNotOpen?: string;
+}
+
+/** What the dashboard sees of a role: no secrets. */
+export interface RoleSummary extends Omit<RoleLogin, "login"> {
+  login: LoginSummary;
+}
+
+/** A screen of the signed-in app, found by its links or by clicking its menus. */
+export interface AppScreen {
+  url: string;
+  title?: string;
+  /** How the explorer got there: "Menu > Contacts > Import". Unset when an ordinary link led there. */
+  via?: string;
+  /** In the app's own menu (sidebar, top bar, tabs). */
+  inMenu?: boolean;
+  /** Tabs and panels inside the screen that open without changing its address. */
+  parts?: string[];
+  tested?: boolean;
+}
+
+/** A call the app's screens made to its own server (fetch or XHR), without its answer. */
+export interface AppCall {
+  method: string;
+  url: string;
+  status: number;
+  ms: number;
+  bytes: number;
+  /** The screen that made it. */
+  pageUrl: string;
+  type?: string;
+  /** Sent a login header (Authorization) rather than only cookies. */
+  bearer?: boolean;
+  /** What the same call answered with no login: the status, or "same" when it gave the same data. */
+  anon?: number | "same";
+}
+
+export type AccessCell = "opens" | "blocked" | "error" | "same-data" | "other-data" | "not-tried";
+
+/** Who can open what: a row per screen or call, a column per account. */
+export interface AccessGrid {
+  roles: { id: string; name: string; otherCompany?: boolean; signedIn: boolean; error?: string }[];
+  rows: {
+    kind: "screen" | "call";
+    url: string;
+    /** In the main account's menu. */
+    inMenu?: boolean;
+    cells: Record<string, AccessCell>;
+    /** Roles whose own menu has this screen. */
+    menuOf?: string[];
+    /** Cells that are a problem, by role: the role must never open it, its menu hides it, or another company got the data. */
+    flags?: Record<string, "forbidden" | "hidden" | "other-company">;
+  }[];
 }
 
 /** What the dashboard sees of a saved login: no secrets, only whether each one is saved. */
-export interface LoginSummary extends Omit<Login, "password" | "token"> {
+export interface LoginSummary extends Omit<Login, "password" | "token" | "totpSecret"> {
   hasPassword: boolean;
   hasToken: boolean;
+  hasTotp?: boolean;
   /** Saved with a key this server no longer has, so it must be entered again. */
   unreadable?: boolean;
   updatedAt: string;
@@ -345,6 +462,19 @@ export interface WatchConfig {
   webhook?: string;
   /** Warn this many days before the certificate ends. */
   sslWarnDays?: number;
+  /** Also run the project's journeys (read-only ones) between tests. */
+  journeys?: boolean;
+  /** Minutes between journey runs: 15, 30 or 60. */
+  journeysEveryMin?: number;
+}
+
+/** The last journey watch run of a project. */
+export interface JourneyWatchRun {
+  at: string;
+  ok: boolean;
+  ms: number;
+  results: { id: string; name: string; ok: boolean; ms: number; failedStep?: string; error?: string }[];
+  error?: string;
 }
 
 export type IssueStatus = "open" | "in_progress" | "fixed" | "verified" | "reopened" | "wont_fix";

@@ -10,6 +10,9 @@ import type {
   Issue,
   IssueStatus,
   Journey,
+  JourneyWatchRun,
+  RoleLogin,
+  RoleSummary,
   WatchConfig,
   Login,
   LoginSummary,
@@ -44,7 +47,21 @@ export type ProjectSummary = Project & {
   /** The saved login, without its secrets. */
   login: LoginSummary | null;
   permissions: PermissionView[];
+  /** Other accounts (roles, another company), without their secrets. */
+  roles: RoleSummary[];
+  /** The project's webhook inbox address, when it is open. */
+  hookAddress: string | null;
 };
+
+export interface HookMessageView {
+  id: number;
+  at: string;
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  body: string;
+  bytes: number;
+}
 
 /** A client's permission for load and attack tests, with where it stands today. */
 export type PermissionView = Permission & { status: PermissionStatus };
@@ -77,7 +94,7 @@ export interface ProjectDetail {
   trends: TrendPoint[];
   flaky: FlakyIssue[];
   /** Uptime and SSL watch (websites and web apps only). */
-  watch: WatchSummary | null;
+  watch: (WatchSummary & { journeys: boolean; journeysEveryMin: number; lastJourneys: JourneyWatchRun | null }) | null;
 }
 
 export interface WatchOverview {
@@ -99,6 +116,8 @@ export interface TargetFields {
   fileName?: string;
   maxPages?: number;
   checkLinks?: boolean;
+  /** Signed-in apps: a known system's id, or "" to let the test spot it. */
+  system?: string;
   /** A login to save (secrets left empty keep the saved ones), or null to remove it. */
   login?: Partial<Login> | null;
 }
@@ -129,6 +148,9 @@ export interface Meta {
   vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
   /** Optional modules (inspect screen, visual compare, journeys...) and whether each is on. */
   modules: (ModuleInfo & { on: boolean; ready: boolean })[];
+  /** The business systems the signed-in test knows, and their kinds. */
+  systems: { id: string; name: string; kind: string }[];
+  systemKinds: { id: string; name: string }[];
 }
 
 export interface Settings {
@@ -210,6 +232,12 @@ export const api = {
   meta: () => call<Meta>("GET", "/api/meta"),
 
   projects: () => call<ProjectSummary[]>("GET", "/api/projects"),
+  saveRole: (id: string, b: Partial<Omit<RoleLogin, "login">> & { login: Partial<Login> }) => call<RoleSummary>("POST", `/api/projects/${id}/roles`, b),
+  deleteRole: (id: string, rid: string) => call("DELETE", `/api/projects/${id}/roles/${rid}`),
+  hooks: (id: string) => call<{ address: string | null; messages: HookMessageView[] }>("GET", `/api/projects/${id}/hooks`),
+  openHooks: (id: string, b: { fresh?: boolean; clear?: boolean } = {}) => call<{ address: string; messages: HookMessageView[] }>("POST", `/api/projects/${id}/hooks`, b),
+  closeHooks: (id: string) => call("DELETE", `/api/projects/${id}/hooks`),
+  watchJourneysNow: (id: string) => call<JourneyWatchRun | null>("POST", `/api/projects/${id}/watch/journeys`, {}),
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
   createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[] } & TargetFields) =>
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
