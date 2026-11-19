@@ -589,6 +589,8 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       notes.push("While signed in, links that look like actions (log out, delete, cancel, archive and similar) were not opened, to keep the account and its data unchanged.");
     }
     // The first page alone: it decides where the site lives and whether it can be tested at all.
+    // The other screens say why they wait: they start on the links the first page finds.
+    for (let slot = 1; slot < Math.min(parallel, maxPages); slot++) live?.screen({ slot, doing: "Waits for page 1, which finds the links", agents: [], state: "idle" });
     while (!done.length && (queue.length || retests.length)) {
       opts.signal?.throwIfAborted();
       await testPage(nextUrl()!, 0, true);

@@ -3,12 +3,15 @@ import type { LiveScreen } from "../../../src/live.ts";
 
 /**
  * The live view of a running web test: what each test browser screen shows right now, side by side,
- * next to what its agents are doing. The screens can be shown 1 to 4 at a time, in different shapes,
+ * next to what its agents are doing. The screens can be shown 1 to 16 at a time, in different shapes,
  * resized by dragging the lines between them, and swapped by dragging a screen's grip onto another.
  */
 
 type Shape = "single" | "cols" | "rows" | "main" | "grid";
-const SHAPES: Record<number, Shape[]> = { 1: ["single"], 2: ["cols", "rows"], 3: ["main", "cols", "rows"], 4: ["grid", "main", "cols", "rows"] };
+/** Up to this many screens side by side: as many as a test can have. */
+const MAX_PANES = 16;
+const shapesFor = (n: number): Shape[] =>
+  n <= 1 ? ["single"] : n === 2 ? ["cols", "rows"] : n === 3 ? ["main", "cols", "rows"] : n === 4 ? ["grid", "main", "cols", "rows"] : ["grid", "main", "cols"];
 const SHAPE_LABEL: Record<Shape, string> = { single: "One screen", cols: "Side by side", rows: "Stacked", main: "One big", grid: "Grid" };
 
 type Tree = { pane: number } | { dir: "row" | "col"; key: string; children: Tree[] };
@@ -24,15 +27,16 @@ function treeOf(shape: Shape, n: number): Tree {
       return { dir: "col", key: "rows", children: tiles(0, n) };
     case "main":
       return { dir: "row", key: "main", children: [{ pane: 0 }, n === 2 ? { pane: 1 } : { dir: "col", key: "main-side", children: tiles(1, n) }] };
-    case "grid":
+    case "grid": {
+      // Rows of equal screens: 2 by 2 for 4, 3 by 3 for 9, 4 by 4 for 16.
+      const cols = Math.ceil(Math.sqrt(n));
+      const rows = Math.ceil(n / cols);
       return {
         dir: "col",
-        key: "grid",
-        children: [
-          { dir: "row", key: "grid-top", children: tiles(0, 2) },
-          { dir: "row", key: "grid-bottom", children: tiles(2, n) },
-        ],
+        key: `grid${n}`,
+        children: Array.from({ length: rows }, (_, r) => ({ dir: "row" as const, key: `grid${n}-${r}`, children: tiles(r * cols, Math.min(n, (r + 1) * cols)) })),
       };
+    }
     default:
       return { dir: "row", key: "cols", children: tiles(0, n) };
   }
@@ -42,8 +46,10 @@ interface Layout {
   /** How many screens to show, at most; fewer when the test uses fewer. */
   panes: number;
   shapes: Record<number, Shape>;
-  /** Which test screen each place shows. */
+  /** Which test screen each place shows, once the viewer has picked; until then busy screens come first. */
   assign: number[];
+  /** The viewer chose which screen goes where. */
+  manual?: boolean;
   /** Share of each part of a split, by "<places>:<split>". */
   sizes: Record<string, number[]>;
   /** Share of the width for the activity panel. */
@@ -53,15 +59,16 @@ interface Layout {
 }
 
 const DEFAULT_LAYOUT: Layout = {
-  panes: 4,
+  // Every screen the test has, in a grid; fewer with the buttons.
+  panes: MAX_PANES,
   shapes: { 1: "single", 2: "cols", 3: "main", 4: "grid" },
-  assign: [0, 1, 2, 3],
+  assign: Array.from({ length: MAX_PANES }, (_, i) => i),
   sizes: {},
   side: 0.3,
   height: 560,
   panel: true,
 };
-const LAYOUT_KEY = "glv.liveLayout.v1";
+const LAYOUT_KEY = "glv.liveLayout.v2";
 
 function loadLayout(): Layout {
   try {
@@ -222,7 +229,11 @@ function ShapeIcon({ shape, n }: { shape: Shape; n: number }) {
     if (shape === "single" || n === 1) return [[0, 0, W, H]];
     if (shape === "cols") return tiles(0, n).map((_, i) => [(i * W) / n, 0, W / n, H]);
     if (shape === "rows") return tiles(0, n).map((_, i) => [0, (i * H) / n, W, H / n]);
-    if (shape === "grid") return [[0, 0, W / 2, H / 2], [W / 2, 0, W / 2, H / 2], [0, H / 2, W / 2, H / 2], [W / 2, H / 2, W / 2, H / 2]];
+    if (shape === "grid") {
+      const cols = Math.ceil(Math.sqrt(n));
+      const rows = Math.ceil(n / cols);
+      return tiles(0, n).map((_, i): [number, number, number, number] => [((i % cols) * W) / cols, (Math.floor(i / cols) * H) / rows, W / cols, H / rows]);
+    }
     const side = n - 1;
     return [[0, 0, W * 0.62, H], ...tiles(0, side).map((_, i): [number, number, number, number] => [W * 0.62, (i * H) / side, W * 0.38, H / side])];
   })();
@@ -284,12 +295,23 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
 
   const total = count ?? 0;
   const shown = Math.max(1, Math.min(layout.panes, total || 1));
-  const shape = SHAPES[shown].includes(layout.shapes[shown]) ? layout.shapes[shown] : SHAPES[shown][0];
+  const shape = shapesFor(shown).includes(layout.shapes[shown]) ? layout.shapes[shown] : shapesFor(shown)[0];
+  // Until the viewer picks, the places show the screens that are checking a page first, so no
+  // place sits on "Waiting" while another screen is busy. A screen keeps its place while it stays busy.
+  const order = useMemo(() => {
+    const rank = (slot: number) => (screens[slot]?.state === "busy" ? 0 : screens[slot]?.url && screens[slot]?.state !== "done" ? 1 : 2);
+    return tiles(0, total).map((_, i) => i).sort((a, b) => rank(a) - rank(b) || a - b);
+  }, [screens, total]);
   const slotOf = (pane: number) => {
+    if (!layout.manual && total) return order[pane] ?? pane % total;
     const s = layout.assign[pane] ?? pane;
     return total ? (s < total ? s : pane % total) : pane;
   };
   const lines = log.length ? log : progress;
+  const setPanes = (n: number) => {
+    setMax(null);
+    setLayout((l) => ({ ...l, panes: Math.max(1, Math.min(MAX_PANES, n)) }));
+  };
 
   const sizesOf = (key: string, n: number, fallback?: number[]) => {
     const s = layout.sizes[`${shown}:${key}`];
@@ -300,19 +322,19 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
   const swap = (from: number, to: number) => {
     if (from === to) return;
     setLayout((l) => {
-      const assign = tiles(0, 4).map((_, i) => slotOf(i));
+      const assign = tiles(0, MAX_PANES).map((_, i) => slotOf(i));
       [assign[from], assign[to]] = [assign[to], assign[from]];
-      return { ...l, assign };
+      return { ...l, assign, manual: true };
     });
   };
   const choose = (pane: number, slot: number) =>
     setLayout((l) => {
-      const assign = tiles(0, 4).map((_, i) => slotOf(i));
+      const assign = tiles(0, MAX_PANES).map((_, i) => slotOf(i));
       // Choosing a screen that another place shows swaps the two, so no screen is shown twice by accident.
       const other = assign.findIndex((s, i) => s === slot && i !== pane && i < shown);
       if (other >= 0) assign[other] = assign[pane];
       assign[pane] = slot;
-      return { ...l, assign };
+      return { ...l, assign, manual: true };
     });
 
   const tile = (pane: number) => {
@@ -492,6 +514,11 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
         {total > 1 && (
           <div className="live-controls">
             <div className="seg" role="group" aria-label="Screens shown">
+              {shown > 1 && (
+                <button title="Show one screen less" aria-label="Show one screen less" onClick={() => setPanes(shown - 1)}>
+                  −
+                </button>
+              )}
               {tiles(0, Math.min(4, total)).map((_, i) => (
                 <button
                   key={i}
@@ -506,10 +533,29 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
                   {i + 1}
                 </button>
               ))}
+              {shown > 4 && (
+                <button className="on" aria-pressed="true" title={`Showing ${shown} screens`}>
+                  {shown}
+                </button>
+              )}
+              {total > Math.max(4, shown) && (
+                <button
+                  className={shown === total ? "on" : ""}
+                  title={`Show all ${total} screens`}
+                  onClick={() => setPanes(total)}
+                >
+                  All {total}
+                </button>
+              )}
+              {shown < Math.min(total, MAX_PANES) && (
+                <button title="Show one screen more" aria-label="Show one screen more" onClick={() => setPanes(shown + 1)}>
+                  +
+                </button>
+              )}
             </div>
-            {!phone && SHAPES[shown].length > 1 && (
+            {!phone && shapesFor(shown).length > 1 && (
               <div className="seg" role="group" aria-label="Shape">
-                {SHAPES[shown].map((sh) => (
+                {shapesFor(shown).map((sh) => (
                   <button
                     key={sh}
                     className={shape === sh ? "on" : ""}
@@ -553,7 +599,7 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
         </div>
       ) : (
         <>
-          <div className="live-body" ref={body} style={{ height: layout.height }}>
+          <div className="live-body" ref={body} style={{ height: shape === "grid" && shown > 4 ? Math.max(layout.height, Math.ceil(shown / Math.ceil(Math.sqrt(shown))) * 250) : layout.height }}>
             {layout.panel ? (
               <Split
                 dir="row"
