@@ -3299,3 +3299,108 @@ button.net-row:hover,
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- Trends, uptime watch ------------------------------------------------------------------------ */
+.trend-lead {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.trend-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0 14px;
+}
+.trend-chart .grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.trend-chart .grid.good {
+  stroke: var(--good);
+  stroke-dasharray: 4 4;
+  opacity: 0.6;
+}
+.trend-chart .axis {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.trend-line.big {
+  stroke-width: 3;
+}
+.trend-dot-big {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  cursor: pointer;
+}
+.bar-new,
+.legend-new {
+  fill: var(--bad);
+}
+.bar-fixed,
+.legend-fixed {
+  fill: var(--good);
+}
+.sub-title {
+  font-size: 14px;
+  margin: 18px 0 6px;
+}
+.watch-head {
+  align-items: center;
+  margin-bottom: 12px;
+}
+.watch-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.watch-tile {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.watch-num {
+  font-size: 22px;
+  font-weight: 700;
+}
+.watch-num.ok,
+.ok {
+  color: var(--good);
+}
+.watch-num.warn,
+.warn {
+  color: var(--warn);
+}
+.watch-num.bad {
+  color: var(--bad);
+}
+.down-mark {
+  fill: color-mix(in srgb, var(--bad) 55%, transparent);
+}
+.watch-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 16px;
+  margin: 6px 0 12px;
+}
+.watch-form .inline-field.wide {
+  grid-column: 1 / -1;
+}
+.watch-form .inline-field .input {
+  flex: 1;
+  min-width: 0;
+}
+.down-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  background: var(--bad);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+}
+.down-banner a {
+  color: #fff;
+  text-decoration: none;
+}

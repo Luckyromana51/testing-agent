@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { HelperStore } from "./helpers.js";
 import type { Issue, Project, Role, Run, User } from "./types.js";
 import { Vault } from "./vault.js";
+import { WatchStore } from "./watch.js";
 
 /**
  * SQLite storage (built into Node 22, no native build step). Each row keeps its object as JSON,
@@ -254,6 +255,8 @@ export interface Stores {
   vault: Vault;
   /** Paired Mac helpers (their tokens are kept hashed). */
   helpers: HelperStore;
+  /** Uptime checks, incidents and certificates of watched projects. */
+  watch: WatchStore;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -266,5 +269,6 @@ export function openStores(dataDir: string): Stores {
     users: new UserStore(db),
     vault: new Vault(db, dataDir),
     helpers: new HelperStore(db),
+    watch: new WatchStore(db),
   };
 }

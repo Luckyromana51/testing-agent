@@ -28,6 +28,8 @@ import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
+import { flakyIssues, trendPoints } from "./trends.js";
+import { cleanWatch, Watcher } from "./watch.js";
 import { validateTarget } from "./runner/urls.js";
 
 export { validateTarget } from "./runner/urls.js";
@@ -149,6 +151,8 @@ export async function createApp(opts: AppOptions) {
   auth.bootstrapFromEnv();
   const stopScheduler = opts.scheduler ? startScheduler(stores.projects, queue) : () => {};
   helperHub.attach(stores.helpers);
+  const watcher = new Watcher(stores.watch, () => stores.projects.list());
+  const stopWatcher = opts.scheduler ? watcher.start() : () => {};
   // Own checks are loaded once: switching the module takes effect after a restart.
   if (moduleOn(stores.settings.get().modules, "own-checks") && !ownChecksLoaded) {
     ownChecksLoaded = true;
@@ -162,6 +166,7 @@ export async function createApp(opts: AppOptions) {
   });
   app.addHook("onClose", async () => {
     stopScheduler();
+    stopWatcher();
     helperHub.close();
     await queue.shutdown();
   });
@@ -398,17 +403,42 @@ export async function createApp(opts: AppOptions) {
         .map((r) => ({ runId: r.id, at: r.createdAt, score: r.result!.overallScore, diff: r.diff }))
         .reverse(),
       agents: agentsFor(p.type, stores.settings.get().agents).map(describeAgent),
+      trends: trendPoints(runs),
+      flaky: flakyIssues(stores.issues.list(p.id), runs),
+      watch: WEB_PRODUCTS.includes(p.type) ? stores.watch.summary(p) : null,
+    };
+  });
+
+  // Uptime and SSL watch: check now, and the alerts and outages across projects.
+  app.post<{ Params: { id: string } }>("/api/projects/:id/watch/check", async (req) => {
+    const p = getProject(req.params.id);
+    if (!p.target.url) throw new HttpError(400, "This project has no address to watch.");
+    await watcher.checkProject(p);
+    return stores.watch.summary(p);
+  });
+  app.get("/api/watch", async () => {
+    const projects = new Map(stores.projects.list().map((p) => [p.id, p]));
+    return {
+      down: [...projects.values()].filter((p) => p.watch?.on && stores.watch.openIncident(p.id)).map((p) => ({ id: p.id, name: p.name, url: p.target.url, since: stores.watch.openIncident(p.id)!.startedAt })),
+      alerts: watcher.alerts.slice(0, 30),
+      incidents: stores.watch.incidents(undefined, 30).map((i) => ({ ...i, projectName: projects.get(i.projectId)?.name ?? "Deleted project" })),
     };
   });
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown; watch: unknown }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, ...targetInput } = b;
+    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, watch: watchInput, ...targetInput } = b;
     let login: Login | undefined;
     try {
+      if (watchInput !== undefined) {
+        if (!WEB_PRODUCTS.includes(p.type)) throw new Error("Uptime watch is for websites and web apps.");
+        const w = cleanWatch(watchInput as Record<string, unknown> | null);
+        if (w) next.watch = w;
+        else delete next.watch;
+      }
       if (journeysInput !== undefined) {
         if (!WEB_PRODUCTS.includes(p.type)) throw new Error("User journeys are for websites and web apps.");
         if (!Array.isArray(journeysInput)) throw new Error("Journeys must be a list.");
@@ -503,6 +533,7 @@ export async function createApp(opts: AppOptions) {
     stores.vault.delete(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     await rm(queue.baselineDir(p.id), { recursive: true, force: true });
+    stores.watch.deleteProject(p.id);
     stores.projects.delete(p.id);
     return reply.code(204).send();
   });

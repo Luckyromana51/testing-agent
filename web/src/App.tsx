@@ -31,6 +31,22 @@ export function App() {
   return <Shell user={auth.user} loginOff={Boolean(auth.loginOff)} onSignedOut={() => setAuth({ setupNeeded: false, user: null })} />;
 }
 
+/** Shows on every screen while a watched site is down. */
+function DownBanner() {
+  const { data } = usePoll(() => api.watchOverview(), [], 60_000, () => true);
+  if (!data?.down.length) return null;
+  return (
+    <div className="down-banner" role="alert">
+      {data.down.map((d) => (
+        <a key={d.id} href={`#/project/${d.id}`}>
+          <b>{d.name} is down</b> since {new Date(d.since).toLocaleTimeString()}
+          {d.url ? ` (${hostOf(d.url)})` : ""}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean; onSignedOut: () => void }) {
   const route = useRoute();
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -131,7 +147,10 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
           )}
         </div>
       </aside>
-      <main className="main">{page}</main>
+      <main className="main">
+        <DownBanner />
+        {page}
+      </main>
     </div>
   );
 }

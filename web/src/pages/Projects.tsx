@@ -7,6 +7,8 @@ import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { PermissionCard } from "./Permission.tsx";
 import { JourneysEditor } from "./Journeys.tsx";
+import { TrendsCard } from "./Trends.tsx";
+import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
@@ -89,7 +91,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
   const [saved, setSaved] = useState(false);
   if (error) return <div className="page error big">{error}</div>;
   if (!data) return <div className="loading">Loading…</div>;
-  const { project: p, runs, trend, agents } = data;
+  const { project: p, runs, trend, agents, trends, flaky, watch } = data;
   const product = meta.products.find((x) => x.type === p.type);
   const isWeb = ["website", "ecommerce", "webapp", "saas", "crm"].includes(p.type);
 
@@ -210,6 +212,16 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
       </div>
 
       {loginKind(p.type) && <ProjectLogin projectId={p.id} kind={loginKind(p.type)!} saved={p.login} onSaved={reload} />}
+
+      <h2 className="section-title">Trends</h2>
+      <TrendsCard points={trends} flaky={flaky} />
+
+      {watch && p.target.url && (
+        <>
+          <h2 className="section-title">Uptime and SSL watch</h2>
+          <WatchCard key={JSON.stringify(p.watch ?? null)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />
+        </>
+      )}
 
       <h2 className="section-title">Test runs</h2>
       <div className="card table-card">

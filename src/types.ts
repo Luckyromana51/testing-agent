@@ -311,6 +311,21 @@ export interface Project {
   permissions?: Permission[];
   /** Steps a person takes on the site, followed on every test (websites and web apps). */
   journeys?: Journey[];
+  /** Uptime and SSL watch between tests. */
+  watch?: WatchConfig;
+}
+
+/** Uptime and SSL watch for a website project (see src/watch.ts). */
+export interface WatchConfig {
+  on: boolean;
+  /** Minutes between checks: 1, 5, 15 or 60. */
+  everyMin: number;
+  /** Words the page must contain, to catch a blank or error page that still answers 200. */
+  expectText?: string;
+  /** The project's own webhook for alerts (Slack, Teams, Google Chat...). */
+  webhook?: string;
+  /** Warn this many days before the certificate ends. */
+  sslWarnDays?: number;
 }
 
 export type IssueStatus = "open" | "in_progress" | "fixed" | "verified" | "reopened" | "wont_fix";
