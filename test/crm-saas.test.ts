@@ -87,7 +87,7 @@ describe("helpers of the signed-in checks", () => {
     assert.equal(role.login.loginUrl, "https://crm.test/login", "the main sign-in page is used when none is given");
     assert.equal(role.login.roleName, "Sales staff");
     assert.throws(() => buildRole("crm", { name: "X", login: { username: "s@b.in", password: "y".repeat(8), totpSecret: "0189!" } }, main), /not allowed/);
-    assert.throws(() => buildRole("website", { name: "X", login: {} }, main), /web apps, SaaS and CRMs/);
+    assert.throws(() => buildRole("website", { name: "X", login: {} }, main), /web apps, SaaS, CRMs and APIs/);
     assert.throws(() => buildLogin("crm", { loginUrl: "https://crm.test/login", username: "a", password: "pw123456", steps: "jump around" }), /sign-in steps/);
   });
 
