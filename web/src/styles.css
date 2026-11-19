@@ -21,7 +21,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0b1220;
     --panel: #121b2c;
     --sidebar: #070d18;
@@ -32,6 +32,17 @@
     color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+    --bg: #0b1220;
+    --panel: #121b2c;
+    --sidebar: #070d18;
+    --text: #e6ebf2;
+    --muted: #94a3b8;
+    --border: #233047;
+    --accent-soft: #1b2a4a;
+    color-scheme: dark;
+  }
+
 * {
   box-sizing: border-box;
 }
@@ -1034,11 +1045,16 @@ a.brand {
   color: #475569;
 }
 @media (prefers-color-scheme: dark) {
-  .product-icon {
+  :root:not([data-theme="light"]) .product-icon {
     background: rgba(255, 255, 255, 0.07);
     color: #93c5fd;
   }
 }
+:root[data-theme="dark"] .product-icon {
+    background: rgba(255, 255, 255, 0.07);
+    color: #93c5fd;
+  }
+
 .badge {
   font-size: 11px;
   font-weight: 600;
@@ -3446,4 +3462,111 @@ button.net-row:hover,
 }
 .wcag-table td {
   vertical-align: top;
+}
+
+/* Colours switch in the sidebar */
+.theme-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.theme-switch button {
+  flex: 1;
+  border: 0;
+  background: none;
+  color: var(--sidebar-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-radius: 6px;
+}
+.theme-switch button.active {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.theme-switch button:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* Tabs that stay at the top while the section below scrolls */
+.sticky-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  margin: 18px 0 14px;
+}
+.tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tab-count.bad {
+  background: var(--bad);
+  color: #fff;
+}
+.see-all {
+  margin-top: 6px;
+}
+.module-setup {
+  margin-top: 8px;
+}
+.module-setup code {
+  font-size: 11.5px;
+}
+
+/* Phone: the sidebar becomes a short top bar; recent projects and settings open with "More". */
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.menu-btn {
+  display: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: none;
+  color: var(--sidebar-text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+@media (max-width: 860px) {
+  .sidebar {
+    padding: 12px 16px;
+    gap: 10px;
+  }
+  .menu-btn {
+    display: block;
+  }
+  .sidebar .nav {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 4px;
+    scrollbar-width: none;
+  }
+  .sidebar .nav-item {
+    flex: none;
+    padding: 7px 10px;
+  }
+  .sidebar:not(.open) .phone-more {
+    display: none;
+  }
+  .table-card {
+    overflow-x: auto;
+  }
+}
+.shell > * {
+  min-width: 0;
 }

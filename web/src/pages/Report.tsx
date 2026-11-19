@@ -50,7 +50,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"issues" | "pages" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("issues");
+  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -288,21 +288,10 @@ export function Report({ id }: { id: string }) {
         </section>
       )}
 
-      <section className="major">
-        <h2 className="section-title">
-          {major.length ? `${plural(major.length, "major issue")} to fix first` : "No major issues"}
-        </h2>
-        {major.length === 0 && (
-          <div className="card good-card">Nothing critical or high was found. The rest of the list below is polish.</div>
-        )}
-        {major.map((g) => (
-          <MajorCard key={g.key} g={g} unit={unit.many} />
-        ))}
-      </section>
-
-      <AiPanel run={run} />
-
-      <div className="tabs">
+      <div className="tabs sticky-tabs">
+        <button className={tab === "summary" ? "active" : ""} onClick={() => setTab("summary")}>
+          Fix first {major.length > 0 && <span className="tab-count bad">{major.length}</span>}
+        </button>
         <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
           All issues ({groups.length})
         </button>
@@ -342,6 +331,27 @@ export function Report({ id }: { id: string }) {
           </button>
         )}
       </div>
+      {tab === "summary" && (
+        <>
+          <section className="major">
+            <h2 className="section-title">
+              {major.length ? `${plural(major.length, "major issue")} to fix first` : "No major issues"}
+            </h2>
+            {major.length === 0 && (
+              <div className="card good-card">Nothing critical or high was found. The other issues are in All issues, and are polish.</div>
+            )}
+            {major.map((g) => (
+              <MajorCard key={g.key} g={g} unit={unit.many} />
+            ))}
+            {groups.length > major.length && (
+              <button className="btn ghost see-all" onClick={() => setTab("issues")}>
+                See all {groups.length} issues →
+              </button>
+            )}
+          </section>
+          <AiPanel run={run} />
+        </>
+      )}
       {tab === "issues" && <IssueList groups={groups} categories={categories} unit={unit.many} />}
       {tab === "pages" && <Pages run={run} onRunChange={reload} />}
       {tab === "journeys" && <Journeys run={run} />}

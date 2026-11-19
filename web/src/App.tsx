@@ -49,6 +49,9 @@ function DownBanner() {
 
 function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean; onSignedOut: () => void }) {
   const route = useRoute();
+  const [menuOpen, setMenuOpen] = useState(false);
+  // On a phone the menu closes when a page opens.
+  useEffect(() => setMenuOpen(false), [route.name, route.id]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const reloadMeta = useCallback(() => {
     api.meta().then(setMeta).catch(() => {});
@@ -76,14 +79,19 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
 
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <a className="brand" href="#/">
-          <div className="logo">GLV</div>
-          <div>
-            <div className="brand-name">Testing Agent</div>
-            <div className="brand-sub">by GLV Infotech Solutions</div>
-          </div>
-        </a>
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
+        <div className="brand-row">
+          <a className="brand" href="#/">
+            <div className="logo">GLV</div>
+            <div>
+              <div className="brand-name">Testing Agent</div>
+              <div className="brand-sub">by GLV Infotech Solutions</div>
+            </div>
+          </a>
+          <button className="menu-btn" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+            {menuOpen ? "Close" : "More"}
+          </button>
+        </div>
         <nav className="nav">
           {nav.map(([href, label, icon, active]) => (
             <a key={href} href={href} className={`nav-item ${active ? "active" : ""}`}>
@@ -94,8 +102,8 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
         </nav>
         {projects && projects.length > 0 && (
           <>
-            <div className="section-label">Recent projects</div>
-            <ul className="run-list">
+            <div className="section-label phone-more">Recent projects</div>
+            <ul className="run-list phone-more">
               {projects.slice(0, 8).map((p) => (
                 <li key={p.id}>
                   <button
@@ -117,7 +125,8 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
             </ul>
           </>
         )}
-        <div className="sidebar-foot">
+        <div className="sidebar-foot phone-more">
+          <ThemeSwitch />
           <div className={`ai-status ${meta?.ai && meta.aiSummary ? "on" : ""}`}>
             {meta ? (meta.ai && meta.aiSummary ? "Claude summary is on" : "Claude summary is off") : ""}
           </div>
@@ -151,6 +160,51 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
         <DownBanner />
         {page}
       </main>
+    </div>
+  );
+}
+
+type Theme = "system" | "light" | "dark";
+const readTheme = (): Theme => {
+  try {
+    const t = localStorage.getItem("glv.theme");
+    return t === "light" || t === "dark" ? t : "system";
+  } catch {
+    return "system";
+  }
+};
+/** Applied before React starts too (main.tsx), so the page never flashes the wrong colours. */
+export function applyTheme(t: Theme = readTheme()) {
+  if (t === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+}
+
+/** Light, dark, or the computer's own setting. Remembered in this browser. */
+function ThemeSwitch() {
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  const pick = (t: Theme) => {
+    setTheme(t);
+    applyTheme(t);
+    try {
+      if (t === "system") localStorage.removeItem("glv.theme");
+      else localStorage.setItem("glv.theme", t);
+    } catch {
+      // Private window: the choice lasts until the tab closes.
+    }
+  };
+  return (
+    <div className="theme-switch" role="group" aria-label="Colours">
+      {(
+        [
+          ["system", "Auto"],
+          ["light", "Light"],
+          ["dark", "Dark"],
+        ] as [Theme, string][]
+      ).map(([t, label]) => (
+        <button key={t} className={theme === t ? "active" : ""} aria-pressed={theme === t} onClick={() => pick(t)}>
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

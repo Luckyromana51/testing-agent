@@ -13,6 +13,7 @@ const CAT_COLOR: Record<Category, string> = {
   mobile: "#0891b2",
 };
 
+const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 /** Scores over time (overall and per area), and issues found and fixed per test. */
@@ -52,6 +53,7 @@ export function TrendsCard({ points, flaky }: { points: TrendPoint[]; flaky: Fla
   };
   const last = pts.at(-1)!;
   const first = pts[0];
+  const sameDay = day(first.at) === day(last.at);
   const change = last.score - first.score;
   return (
     <div className="card trends">
@@ -97,8 +99,8 @@ export function TrendsCard({ points, flaky }: { points: TrendPoint[]; flaky: Fla
               </a>
             )}
             {(i === 0 || i === pts.length - 1 || i % Math.ceil(pts.length / 6) === 0) && (
-              <text x={x(i)} y={H - 8} className="axis" textAnchor="middle">
-                {day(p.at)}
+              <text x={x(i)} y={H - 8} className="axis" textAnchor={pts.length > 1 && i === pts.length - 1 ? "end" : i === 0 && pts.length > 1 ? "start" : "middle"}>
+                {sameDay ? time(p.at) : day(p.at)}
               </text>
             )}
           </g>
