@@ -34,6 +34,13 @@ export interface Finding {
   agent?: string;
 }
 
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface PageResult {
   url: string;
   /** The address we asked for, when the site redirected somewhere else. */
@@ -57,6 +64,11 @@ export interface PageResult {
   inspect?: { file: string; dom?: string; har: string };
   /** Compared with the project's approved pictures. */
   visual?: { desktop?: VisualResult; phone?: VisualResult };
+  /**
+   * Parts of each picture that move by themselves (sliders, tickers, videos), in its pixels. Visual
+   * compare leaves them out, so a slider caught on another slide is not a change.
+   */
+  moving?: { desktop?: Box[]; phone?: Box[] };
   error?: string;
 }
 
@@ -271,6 +283,11 @@ export interface AiSummary {
 /** Compared with the project's issue list before this run. */
 export interface RunDiff {
   new: number;
+  /**
+   * Of the new ones: found by a check that could not run or finish in the test before (a tool that
+   * timed out, one just turned on), so they are new to the board, not new on the site.
+   */
+  firstChecked?: number;
   fixed: number;
   reopened: number;
   open: number;
@@ -516,6 +533,8 @@ export interface Issue {
    */
   missedRuns?: number;
   backRuns?: number;
+  /** Closed because it is the same problem as this issue key (only a count in its title differed). */
+  mergedInto?: string;
 }
 
 export type Role = "owner" | "member";

@@ -216,7 +216,12 @@ export function Report({ id }: { id: string }) {
       {run.diff && (
         <div className="diff-banner">
           <span className="diff-label">Compared with the last test</span>
-          <span className="diff-new">{run.diff.new} new</span>
+          <span className="diff-new">{run.diff.new - (run.diff.firstChecked ?? 0)} new</span>
+          {(run.diff.firstChecked ?? 0) > 0 && (
+            <span className="muted" title="Found by a check that could not run or finish in the test before, so they are new to the board, not new on the site">
+              {run.diff.firstChecked} checked for the first time
+            </span>
+          )}
           <span className="diff-fixed">{run.diff.fixed} fixed and verified</span>
           <span className="diff-reopened">{run.diff.reopened} came back</span>
           <a href={`#/issues?project=${run.projectId}`}>{plural(run.diff.open, "open issue")} on the board →</a>

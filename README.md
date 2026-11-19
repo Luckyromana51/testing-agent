@@ -296,6 +296,18 @@ Each category gets a score out of 100. Any critical issue caps the overall score
 - "Failed to load resource" console lines are not counted again on top of the broken resource itself. Console errors from third-party scripts are kept apart and rated low.
 - Speed uses Google's Core Web Vitals thresholds. It is one lab measurement from the testing server, so real visitors' numbers can differ. Because timing changes from run to run, speed issues (and slow API endpoints) are only verified as fixed, or reopened, when two tests in a row agree.
 - A missing alt text is High, not Critical: it does not cap the score.
+
+### Same site, same result
+
+A re-test of a site that has not changed gives the same issues and the same score. What used to make it move, and what the platform does now:
+
+- **Numbers in issue names.** "1 focused item is hidden" and "8 focused items are hidden", or "LCP 6.7 s" and "LCP 4.8 s", are one issue: the issue key ignores numbers, units, plurals and is/are. Issues saved under the older key are merged into one the first time (the extra ones are closed as "Merged into GLV-12").
+- **Checks that did not finish.** When a tool stopped half way last time (testssl.sh hit its time limit), what it finds the next time is shown as "checked for the first time", not as new problems. testssl.sh now has 15 minutes (`TESTSSL_MINUTES`).
+- **Tools that check some pages.** The W3C HTML checker (first 20 pages) and Lighthouse (start page) say which pages they checked; an issue on a page they did not check this time is never called fixed. The HTML checker tries each page twice and lists errors in page order. CSS errors of one kind (`Style rule ... not allowed outside @scope`) are one issue with every selector listed, not one issue per selector.
+- **Lighthouse.** Runs 3 times per page and keeps the middle run (Google's own advice); a speed tip counts only when most runs show it. The Lighthouse tab can change this to 1 or 5 runs.
+- **Page pictures.** Taken as the page loaded, before any agent presses keys or opens menus, with animations stopped, videos paused and web fonts loaded. Each picture is taken twice a moment apart, and what moves by itself (sliders, tickers, videos, embedded frames) is left out of visual compare, shown in blue. Pictures approved automatically by older versions are replaced once without a finding; pictures a person approved are kept.
+- **Signed-in apps.** The app's own calls are put in a fixed order before the checks read them, so the access grid and the call checks take the same calls every time, whichever screen loaded first.
+- Speed itself still changes from run to run (it is a measurement), so speed issues change state only when two tests in a row agree.
 - A page that fails to load is reported once, not also as "1 request failed".
 
 ## Quick start

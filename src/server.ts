@@ -900,7 +900,7 @@ export async function createApp(opts: AppOptions) {
     if (!page || (view !== "desktop" && view !== "phone")) throw new HttpError(400, "Pick a page and desktop or phone.");
     const shot = view === "desktop" ? page.screenshot : page.mobileScreenshot;
     if (!shot) throw new HttpError(409, "This page has no picture to approve.");
-    await approvePicture(queue.baselineDir(run.projectId), queue.artifactsDir(run.id), shot, page.url, view, run.id);
+    await approvePicture(queue.baselineDir(run.projectId), queue.artifactsDir(run.id), shot, page.url, view, run.id, page.moving?.[view]);
     page.visual = { ...page.visual, [view]: { ...page.visual?.[view], status: "approved", approvedAt: new Date().toISOString() } };
     stores.runs.save(run);
     return { ok: true, visual: page.visual };

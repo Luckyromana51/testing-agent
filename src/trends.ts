@@ -69,8 +69,10 @@ export function flakyIssues(issues: Issue[], runs: Run[]): FlakyIssue[] {
   const keysPerRun = recent.map((r) => new Set(r.result!.findings.map(issueKey)));
   const out: FlakyIssue[] = [];
   for (const i of issues) {
+    if (i.mergedInto) continue;
+    const key = issueKey(i);
     const cameBack = i.history.filter((h) => h.type === "regression").length;
-    const seenIn = keysPerRun.filter((k) => k.has(i.fingerprint)).length;
+    const seenIn = keysPerRun.filter((k) => k.has(key) || k.has(i.fingerprint)).length;
     const share = recent.length ? seenIn / recent.length : 0;
     const onAndOff = recent.length >= 4 && share >= 0.3 && share <= 0.7;
     if (cameBack >= 2 || onAndOff) {

@@ -150,6 +150,12 @@ export function readTestssl(items: TestsslItem[], pageUrl: string): ToolFinding[
 
 const isLocal = (host: string) => /^(localhost|127\.|\[::1\]|::1)/.test(host);
 
+/** How long testssl.sh may take: TESTSSL_MINUTES, else 15. */
+export function testsslMinutes(): number {
+  const n = Number(process.env.TESTSSL_MINUTES || 15);
+  return Number.isFinite(n) && n >= 1 ? Math.min(60, n) : 15;
+}
+
 export const testsslTool: Tool = {
   id: "testssl",
   name: "TLS check (testssl.sh)",
@@ -164,7 +170,7 @@ export const testsslTool: Tool = {
   products: [...WEB_PRODUCTS, "api"],
   category: "security",
   safety: "safe",
-  takes: "1 to 3 minutes",
+  takes: "1 to 10 minutes",
   licence: "GPL-2.0, free",
   homepage: "https://testssl.sh",
   signedIn: "public",
@@ -208,7 +214,9 @@ export const testsslTool: Tool = {
         ...(proxy ? ["--proxy", "auto"] : []),
         target,
       ],
-      { signal: ctx.signal, timeoutMs: 420_000, cwd: ctx.workDir },
+      // Seven minutes was too short for some servers (many ciphers, a slow handshake), and a check
+      // that stops half way makes its problems look new the next time it finishes.
+      { signal: ctx.signal, timeoutMs: testsslMinutes() * 60_000, cwd: ctx.workDir },
     );
     let items: TestsslItem[];
     try {

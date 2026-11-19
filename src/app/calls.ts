@@ -11,7 +11,7 @@ import type { AppCall, Finding, ProductType } from "../types.js";
  */
 
 export const APPS: ProductType[] = ["webapp", "saas", "crm"];
-const MAX_CALLS = 400;
+const MAX_CALLS = 1000;
 const MAX_BODY = 300_000;
 const REPLAY_HEADERS = /^(authorization|x-[\w-]*(token|auth|key|session|tenant|company|org)[\w-]*)$/i;
 
@@ -34,6 +34,15 @@ export function captureCalls(context: BrowserContext, origin: string): { calls: 
     const had = byKey.get(key);
     if (had) {
       had.count++;
+      // Several screens load at once, so which one asked first changes run to run: keep the same one.
+      const from = (() => {
+        try {
+          return req.frame().page().url();
+        } catch {
+          return "";
+        }
+      })();
+      if (from && (!had.pageUrl || from < had.pageUrl)) had.pageUrl = from;
       return;
     }
     if (calls.length >= MAX_CALLS) return;
@@ -74,6 +83,15 @@ export function captureCalls(context: BrowserContext, origin: string): { calls: 
   const handler = (req: Request) => void onDone(req).catch(() => {});
   context.on("requestfinished", handler);
   return { calls, stop: () => context.off("requestfinished", handler) };
+}
+
+/**
+ * Puts the calls in a fixed order (by address, then method). They are noted as they finish, and
+ * with several screens at once that order changes run to run; the checks that take the first 15 or
+ * 40 calls must take the same ones every time.
+ */
+export function sortCalls(calls: CapturedCall[]): CapturedCall[] {
+  return calls.sort((a, b) => a.url.localeCompare(b.url) || a.method.localeCompare(b.method));
 }
 
 /** What the report shows of a call: no answers, no headers. */

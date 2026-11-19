@@ -293,7 +293,12 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
                 <td>
                   {r.diff ? (
                     <span className="diff">
-                      {r.diff.new > 0 && <span className="diff-new">{r.diff.new} new</span>}
+                      {r.diff.new - (r.diff.firstChecked ?? 0) > 0 && <span className="diff-new">{r.diff.new - (r.diff.firstChecked ?? 0)} new</span>}
+                      {(r.diff.firstChecked ?? 0) > 0 && (
+                        <span className="muted" title="Found by a check that could not run or finish in the test before">
+                          {r.diff.firstChecked} checked for the first time
+                        </span>
+                      )}
                       {r.diff.fixed > 0 && <span className="diff-fixed">{r.diff.fixed} fixed</span>}
                       {r.diff.reopened > 0 && <span className="diff-reopened">{r.diff.reopened} came back</span>}
                       <span className="muted">{plural(r.diff.open, "open issue")}</span>

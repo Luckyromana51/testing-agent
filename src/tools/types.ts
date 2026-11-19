@@ -138,6 +138,11 @@ export interface ToolOutput {
   reports?: ToolReport[];
   /** What was tested, e.g. "Checked 12 pages". */
   tested?: string;
+  /**
+   * The pages this tool really looked at, when it checks only some of them (the first 20, the start
+   * page). Its issues on other pages are then not called fixed just because it did not look there.
+   */
+  checked?: string[];
   /** A small table for the report, such as a load test's steps. */
   table?: ToolTable;
 }
@@ -167,6 +172,8 @@ export interface ToolStat {
   reports?: ToolReport[];
   images?: ToolImage[];
   tested?: string;
+  /** The pages it really looked at, when it checks only some (see ToolOutput.checked). */
+  checked?: string[];
   /** Findings dropped because a platform check already reported the same problem. */
   merged?: number;
   table?: ToolTable;

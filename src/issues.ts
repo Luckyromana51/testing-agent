@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { WEB_AGENTS } from "./agents/registry.js";
-import { groupFindings } from "./group.js";
+import { groupFindings, issueKey } from "./group.js";
 import type { Issue, IssueStatus, Project, Run, RunDiff } from "./types.js";
 
 /** Statuses where the issue is still a problem. */
@@ -16,7 +16,7 @@ const SITE_AGENTS = new Set(WEB_AGENTS.filter((a) => a.stage === "site").map((a)
  * Timing results (load speed, server response, layout jumps, slow API endpoints) change from run
  * to run on the same site, so these issues are verified or reopened only when two runs in a row agree.
  */
-export const TIMING_RULES = new Set(["perf:lcp", "perf:ttfb", "perf:cls", "slow-page", "api:slow"]);
+export const TIMING_RULES = new Set(["perf:lcp", "perf:ttfb", "perf:cls", "slow-page", "api:slow", "app:call-slow"]);
 /** Speed results that change from run to run, including Lighthouse's speed findings. */
 export const isTimingRule = (rule: string) => TIMING_RULES.has(rule) || rule.startsWith("lighthouse:perf-");
 const SETTLE_RUNS = 2;
@@ -42,16 +42,56 @@ export function projectKey(name: string, taken: string[] = []): string {
  * - an active issue that is no longer found, on pages this run tested again, is verified as fixed
  * Info-level findings and the scanner's own errors never become issues.
  */
+/** The checks (agents and tool.<id>) that really ran and finished in a run, or null when the run does not say. */
+function checksThatRan(run: Run | undefined): Set<string> | null {
+  if (!run?.result || !run.agents) return null;
+  const all = new Set([...run.agents, ...(run.tools ?? []).map((t) => `tool.${t.id}`)]);
+  for (const s of run.result.agentStats ?? []) if (s.untested || s.skipped) all.delete(s.id);
+  return all;
+}
+
+const keyNumber = (i: Issue) => Number(i.key.split("-").pop()) || 0;
+
+/**
+ * Matches the stored issues to today's issue keys. Issues saved before the key ignored units and
+ * plurals ("1 focused item is hidden" and "8 focused items are hidden") now share one key: the
+ * oldest open one keeps it, and the others are closed as merged into it.
+ */
+function matchExisting(existing: Issue[]): { byKey: Map<string, Issue>; keyOf: Map<string, string>; merged: Issue[] } {
+  const byKey = new Map<string, Issue>();
+  const keyOf = new Map<string, string>();
+  const merged: Issue[] = [];
+  const order = [...existing].sort(
+    (a, b) => Number(!ACTIVE.includes(a.status)) - Number(!ACTIVE.includes(b.status)) || keyNumber(a) - keyNumber(b),
+  );
+  for (const i of order) {
+    if (i.mergedInto) continue;
+    const key = issueKey(i);
+    const had = byKey.get(key);
+    if (had) merged.push({ ...i, mergedInto: had.key });
+    else {
+      byKey.set(key, i);
+      keyOf.set(i.id, key);
+    }
+  }
+  return { byKey, keyOf, merged };
+}
+
 export function syncIssues(
   project: Project,
   run: Run,
   existing: Issue[],
   now = new Date().toISOString(),
+  /** The project's test before this one, to tell "new on the site" from "first time checked". */
+  previous?: Run,
 ): { changed: Issue[]; created: Issue[]; diff: RunDiff; project: Project } {
   const result = run.result;
   if (!result) throw new Error("The run has no result to compare.");
   const groups = groupFindings(result.findings.filter((f) => f.severity !== "info" && f.rule !== "check-error"));
-  const byFingerprint = new Map(existing.map((i) => [i.fingerprint, i]));
+  const { byKey: byFingerprint, keyOf, merged } = matchExisting(existing);
+  const ranBefore = checksThatRan(previous);
+  /** Pages each partial tool really looked at (W3C checker: the first 20, Lighthouse: the start page). */
+  const toolChecked = new Map((result.tools ?? []).filter((t) => t.checked).map((t) => [`tool.${t.id}`, new Set(t.checked)]));
   // Pages that failed, crashed or refused us were not really looked at, so their issues stay as they are.
   const looked = result.pages.filter((p) => !p.error && p.status !== null && ![401, 403, 429].includes(p.status) && p.status < 500);
   const scanned = new Set(looked.flatMap((p) => [p.url, p.redirectedFrom].filter(Boolean) as string[]));
@@ -65,6 +105,18 @@ export function syncIssues(
   const created: Issue[] = [];
   let seq = project.issueSeq;
   const seen = new Set<string>();
+  for (const m of merged) {
+    if (m.status === "verified" || m.status === "wont_fix") {
+      changed.push({ ...m, updatedAt: now });
+      continue;
+    }
+    changed.push({
+      ...m,
+      status: "verified",
+      updatedAt: now,
+      history: [...m.history, { at: now, type: "status", text: `Merged into ${m.mergedInto}: the same problem, only a number in its title differed.`, runId: run.id }],
+    });
+  }
 
   for (const g of groups) {
     seen.add(g.key);
@@ -95,10 +147,13 @@ export function syncIssues(
       };
       created.push(issue);
       diff.new++;
+      // A check that could not run or finish last time (a tool that timed out) looks for the first time.
+      if (ranBefore && f.agent && !ranBefore.has(f.agent)) diff.firstChecked = (diff.firstChecked ?? 0) + 1;
       continue;
     }
     const issue: Issue = {
       ...prev,
+      fingerprint: g.key,
       title: f.title,
       detail: f.detail,
       severity: g.severity,
@@ -133,7 +188,8 @@ export function syncIssues(
   }
 
   for (const prev of existing) {
-    if (seen.has(prev.fingerprint)) continue;
+    const key = keyOf.get(prev.id);
+    if (!key || seen.has(key)) continue;
     // Only call it fixed when this run actually looked again: the agent ran and the pages were re-tested.
     const agentRan = !prev.agent || ((!ranAgents || ranAgents.has(prev.agent)) && !notRun.has(prev.agent));
     const lookedAgain =
@@ -141,6 +197,9 @@ export function syncIssues(
       // Site-wide agents and the outside tools check the whole site again on every run.
       (prev.agent && (SITE_AGENTS.has(prev.agent) || prev.agent.startsWith("tool.")) && looked.length > 0) ||
       prev.occurrences.some((o) => scanned.has(o.pageUrl));
+    // A tool that checks only some pages looked again only if it checked one of the issue's pages.
+    const toolPages = prev.agent ? toolChecked.get(prev.agent) : undefined;
+    if (toolPages && !prev.occurrences.some((o) => toolPages.has(o.pageUrl))) continue;
     if (!agentRan || !lookedAgain) continue;
     const timing = isTimingRule(prev.rule);
     if (!ACTIVE.includes(prev.status)) {
@@ -162,6 +221,7 @@ export function syncIssues(
     }
     changed.push({
       ...prev,
+      fingerprint: key,
       ...(timing ? { missedRuns: 0 } : {}),
       status: "verified",
       updatedAt: now,

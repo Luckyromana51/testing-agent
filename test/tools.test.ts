@@ -333,7 +333,7 @@ describe("the tools on a real site", () => {
     });
     const t = r.tools![0];
     assert.equal(t.status, "done", t.untested);
-    assert.match(t.summary![0], /^Performance \d+ · Accessibility \d+ · Best practices \d+ · SEO \d+$/);
+    assert.match(t.summary![0], /^Performance \d+ · Accessibility \d+ · Best practices \d+ · SEO \d+ \(middle of 3 runs\)$/);
     assert.ok(r.findings.some((f) => f.rule.startsWith("lighthouse:perf-")), "the 2.5 s render-blocking script slows the page");
     const html = await readFile(path.join(dir, t.reports![0].file), "utf8");
     assert.ok(html.includes("lighthouse") && !html.includes(SECRET));

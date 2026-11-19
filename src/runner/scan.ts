@@ -5,7 +5,7 @@ import { agentsFor, WEB_AGENTS } from "../agents/registry.js";
 import type { PageAgent, PageContext, SiteAgent, SiteState, WebAgent } from "../agents/types.js";
 import { listen } from "../agents/web/signals.js";
 import type { LiveSink } from "../live.js";
-import type { AgentStat, CookieInfo, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
+import type { AgentStat, Box, CookieInfo, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
 import { Inspector } from "./inspect.js";
 import { runJourneys } from "./journeys.js";
 import { compareVisuals } from "./visual.js";
@@ -13,7 +13,7 @@ import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
-import { APPS, captureCalls, reportCall } from "../app/calls.js";
+import { APPS, captureCalls, reportCall, sortCalls } from "../app/calls.js";
 import { exploreApp } from "../app/explore.js";
 import { chosenSystem, detectSystem, profileOf } from "../app/systems.js";
 import type { RoleSession } from "./journeys.js";
@@ -168,6 +168,77 @@ async function castScreen(page: Page, slot: number, live: LiveSink): Promise<() 
   };
 }
 
+/** Waits (up to 3 s) for the page's web fonts, so text is measured and drawn in its real font. */
+export async function waitForFonts(page: Page): Promise<void> {
+  await page
+    .evaluate("Promise.race([document.fonts ? document.fonts.ready.then(function () { return true; }) : true, new Promise(function (r) { setTimeout(r, 3000); })])")
+    .catch(() => {});
+}
+
+/**
+ * Waits until the page stops changing size after a resize (menus collapse, scripts re-lay the page),
+ * at most 2 s, so the phone checks see the finished phone layout every time.
+ */
+export async function settleLayout(page: Page): Promise<void> {
+  let last = "";
+  for (let i = 0; i < 8; i++) {
+    await page.waitForTimeout(250);
+    const now = await page.evaluate("document.documentElement.scrollWidth + 'x' + document.documentElement.scrollHeight").catch(() => "");
+    if (now === last) return;
+    last = String(now);
+  }
+}
+
+/** Starts noting which elements a script changes, before the picture. */
+const WATCH_JS = `(function () {
+  var seen = new Set();
+  var mo = new MutationObserver(function (list) {
+    list.forEach(function (m) { var el = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (el) seen.add(el); });
+  });
+  mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+  window.__glvMoving = { mo: mo, seen: seen };
+})()`;
+
+/**
+ * Stops noting, and returns the boxes of what moves by itself: elements a script changed while the
+ * pictures were taken, and sliders, videos, animations drawn on a canvas and embedded frames,
+ * which change on their own even when they did not just now. Boxes as big as the screen are left
+ * out, so a real change of the whole page is still seen.
+ */
+const MOVING_JS = `(function () {
+  var w = window.__glvMoving; var els = w ? Array.from(w.seen) : [];
+  if (w) { w.mo.disconnect(); delete window.__glvMoving; }
+  var sel = 'video, canvas, iframe, marquee, [aria-roledescription=carousel], [class*=carousel], [class*=slider], [class*=swiper], [class*=slick], [class*=owl-], [class*=marquee], [class*=ticker], [class*=countdown]';
+  els = els.concat(Array.from(document.querySelectorAll(sel)));
+  var vw = innerWidth, vh = innerHeight, out = [];
+  els.forEach(function (el) {
+    if (!el.getBoundingClientRect || el === document.body || el === document.documentElement) return;
+    var r = el.getBoundingClientRect();
+    var x = Math.max(0, r.left), y = Math.max(0, r.top), x2 = Math.min(vw, r.right), y2 = Math.min(vh, r.bottom);
+    if (x2 <= x || y2 <= y) return;
+    if ((x2 - x) * (y2 - y) > vw * vh * 0.6) return;
+    out.push({ x: Math.floor(x), y: Math.floor(y), w: Math.ceil(x2 - x), h: Math.ceil(y2 - y) });
+  });
+  return out.slice(0, 200);
+})()`;
+
+/**
+ * A picture of the page that is the same on every run of an unchanged page: CSS animations and
+ * transitions stopped at their end, videos paused, no blinking text cursor. With `twice`, a second
+ * picture a moment later, and the boxes of what moves by itself (a slider run by a script, a
+ * ticker), which visual compare then leaves out. Returns those boxes.
+ */
+export async function stillPicture(page: Page, file: string, twice = false): Promise<Box[] | undefined> {
+  await page.evaluate("window.scrollTo(0, 0); document.querySelectorAll('video').forEach(function (v) { try { v.pause(); v.currentTime = 0; } catch (e) {} })").catch(() => {});
+  const take = (to: string) => page.screenshot({ path: to, type: "jpeg", quality: 60, animations: "disabled", caret: "hide", timeout: 15_000 });
+  if (twice) await page.evaluate(WATCH_JS).catch(() => {});
+  await take(file);
+  if (!twice) return undefined;
+  await page.waitForTimeout(1200);
+  await take(file.replace(/\.jpg$/, "-b.jpg")).catch(() => {});
+  return ((await page.evaluate(MOVING_JS).catch(() => [])) as Box[]) ?? [];
+}
+
 interface PageOutcome {
   result: PageResult;
   findings: Finding[];
@@ -298,6 +369,9 @@ async function scanPage(
     if (url !== requestedUrl) result.redirectedFrom = requestedUrl;
     // Give late scripts a moment to throw errors or fire requests.
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+    // Web fonts change the size of text: checks of overlapping or cut-off text, and the pictures,
+    // must see the page with its fonts, or they find different things from run to run.
+    await waitForFonts(page);
     result.status = res?.status() ?? null;
     throttled ||= result.status === 429;
     result.title = (await page.title()).slice(0, 200);
@@ -335,29 +409,32 @@ async function scanPage(
     }
     links = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href).filter(Boolean));
 
-    await runStage("page");
-
-    // The picture (and the boxes drawn over it) start at the top, so pictures compare run to run.
-    await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
+    // The picture is taken as the page loaded, before any agent presses keys, zooms or opens menus,
+    // with animations stopped: an unchanged page then gives the same picture on every run.
+    // The boxes drawn over it are read at the same moment.
     if (inspector) {
-      await inspector.stopCoverage();
       await inspector.readLayout();
       inspector.step("Desktop picture");
     }
     const shot = `page-${index}.jpg`;
-    await page.screenshot({ path: path.join(opts.artifactsDir, shot), type: "jpeg", quality: 60 });
+    const moving = await stillPicture(page, path.join(opts.artifactsDir, shot), Boolean(opts.baselineDir));
+    if (moving?.length) result.moving = { desktop: moving };
     result.screenshot = shot;
+
+    await runStage("page");
+    await inspector?.stopCoverage();
 
     view = "phone";
     show("Resizing to a phone");
     await page.setViewportSize(MOBILE);
-    await page.waitForTimeout(300);
-    inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
-    await runStage("mobile");
     await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
+    await settleLayout(page);
+    inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
     const mshot = `page-${index}-mobile.jpg`;
-    await page.screenshot({ path: path.join(opts.artifactsDir, mshot), type: "jpeg", quality: 60 });
+    const mmoving = await stillPicture(page, path.join(opts.artifactsDir, mshot), Boolean(opts.baselineDir));
+    if (mmoving?.length) result.moving = { ...result.moving, phone: mmoving };
     result.mobileScreenshot = mshot;
+    await runStage("mobile");
   } catch (err) {
     result.error = (err as Error).message.split("\n")[0];
   } finally {
@@ -760,6 +837,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
 
     // Site-wide agents (links, exposed files, duplicates...) run at the same time, except those
     // that measure speed or could end the session: they run afterwards, one at a time.
+    if (site.calls) sortCalls(site.calls);
     const siteAgents = runner.siteAgents();
     if (siteAgents.length) log(`Site-wide checks: ${siteAgents.map((a) => a.name).join(", ")}`);
     const last = (a: SiteAgent) => a.runsLast === true || (a.runsLast === "signed-in" && Boolean(signedIn));
