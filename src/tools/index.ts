@@ -1,10 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkProof, hasPermission, permitFor, PERMISSION_KINDS, type Permission } from "../permission.js";
+import { moduleOn, MODULES } from "../modules.js";
 import { finding } from "../runner/finding.js";
 import { scoreFindings } from "../runner/score.js";
 import type { AgentStat, Category, Finding, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
 import { redact } from "../vault.js";
+import { byoTool } from "./byo.js";
 import { gitleaksTool } from "./gitleaks.js";
 import { jmeterTool } from "./jmeter.js";
 import { k6Tool } from "./k6.js";
@@ -33,6 +35,8 @@ export const TOOLS: Tool[] = [
   zapTool,
   nucleiTool,
   testsslTool,
+  // Optional module: the client's own Playwright tests.
+  byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
   // copies of the same holes fold into them).
   probesTool,
@@ -164,6 +168,8 @@ export interface ToolRunInput {
   specFile?: string;
   /** The client's permissions for load and attack tests (the project's). */
   permissions?: Permission[];
+  /** The owner's module switches (Owner panel > Modules). */
+  modules?: Record<string, boolean>;
 }
 
 /** Load and attack tests run one at a time on this server, so two never compete for it (or for the client's site). */
@@ -290,7 +296,8 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
     const stat: ToolStat = { id: tool.id, name: tool.name, status: "done", ms: 0, findings: 0 };
     let untested: string | undefined;
     let out: ToolOutput | undefined;
-    const why = await tool.ready().catch((e: Error) => e.message);
+    const mod = tool.module ? MODULES.find((m) => m.id === tool.module) : undefined;
+    const why = mod && !moduleOn(input.modules, mod.id) ? `Turn on "${mod.name}" in Owner panel > Modules to run it.` : await tool.ready().catch((e: Error) => e.message);
     if (why) untested = why;
     else {
       const options = Object.fromEntries((tool.options ?? []).map((o) => [o.id, choice.options?.[o.id] ?? o.default]));
@@ -327,6 +334,7 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
             ...(specFile ? { specFile } : {}),
             ...(permit && typeof permit !== "string" ? { permit: permit.ctx } : {}),
             uploadsDir: input.uploadsDir,
+            ...(input.modules ? { modules: input.modules } : {}),
             options,
             outDir: input.artifactsDir,
             workDir: input.workDir,

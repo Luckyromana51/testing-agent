@@ -23,6 +23,9 @@ const HELP: [string, string][] = [
   ["title has Checkout", "The page title must contain this"],
   ["wait 2", "Wait 2 seconds"],
   ["click css=#buy", "Use a CSS selector when words are not enough"],
+  ["fill Email = {{inbox}}", "Test mailbox module: a fresh email address for this journey"],
+  ["email has Welcome", "Test mailbox module: an email to {{inbox}} has these words (waits up to 30 s)"],
+  ["open email link Confirm", "Test mailbox module: open the link in that email with these words"],
 ];
 
 /** The project's user journeys: written in plain words, followed on every test. */

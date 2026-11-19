@@ -13,12 +13,21 @@ import { finding } from "./finding.js";
  *   see Your cart
  *   url has /cart
  *
+ * With the test mailbox module (Mailpit) on, {{inbox}} is a fresh address for this journey, and
+ *
+ *   fill Email = {{inbox}}
+ *   click Sign up
+ *   email has Welcome
+ *   open email link Confirm my account
+ *
+ * waits for the email the site sent to it, and opens a link in it.
+ *
  * Read-only by default: requests that could change data (POST, PUT, DELETE...) are stopped, so a
  * journey can look at a checkout without placing an order. A journey allowed to send forms is only
  * for staging or test sites.
  */
 
-export type StepKind = "open" | "click" | "fill" | "select" | "check" | "uncheck" | "press" | "hover" | "see" | "not-see" | "url-has" | "title-has" | "wait" | "screenshot";
+export type StepKind = "open" | "click" | "fill" | "select" | "check" | "uncheck" | "press" | "hover" | "see" | "not-see" | "url-has" | "title-has" | "wait" | "screenshot" | "email-has" | "email-link";
 
 export interface Step {
   line: number;
@@ -32,6 +41,7 @@ const MAX_STEPS = 40;
 export const MAX_JOURNEYS = 10;
 
 const PATTERNS: [RegExp, StepKind][] = [
+  [/^(?:open|click)\s+(?:the\s+)?(?:email|mail)\s+link\s+(.+)$/i, "email-link"],
   [/^(?:open|go to|goto|visit)\s+(.+)$/i, "open"],
   [/^(?:click|tap|press button)\s+(.+)$/i, "click"],
   [/^(?:fill|type|enter)\s+(.+?)\s*=\s*(.*)$/i, "fill"],
@@ -46,6 +56,7 @@ const PATTERNS: [RegExp, StepKind][] = [
   [/^title\s+(?:has|contains)\s+(.+)$/i, "title-has"],
   [/^wait\s+(\d+(?:\.\d+)?)\s*s?(?:ec(?:onds?)?)?$/i, "wait"],
   [/^(?:screenshot|picture|snap)$/i, "screenshot"],
+  [/^(?:email|mail)\s+(?:has|contains)\s+(.+)$/i, "email-has"],
 ];
 
 const unquote = (s: string) => s.trim().replace(/^(["'])(.*)\1$/, "$2");
@@ -60,7 +71,7 @@ export function parseSteps(text: string): Step[] {
     const hit = PATTERNS.map(([re, kind]) => [line.match(re), kind] as const).find(([m]) => m);
     if (!hit) {
       throw new Error(
-        `Line ${i + 1} ("${line.slice(0, 60)}") is not a step. Start it with open, click, fill … = …, select … = …, check, press, hover, see, not see, url has, title has, wait or screenshot.`,
+        `Line ${i + 1} ("${line.slice(0, 60)}") is not a step. Start it with open, click, fill … = …, select … = …, check, press, hover, see, not see, url has, title has, wait, screenshot, email has or open email link.`,
       );
     }
     const [m, kind] = hit;
@@ -95,8 +106,10 @@ export function cleanJourney(input: Partial<Journey>, i: number): Journey {
   };
 }
 
-/** {{username}} and {{password}} come from the project's saved login; the password is never shown. */
-function fillValue(value: string, login?: Login): string {
+/** {{username}} and {{password}} come from the project's saved login; the password is never shown. {{inbox}} is the journey's test mailbox address. */
+function fillValue(value: string, login?: Login, mail?: Mailbox): string {
+  if (/\{\{\s*inbox\s*\}\}/i.test(value) && !mail) throw new Error("{{inbox}} needs the test mailbox: turn on \"Test mailbox (Mailpit)\" in Owner panel > Modules.");
+  value = value.replace(/\{\{\s*inbox\s*\}\}/gi, mail?.address ?? "");
   return value.replace(/\{\{\s*(username|user|email|password)\s*\}\}/gi, (_, k: string) =>
     k.toLowerCase() === "password" ? (login?.password ?? "") : (login?.username ?? ""),
   );
@@ -135,7 +148,62 @@ function resolveUrl(target: string, base: string): string {
 
 const TIMEOUT = 10_000;
 
-async function runStep(page: Page, step: Step, base: string, login?: Login): Promise<void> {
+/** The journey's own address in the test mailbox, and where Mailpit's API is. */
+export interface Mailbox {
+  url: string;
+  address: string;
+}
+
+interface MailMessage {
+  ID: string;
+  Subject?: string;
+  Created?: string;
+}
+
+/** Waits for an email to the journey's address (newest first) that has the words. Mailpit's search API. */
+export async function waitForEmail(mail: Mailbox, words?: string, timeoutMs = 30_000, signal?: AbortSignal): Promise<{ subject: string; text: string; html: string }> {
+  const end = Date.now() + timeoutMs;
+  const want = words?.toLowerCase();
+  for (;;) {
+    signal?.throwIfAborted();
+    const q = new URL("/api/v1/search", mail.url);
+    q.searchParams.set("query", `to:"${mail.address}"`);
+    q.searchParams.set("limit", "20");
+    const list = (await fetch(q, { signal: AbortSignal.timeout(10_000) }).then((r) => (r.ok ? r.json() : { messages: [] })).catch(() => ({ messages: [] }))) as { messages?: MailMessage[] };
+    for (const m of list.messages ?? []) {
+      const full = (await fetch(new URL(`/api/v1/message/${encodeURIComponent(m.ID)}`, mail.url), { signal: AbortSignal.timeout(10_000) })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)) as { Subject?: string; Text?: string; HTML?: string } | null;
+      if (!full) continue;
+      const text = `${full.Subject ?? ""}\n${full.Text ?? ""}\n${(full.HTML ?? "").replace(/<[^>]+>/g, " ")}`;
+      if (!want || text.toLowerCase().includes(want)) return { subject: full.Subject ?? "", text: full.Text ?? "", html: full.HTML ?? "" };
+    }
+    if (Date.now() > end) throw new Error(want ? `No email to ${mail.address} has "${words}" (waited ${Math.round(timeoutMs / 1000)} seconds).` : `No email came to ${mail.address}.`);
+    await new Promise((ok) => setTimeout(ok, 1500));
+  }
+}
+
+const decode = (s: string) => s.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+
+/** The link in an email whose words (or address) have the text; plain-text emails are searched too. */
+export function emailLink(email: { html: string; text: string }, words: string): string | undefined {
+  const want = words.toLowerCase();
+  for (const m of email.html.matchAll(/<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const href = decode(m[2]);
+    const label = decode(m[3].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().toLowerCase();
+    if (/^https?:/i.test(href) && (label.includes(want) || href.toLowerCase().includes(want))) return href;
+  }
+  // A plain-text email: the first address on the line with the words, or the next line.
+  const lines = email.text.split(/\r?\n/);
+  for (const [i, line] of lines.entries()) {
+    if (!line.toLowerCase().includes(want)) continue;
+    const url = (line.match(/https?:\/\/\S+/) ?? lines[i + 1]?.match(/https?:\/\/\S+/))?.[0];
+    if (url) return url.replace(/[).,>]+$/, "");
+  }
+  return undefined;
+}
+
+async function runStep(page: Page, step: Step, base: string, login?: Login, mail?: Mailbox, signal?: AbortSignal): Promise<void> {
   const t = step.target ?? "";
   switch (step.kind) {
     case "open":
@@ -146,7 +214,7 @@ async function runStep(page: Page, step: Step, base: string, login?: Login): Pro
       await page.waitForLoadState("load", { timeout: TIMEOUT }).catch(() => {});
       return;
     case "fill":
-      await find(page, t, "field").fill(fillValue(step.value ?? "", login), { timeout: TIMEOUT });
+      await find(page, t, "field").fill(fillValue(step.value ?? "", login, mail), { timeout: TIMEOUT });
       return;
     case "select":
       await find(page, t, "field").selectOption({ label: step.value ?? "" }, { timeout: TIMEOUT });
@@ -191,6 +259,19 @@ async function runStep(page: Page, step: Step, base: string, login?: Login): Pro
       return;
     case "screenshot":
       return;
+    case "email-has":
+    case "email-link": {
+      if (!mail) throw new Error('Email steps need the test mailbox: turn on "Test mailbox (Mailpit)" in Owner panel > Modules.');
+      if (step.kind === "email-has") {
+        await waitForEmail(mail, t, 30_000, signal);
+        return;
+      }
+      const email = await waitForEmail(mail, undefined, 30_000, signal);
+      const href = emailLink(email, t);
+      if (!href) throw new Error(`The email "${email.subject}" has no link with "${t}".`);
+      await page.goto(resolveUrl(href, base), { waitUntil: "load", timeout: 30_000 });
+      return;
+    }
   }
 }
 
@@ -198,7 +279,7 @@ async function runStep(page: Page, step: Step, base: string, login?: Login): Pro
 export async function runJourneys(
   context: BrowserContext,
   journeys: Journey[],
-  opts: { startUrl: string; artifactsDir: string; login?: Login; loggedIn?: boolean; log?: (m: string) => void; signal?: AbortSignal },
+  opts: { startUrl: string; artifactsDir: string; login?: Login; loggedIn?: boolean; mailUrl?: string; log?: (m: string) => void; signal?: AbortSignal },
 ): Promise<{ results: JourneyResult[]; findings: Finding[] }> {
   const log = opts.log ?? (() => {});
   const results: JourneyResult[] = [];
@@ -207,6 +288,9 @@ export async function runJourneys(
     opts.signal?.throwIfAborted();
     const steps = parseSteps(j.steps);
     log(`Journey "${j.name}": ${steps.length} steps${j.allowWrites ? " (may send forms)" : ""}`);
+    const mail: Mailbox | undefined = opts.mailUrl
+      ? { url: opts.mailUrl, address: `glv-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}-${ji}@${process.env.MAIL_DOMAIN || "inbox.glv.test"}` }
+      : undefined;
     const page = await context.newPage();
     const guard = j.allowWrites ? undefined : await readOnly(page, { loggedIn: opts.loggedIn });
     const out: JourneyStepResult[] = [];
@@ -221,7 +305,7 @@ export async function runJourneys(
         const started = Date.now();
         const r: JourneyStepResult = { line: step.line, text: shownValue(step), ok: true, ms: 0 };
         try {
-          await runStep(page, step, page.url().startsWith("http") ? page.url() : opts.startUrl, opts.login);
+          await runStep(page, step, page.url().startsWith("http") ? page.url() : opts.startUrl, opts.login, mail, opts.signal);
         } catch (err) {
           r.ok = false;
           r.error = (err as Error).message.split("\n")[0].replace(/\s*=+\s*logs\s*=+.*$/i, "").slice(0, 300);

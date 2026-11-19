@@ -125,7 +125,7 @@ export interface Meta {
   /** Where the login vault's key comes from, and how many logins it holds. */
   vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
   /** Optional modules (inspect screen, visual compare, journeys...) and whether each is on. */
-  modules: (ModuleInfo & { on: boolean })[];
+  modules: (ModuleInfo & { on: boolean; ready: boolean })[];
 }
 
 export interface Settings {

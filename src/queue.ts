@@ -191,6 +191,7 @@ export class ScanQueue {
           inspect: moduleOn(settings.get().modules, "inspect"),
           baselineDir: moduleOn(settings.get().modules, "visual") ? this.baselineDir(project.id) : undefined,
           journeys: moduleOn(settings.get().modules, "journeys") ? project.journeys : undefined,
+          mailUrl: moduleOn(settings.get().modules, "mail") ? process.env.MAILPIT_URL : undefined,
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
@@ -227,6 +228,7 @@ export class ScanQueue {
             },
             // The newest copy: a permission withdrawn while this test waited no longer counts.
             permissions: (projects.get(project.id) ?? project).permissions,
+            modules: settings.get().modules,
           });
         }
       } finally {

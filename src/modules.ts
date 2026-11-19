@@ -22,9 +22,13 @@ export interface ModuleInfo {
   defaultOn: boolean;
   /** Takes effect only after the server restarts. */
   needsRestart?: boolean;
+  /** Runs in its own container, started with docker compose --profile <name>. */
+  profile?: string;
+  /** Setting it needs in .env (the container's address); unset means it is not installed here. */
+  env?: string;
 }
 
-export type ModuleId = "inspect" | "visual" | "journeys" | "own-checks";
+export type ModuleId = "inspect" | "visual" | "journeys" | "own-checks" | "mail" | "load-charts" | "byo-tests";
 
 export const MODULES: ModuleInfo[] = [
   {
@@ -64,11 +68,48 @@ export const MODULES: ModuleInfo[] = [
     defaultOn: false,
     needsRestart: true,
   },
+  {
+    id: "mail",
+    name: "Test mailbox (Mailpit)",
+    description:
+      "A mailbox on our server that catches every email a staging site sends. Journeys can then check sign-up and password-reset emails: use {{inbox}} as the address, then the steps 'email has Welcome' and 'open email link Confirm'. Point the staging site's SMTP at this server, port 1025.",
+    builtOn: "Mailpit (axllent/mailpit)",
+    license: "MIT",
+    defaultOn: false,
+    profile: "mail",
+    env: "MAILPIT_URL",
+  },
+  {
+    id: "load-charts",
+    name: "Live load charts (Grafana)",
+    description:
+      "Sends k6 load test numbers to InfluxDB while the test runs, and shows them live in Grafana (requests per second, response times, errors, users) with a ready dashboard.",
+    builtOn: "Grafana OSS and InfluxDB 1.8",
+    license: "AGPL-3.0 (Grafana), MIT (InfluxDB 1.x)",
+    defaultOn: false,
+    profile: "loadcharts",
+    env: "K6_INFLUX_URL",
+  },
+  {
+    id: "byo-tests",
+    name: "Bring your own tests",
+    description:
+      "Runs a client's own Playwright tests (upload a zip of their tests folder) against the project's address, and shows each failed or flaky test as an issue. The tests are the client's code and run on this server: only for code you trust, and point them at a staging site because tests may change data.",
+    builtOn: "@playwright/test",
+    license: "Apache-2.0",
+    defaultOn: false,
+  },
 ];
+
+/** The module is installed on this server (its container's address is set), or needs nothing. */
+export function moduleReady(m: ModuleInfo): boolean {
+  return !m.env || Boolean(process.env[m.env]);
+}
 
 export function moduleOn(modules: Record<string, boolean> | undefined, id: ModuleId): boolean {
   const m = MODULES.find((x) => x.id === id);
-  return modules?.[id] ?? m?.defaultOn ?? false;
+  if (!m || !moduleReady(m)) return false;
+  return modules?.[id] ?? m.defaultOn;
 }
 
 /** What an own check file exports (as its default export). */

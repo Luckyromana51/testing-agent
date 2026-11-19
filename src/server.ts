@@ -26,7 +26,7 @@ import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Ru
 import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
 import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
-import { loadOwnChecks, moduleOn, MODULES } from "./modules.js";
+import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
 import { flakyIssues, trendPoints } from "./trends.js";
 import { cleanWatch, Watcher } from "./watch.js";
@@ -298,7 +298,7 @@ export async function createApp(opts: AppOptions) {
       parallelPages: parallelPages(settings.parallelPages),
       maxParallel: MAX_PARALLEL,
       vault: stores.vault.status(),
-      modules: MODULES.map((m) => ({ ...m, on: moduleOn(settings.modules, m.id) })),
+      modules: MODULES.map((m) => ({ ...m, on: moduleOn(settings.modules, m.id), ready: moduleReady(m) })),
     };
   });
 

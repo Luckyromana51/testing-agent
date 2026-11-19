@@ -35,6 +35,8 @@ export interface EngineInput {
   baselineDir?: string;
   /** Web tests: user journeys to follow. */
   journeys?: Journey[];
+  /** Web tests: the test mailbox (Mailpit) address, when the mail module is on. */
+  mailUrl?: string;
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -109,6 +111,7 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         inspect: input.inspect,
         baselineDir: input.baselineDir,
         journeys: input.journeys,
+        mailUrl: input.mailUrl,
       });
   }
 }

@@ -186,7 +186,7 @@ Tests started without a tool choice (the API, a quick test, projects made before
 
 **SARIF and JUnit.** Every finished test can be downloaded from its report (Download): SARIF for GitHub code scanning, GitLab, Azure DevOps and security dashboards (code findings point at the file and line), and JUnit XML for CI test reports (a failed test per issue, a skipped test for a check that could not run). The command line writes both next to `report.json`. Schemathesis and Newman also attach their own JUnit files.
 
-## Inspect screen, visual compare and user journeys (optional modules)
+## Optional modules (inspect screen, visual compare, journeys, test mailbox, load charts, own tests)
 
 Owner panel > **Modules** switches these on and off. All run on our server; nothing goes to an outside service.
 
@@ -194,6 +194,18 @@ Owner panel > **Modules** switches these on and off. All run on our server; noth
 - **Visual compare** (on by default): each project keeps an approved picture of every page (desktop and phone) in `data/baselines/<project>`. The first test saves them; later tests show the approved picture, the new one and the changes in red (side by side, slider, changes only). A change over 0.5% becomes an issue; **Approve** makes the new picture the approved one.
 - **User journeys** (on by default): project page > User journeys. One step per line in plain words (`open /shop`, `click Add to cart`, `fill Email = {{username}}`, `see Your cart`, `url has /cart`); `{{password}}` uses the saved login and is never shown. Read-only by default: POST and other changes are stopped. Tick **May send forms** only for staging or test sites. Each step gets a picture; a journey that breaks becomes a high issue.
 - **Own checks folder** (off): put `.mjs` files in `data/modules/` (Docker: `/data/modules/`) and restart. Each exports `{ id, name, run({ page, url }) }` and returns findings; the Modules tab shows an example.
+- **Bring your own tests** (off): adds the tool tab **Your own tests (Playwright)**. Upload a zip of the client's Playwright tests folder (with `playwright.config` if they have one; no `node_modules`). They run with our Chromium against the project's address (`baseURL` is set for them, their `webServer` is ignored, one retry so flaky tests show). Each failed test is a high issue, each flaky one medium. Only for code you trust, and point it at a staging site: tests may change data.
+
+### Modules in their own containers
+
+These start only when you ask for them, with a Docker Compose profile. The Modules tab shows **Not installed** until the address is in `.env`.
+
+| Module | Start it | Add to `.env`, then `docker compose up -d` | Use it |
+|---|---|---|---|
+| **Test mailbox** (Mailpit, MIT) | `docker compose --profile mail up -d` | `MAILPIT_URL=http://mailpit:8025` | Point the staging site's SMTP at this server, port 1025. In a journey: `fill Email = {{inbox}}`, `click Sign up`, `email has Welcome`, `open email link Confirm`. The mailbox screen is on port 8025. |
+| **Live load charts** (InfluxDB 1.8 and Grafana OSS) | `docker compose --profile loadcharts up -d` | `K6_INFLUX_URL=http://influxdb:8086` and `GRAFANA_URL=http://localhost:3000` | k6 load tests stream their numbers while they run. The k6 tab's result has a **Live charts** link to the ready dashboard (Grafana, port 3000, view-only without a login). Set `GRAFANA_ADMIN_PASSWORD` on a server. |
+
+Both stay on our server. On a public server, keep ports 1025, 8025 and 3000 behind the firewall or a VPN.
 
 ## Mac helper (Safari, VoiceOver, iOS Simulator)
 

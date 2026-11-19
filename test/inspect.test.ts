@@ -303,6 +303,9 @@ describe("API: modules, journeys, approve", () => {
         ["visual", true],
         ["journeys", true],
         ["own-checks", false],
+        ["mail", false],
+        ["load-charts", false],
+        ["byo-tests", false],
       ],
     );
     const r = await app.inject({ method: "PATCH", url: "/api/owner/settings", payload: { modules: { visual: false, nope: true } } });

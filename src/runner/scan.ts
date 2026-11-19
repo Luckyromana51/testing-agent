@@ -659,6 +659,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
         artifactsDir: opts.artifactsDir,
         login: opts.login,
         loggedIn: Boolean(signedIn),
+        mailUrl: opts.mailUrl,
         log,
         signal: opts.signal,
       });

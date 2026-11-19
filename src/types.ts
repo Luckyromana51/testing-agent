@@ -143,6 +143,8 @@ export interface ScanOptions {
   baselineDir?: string;
   /** User journeys to follow after the pages are tested. */
   journeys?: Journey[];
+  /** The test mailbox (Mailpit) address, for journeys that check emails. */
+  mailUrl?: string;
 }
 
 export interface AgentStat {

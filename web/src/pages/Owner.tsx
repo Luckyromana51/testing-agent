@@ -220,8 +220,18 @@ function ModulesTab({ meta, reloadMeta }: { meta: Meta; reloadMeta: () => void }
                 Built on {m.builtOn} · licence {m.license}
                 {m.needsRestart ? " · needs a restart" : ""}
               </div>
+              {!m.ready && m.profile && (
+                <div className="notice small module-setup">
+                  Not installed on this server yet. Start it with <code>docker compose --profile {m.profile} up -d</code>, add{" "}
+                  <code>{m.env}=…</code> to <code>.env</code> (see <code>.env.example</code>) and run <code>docker compose up -d</code>.
+                </div>
+              )}
             </div>
-            <Toggle on={m.on} label={`${m.name} on or off`} onChange={(v) => pending !== m.id && set(m.id, v, m.needsRestart)} />
+            {m.ready ? (
+              <Toggle on={m.on} label={`${m.name} on or off`} onChange={(v) => pending !== m.id && set(m.id, v, m.needsRestart)} />
+            ) : (
+              <span className="tag muted">Not installed</span>
+            )}
           </div>
         ))}
       </div>
