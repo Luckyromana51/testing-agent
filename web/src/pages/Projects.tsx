@@ -6,6 +6,9 @@ import { go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts
 import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { PermissionCard } from "./Permission.tsx";
+import { JourneysEditor } from "./Journeys.tsx";
+import { TrendsCard } from "./Trends.tsx";
+import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 
@@ -82,15 +85,44 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
+type ProjectTab = "overview" | "trends" | "watch" | "journeys" | "tests";
+
 export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: User }) {
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
   const [actionError, setActionError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [allRuns, setAllRuns] = useState(false);
+  const [tab, setTabState] = useState<ProjectTab>(() => {
+    try {
+      return (localStorage.getItem("glv.projectTab") as ProjectTab) || "overview";
+    } catch {
+      return "overview";
+    }
+  });
+  const setTab = (t: ProjectTab) => {
+    setTabState(t);
+    try {
+      localStorage.setItem("glv.projectTab", t);
+    } catch {
+      // Private window: the tab is just not remembered.
+    }
+  };
   if (error) return <div className="page error big">{error}</div>;
   if (!data) return <div className="loading">Loading…</div>;
-  const { project: p, runs, trend, agents } = data;
+  const { project: p, runs, trend, agents, trends, flaky, watch } = data;
   const product = meta.products.find((x) => x.type === p.type);
   const isWeb = ["website", "ecommerce", "webapp", "saas", "crm"].includes(p.type);
+
+  const journeysOn = isWeb && meta.modules.some((m) => m.id === "journeys" && m.on);
+  const hasPermissionTools = meta.tools.some((t) => t.safety === "permission" && t.products.includes(p.type));
+  const tabs: [ProjectTab, string, string?][] = [
+    ["overview", "Overview"],
+    ["trends", "Trends", flaky.length ? `${flaky.length} flaky` : undefined],
+    ...(watch && p.target.url ? ([["watch", "Uptime and SSL", watch.down ? "down" : p.watch?.on ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
+    ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
+    ["tests", "What runs"],
+  ];
+  const current = tabs.some(([t]) => t === tab) ? tab : "overview";
 
   const save = async (patch: Parameters<typeof api.updateProject>[1]) => {
     setActionError("");
@@ -126,6 +158,11 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             <span className="muted">{targetLabel(p.target)}</span>
           )}
         </div>
+        {p.busy && !p.waiting && p.lastRun && (
+          <a className="btn live-btn" href={`#/run/${p.lastRun.id}`}>
+            ● Watch live
+          </a>
+        )}
         <button
           className="btn primary"
           disabled={p.busy}
@@ -208,6 +245,23 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         </div>
       </div>
 
+      <div className="tabs sticky-tabs project-tabs">
+        {tabs.map(([t, label, count]) => (
+          <button key={t} className={current === t ? "active" : ""} onClick={() => setTab(t)}>
+            {label}
+            {count && <span className={`tab-count ${count === "down" ? "bad" : ""}`}>{count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {current === "trends" && <TrendsCard points={trends} flaky={flaky} />}
+
+      {current === "watch" && watch && (
+        <WatchCard key={JSON.stringify(p.watch ?? null)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />
+      )}
+
+      {current === "overview" && (
+      <>
       {loginKind(p.type) && <ProjectLogin projectId={p.id} kind={loginKind(p.type)!} saved={p.login} onSaved={reload} />}
 
       <h2 className="section-title">Test runs</h2>
@@ -223,7 +277,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             </tr>
           </thead>
           <tbody>
-            {runs.map((r) => (
+            {(allRuns ? runs : runs.slice(0, 20)).map((r) => (
               <tr key={r.id} onClick={() => go(`#/run/${r.id}`)} className="clickable">
                 <td>{new Date(r.startedAt ?? r.createdAt).toLocaleString()}</td>
                 <td className="muted">{r.trigger === "schedule" ? "Schedule" : r.trigger === "retest" ? "Re-test" : "Manual"}</td>
@@ -247,17 +301,12 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             ))}
           </tbody>
         </table>
+        {runs.length > 20 && (
+          <button className="btn ghost show-more" onClick={() => setAllRuns((a) => !a)}>
+            {allRuns ? "Show the latest 20" : `Show all ${runs.length} test runs`}
+          </button>
+        )}
       </div>
-
-      <h2 className="section-title">What runs in each test</h2>
-      <ProjectTools key={JSON.stringify(p.tools ?? null)} meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
-
-      {meta.tools.some((t) => t.safety === "permission" && t.products.includes(p.type)) && (
-        <>
-          <h2 className="section-title">Load and attack tests</h2>
-          <PermissionCard project={p} isOwner={user.role === "owner"} onChanged={reload} />
-        </>
-      )}
 
       {user.role === "owner" && (
         <div className="danger-zone">
@@ -276,6 +325,24 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             Delete project
           </button>
         </div>
+      )}
+      </>
+      )}
+
+      {current === "tests" && (
+        <>
+          <ProjectTools key={JSON.stringify(p.tools ?? null)} meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
+          {hasPermissionTools && (
+            <>
+              <h2 className="section-title">Load and attack tests</h2>
+              <PermissionCard project={p} isOwner={user.role === "owner"} onChanged={reload} />
+            </>
+          )}
+        </>
+      )}
+
+      {current === "journeys" && journeysOn && (
+        <JourneysEditor key={JSON.stringify(p.journeys ?? [])} journeys={p.journeys ?? []} onSave={(journeys) => save({ journeys })} />
       )}
     </div>
   );

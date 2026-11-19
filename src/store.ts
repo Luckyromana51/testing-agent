@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { HelperStore } from "./helpers.js";
 import type { Issue, Project, Role, Run, User } from "./types.js";
 import { Vault } from "./vault.js";
+import { WatchStore } from "./watch.js";
 
 /**
  * SQLite storage (built into Node 22, no native build step). Each row keeps its object as JSON,
@@ -160,6 +161,10 @@ export interface Settings {
   aiSummary: boolean;
   /** Pages a web test opens at the same time (1 to 16). Unset: PARALLEL_PAGES, or 4. */
   parallelPages?: number;
+  /** Tests (projects) run at the same time (1 to 8). Unset: SCAN_CONCURRENCY, or 2. */
+  parallelProjects?: number;
+  /** Optional modules on/off (see src/modules.ts). Unset: each module's default. */
+  modules?: Record<string, boolean>;
 }
 
 const DEFAULT_SETTINGS: Settings = { agents: {}, defaultMaxPages: 20, aiSummary: true };
@@ -252,6 +257,8 @@ export interface Stores {
   vault: Vault;
   /** Paired Mac helpers (their tokens are kept hashed). */
   helpers: HelperStore;
+  /** Uptime checks, incidents and certificates of watched projects. */
+  watch: WatchStore;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -264,5 +271,6 @@ export function openStores(dataDir: string): Stores {
     users: new UserStore(db),
     vault: new Vault(db, dataDir),
     helpers: new HelperStore(db),
+    watch: new WatchStore(db),
   };
 }

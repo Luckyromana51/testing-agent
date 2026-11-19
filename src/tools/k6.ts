@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { WEB_PRODUCTS } from "../products.js";
+import { moduleOn } from "../modules.js";
 import { loadFindings, loadSummary, loadTable, type LoadPage, type LoadProfile, type LoadResult, type LoadStep } from "./load.js";
 import { lastLine, runProcess, which } from "./process.js";
 import type { Tool, ToolContext, ToolOutput } from "./types.js";
@@ -273,7 +274,7 @@ export const k6Tool: Tool = {
     let code: number | null;
     let stderr = "";
     try {
-      const res = await runProcess(k6Path(), ["run", "--quiet", "--no-color", "--no-usage-report", script], {
+      const res = await runProcess(k6Path(), ["run", "--quiet", "--no-color", "--no-usage-report", ...influxArgs(ctx), script], {
         signal: ctx.signal,
         timeoutMs: (seconds + 120) * 1000,
         cwd: ctx.workDir,
@@ -309,12 +310,29 @@ export const k6Tool: Tool = {
     } catch {
       // The charts are optional.
     }
+    const charts = influxArgs(ctx).length ? grafanaLink(ctx) : undefined;
     return {
       findings: loadFindings(result, ctx.startUrl),
-      summary: loadSummary(result),
+      summary: [...loadSummary(result), ...(charts ? [`Live charts: ${charts}`] : [])],
       table: loadTable(result),
       reports,
       tested: `${profile[0].toUpperCase()}${profile.slice(1)} test of ${urls.length} page${urls.length === 1 ? "" : "s"}, up to ${users} users${ctx.cookie ? ", signed in" : ""}`,
     };
   },
 };
+
+/**
+ * With the "Live load charts" module on, k6 also streams its numbers to our InfluxDB while it runs
+ * (Grafana shows them live). Each test is tagged with its own id so the dashboard can pick it.
+ */
+export function influxArgs(ctx: Pick<ToolContext, "modules" | "workDir">): string[] {
+  const url = process.env.K6_INFLUX_URL;
+  if (!url || !moduleOn(ctx.modules, "load-charts")) return [];
+  return ["--out", `influxdb=${url.replace(/\/+$/, "")}/k6`, "--tag", `testid=${path.basename(ctx.workDir)}`];
+}
+
+/** The Grafana dashboard for this test, when GRAFANA_URL is set. */
+export function grafanaLink(ctx: Pick<ToolContext, "workDir">): string | undefined {
+  const g = process.env.GRAFANA_URL;
+  return g ? `${g.replace(/\/+$/, "")}/d/glv-k6/k6-load-test?var-testid=${encodeURIComponent(path.basename(ctx.workDir))}&refresh=5s` : undefined;
+}

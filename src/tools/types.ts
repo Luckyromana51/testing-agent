@@ -1,3 +1,4 @@
+import type { ModuleId } from "../modules.js";
 import type { PermissionKind } from "../permission.js";
 import type { Category, Finding, Login, ProductType, ProjectTarget } from "../types.js";
 
@@ -54,6 +55,8 @@ export interface ToolInfo {
    * iOS app). When it cannot run, the category shows as not tested rather than as a free 100.
    */
   ownCategory?: boolean;
+  /** Runs only when this optional module is on (Owner panel > Modules). */
+  module?: ModuleId;
 }
 
 /** A tool the tester turned on for a project, with its options. */
@@ -89,6 +92,8 @@ export interface ToolContext {
   log: (message: string) => void;
   /** For a permission tool: the limits of the client's permission it runs under. */
   permit?: { hosts: string[]; maxUsers: number; maxMinutes: number; writes: boolean };
+  /** The owner's module switches. */
+  modules?: Record<string, boolean>;
 }
 
 export interface ToolReport {

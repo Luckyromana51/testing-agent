@@ -172,7 +172,7 @@ describe("choosing tools", () => {
 
   it("offers the right tools for each product type", () => {
     const ids = (p: Parameters<typeof cleanChoices>[0]) => TOOLS.filter((t) => t.products.includes(p)).map((t) => t.id);
-    assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "glv-probes", "zap-active", "k6", "jmeter", "mac-safari", "mac-voiceover"]);
+    assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "byo-playwright", "glv-probes", "zap-active", "k6", "jmeter", "mac-safari", "mac-voiceover"]);
     assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "glv-probes", "zap-active", "k6", "jmeter", "schemathesis", "newman"]);
     assert.deepEqual(ids("code"), ["gitleaks", "opengrep", "osv-scanner", "trivy"]);
     assert.deepEqual(ids("ios"), ["mac-ios-sim"], "the Mac helper runs the app; the iOS engine itself reads the IPA");

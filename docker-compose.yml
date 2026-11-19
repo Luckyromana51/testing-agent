@@ -25,6 +25,12 @@ services:
       # OWASP ZAP runs in its own container (below); only this app can reach it.
       ZAP_URL: http://zap:8080
       ZAP_API_KEY: ${ZAP_API_KEY:-glv-local-zap}
+      # Optional modules in their own containers (see the profiles below). Each one is used only
+      # when its address is set: add the line to .env after starting its profile.
+      MAILPIT_URL: ${MAILPIT_URL:-}
+      MAIL_DOMAIN: ${MAIL_DOMAIN:-}
+      K6_INFLUX_URL: ${K6_INFLUX_URL:-}
+      GRAFANA_URL: ${GRAFANA_URL:-}
     depends_on:
       zap:
         condition: service_healthy
@@ -46,5 +52,52 @@ services:
       -config api.key=${ZAP_API_KEY:-glv-local-zap}
       -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
 
+  # Optional: "Test mailbox (Mailpit)". Start with: docker compose --profile mail up -d
+  # then add MAILPIT_URL=http://mailpit:8025 to .env and restart the app. Point the staging site's
+  # SMTP at this server, port 1025. The mailbox screen is on port 8025.
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    profiles: ["mail"]
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Optional: "Live load charts". Start with: docker compose --profile loadcharts up -d
+  # then add K6_INFLUX_URL=http://influxdb:8086 and GRAFANA_URL=http://localhost:3000 to .env and
+  # restart the app. Grafana (port 3000) opens the k6 dashboard without a login, read-only.
+  influxdb:
+    image: influxdb:1.8
+    profiles: ["loadcharts"]
+    restart: unless-stopped
+    environment:
+      INFLUXDB_DB: k6
+      INFLUXDB_HTTP_FLUX_ENABLED: "false"
+    volumes:
+      - influx-data:/var/lib/influxdb
+
+  grafana:
+    image: grafana/grafana-oss:13.0.1
+    profiles: ["loadcharts"]
+    restart: unless-stopped
+    depends_on: [influxdb]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
 volumes:
   agent-data:
+  influx-data:

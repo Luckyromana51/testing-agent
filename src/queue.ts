@@ -9,6 +9,7 @@ import { LiveHub } from "./live.js";
 import { defaultChoices, runTools, toolById } from "./tools/index.js";
 import { secretsOf } from "./vault.js";
 import type { Stores } from "./store.js";
+import { moduleOn } from "./modules.js";
 import type { Project, Run } from "./types.js";
 
 /**
@@ -37,11 +38,36 @@ export class ScanQueue {
   constructor(
     private stores: Stores,
     private dataDir: string,
-    private concurrency = 2,
+    /** How many tests run at the same time; read on every start, so a new setting applies at once. */
+    private limit: number | (() => number) = 2,
   ) {}
+
+  private get concurrency(): number {
+    return typeof this.limit === "function" ? this.limit() : this.limit;
+  }
+
+  /** Starts waiting tests when the owner raises the limit. */
+  kick(): void {
+    this.pump();
+  }
+
+  /** The tests running now and the ones waiting, for the dashboard. */
+  overview(): { running: { runId: string; projectId?: string; url: string; startedAt?: string }[]; waiting: { runId: string; projectId?: string; url: string }[]; limit: number } {
+    const runs = [...this.active.keys()].map((id) => this.stores.runs.get(id)).filter((r): r is Run => Boolean(r));
+    return {
+      running: runs.map((r) => ({ runId: r.id, projectId: r.projectId, url: r.url, startedAt: r.startedAt })),
+      waiting: this.waiting.map((r) => ({ runId: r.id, projectId: r.projectId, url: r.url })),
+      limit: this.concurrency,
+    };
+  }
 
   artifactsDir(runId: string): string {
     return path.join(this.dataDir, "artifacts", runId);
+  }
+
+  /** The project's approved pictures, for visual compare. */
+  baselineDir(projectId: string): string {
+    return path.join(this.dataDir, "baselines", projectId.replace(/[^\w-]/g, ""));
   }
 
   uploadsDir(): string {
@@ -182,6 +208,10 @@ export class ScanQueue {
           onSession: (c) => (cookie = c),
           parallel: settings.get().parallelPages,
           live,
+          inspect: moduleOn(settings.get().modules, "inspect"),
+          baselineDir: moduleOn(settings.get().modules, "visual") ? this.baselineDir(project.id) : undefined,
+          journeys: moduleOn(settings.get().modules, "journeys") ? project.journeys : undefined,
+          mailUrl: moduleOn(settings.get().modules, "mail") ? process.env.MAILPIT_URL : undefined,
         });
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
@@ -218,6 +248,7 @@ export class ScanQueue {
             },
             // The newest copy: a permission withdrawn while this test waited no longer counts.
             permissions: (projects.get(project.id) ?? project).permissions,
+            modules: settings.get().modules,
           });
         }
       } finally {

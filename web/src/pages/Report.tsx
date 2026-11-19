@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { fixFor } from "../../../src/fixes.ts";
 import { groupFindings, type IssueGroup } from "../../../src/group.ts";
-import type { Category, Finding, Run, Severity } from "../../../src/types.ts";
+import type { Category, Finding, PageResult, Run, Severity } from "../../../src/types.ts";
 import { api } from "../api.ts";
 import { CATEGORY_LABEL, go, isMajor, pathOf, plural, scoreTone, SEVERITIES, usePoll } from "../lib.ts";
 import { FixBox, Sev } from "../ui.tsx";
 import { LiveView } from "./LiveView.tsx";
+import { Inspect, VisualCompare } from "./Inspect.tsx";
+import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
 
 /** Products tested in a browser, which can be watched live. */
 const BROWSER_PRODUCTS = new Set(["website", "webapp", "saas", "crm", "ecommerce"]);
@@ -41,14 +43,14 @@ function duration(from: string, to: string): string {
 const LINK_RULES = new Set(["broken-link", "broken-external-link", "unverified-external-link"]);
 
 export function Report({ id }: { id: string }) {
-  const { data: run, error: loadError } = usePoll(
+  const { data: run, error: loadError, reload } = usePoll(
     () => api.run(id),
     [id],
     1500,
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"issues" | "pages" | "agents" | "tools">("issues");
+  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -101,6 +103,14 @@ export function Report({ id }: { id: string }) {
           <details className="download-menu">
             <summary className="btn ghost">Download</summary>
             <div className="download-list">
+              <a href={`/api/runs/${run.id}/report.pdf`} download>
+                <strong>PDF report</strong>
+                <span className="muted small">For the client: scores, major issues with fixes, WCAG table, cookies</span>
+              </a>
+              <a href={`/api/runs/${run.id}/report.html`} target="_blank" rel="noreferrer">
+                <strong>Printable page</strong>
+                <span className="muted small">The same report as a web page, to read or print</span>
+              </a>
               <a href={`/api/runs/${run.id}/report.sarif`} download>
                 <strong>SARIF</strong>
                 <span className="muted small">For GitHub code scanning, GitLab, Azure DevOps and security dashboards</span>
@@ -278,27 +288,36 @@ export function Report({ id }: { id: string }) {
         </section>
       )}
 
-      <section className="major">
-        <h2 className="section-title">
-          {major.length ? `${plural(major.length, "major issue")} to fix first` : "No major issues"}
-        </h2>
-        {major.length === 0 && (
-          <div className="card good-card">Nothing critical or high was found. The rest of the list below is polish.</div>
-        )}
-        {major.map((g) => (
-          <MajorCard key={g.key} g={g} unit={unit.many} />
-        ))}
-      </section>
-
-      <AiPanel run={run} />
-
-      <div className="tabs">
+      <div className="tabs sticky-tabs">
+        <button className={tab === "summary" ? "active" : ""} onClick={() => setTab("summary")}>
+          Fix first {major.length > 0 && <span className="tab-count bad">{major.length}</span>}
+        </button>
         <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")}>
           All issues ({groups.length})
         </button>
         {result.pages.length > 0 && (
           <button className={tab === "pages" ? "active" : ""} onClick={() => setTab("pages")}>
             {unit.tab} ({result.pages.length})
+          </button>
+        )}
+        {result.journeys && result.journeys.length > 0 && (
+          <button className={tab === "journeys" ? "active" : ""} onClick={() => setTab("journeys")}>
+            Journeys ({result.journeys.filter((j) => j.ok).length}/{result.journeys.length} pass)
+          </button>
+        )}
+        {result.pages.some((p) => p.visual) && (
+          <button className={tab === "visual" ? "active" : ""} onClick={() => setTab("visual")}>
+            Visual ({result.pages.filter((p) => p.visual?.desktop?.status === "changed" || p.visual?.phone?.status === "changed").length} changed)
+          </button>
+        )}
+        {result.pages.length > 0 && isUrl(result.pages[0].url) && result.scores.accessibility !== undefined && (
+          <button className={tab === "wcag" ? "active" : ""} onClick={() => setTab("wcag")}>
+            WCAG 2.2
+          </button>
+        )}
+        {result.cookies && result.cookies.length > 0 && (
+          <button className={tab === "cookies" ? "active" : ""} onClick={() => setTab("cookies")}>
+            Cookies ({result.cookies.length})
           </button>
         )}
         {result.agentStats && (
@@ -312,8 +331,33 @@ export function Report({ id }: { id: string }) {
           </button>
         )}
       </div>
+      {tab === "summary" && (
+        <>
+          <section className="major">
+            <h2 className="section-title">
+              {major.length ? `${plural(major.length, "major issue")} to fix first` : "No major issues"}
+            </h2>
+            {major.length === 0 && (
+              <div className="card good-card">Nothing critical or high was found. The other issues are in All issues, and are polish.</div>
+            )}
+            {major.map((g) => (
+              <MajorCard key={g.key} g={g} unit={unit.many} />
+            ))}
+            {groups.length > major.length && (
+              <button className="btn ghost see-all" onClick={() => setTab("issues")}>
+                See all {groups.length} issues →
+              </button>
+            )}
+          </section>
+          <AiPanel run={run} />
+        </>
+      )}
       {tab === "issues" && <IssueList groups={groups} categories={categories} unit={unit.many} />}
-      {tab === "pages" && <Pages run={run} />}
+      {tab === "pages" && <Pages run={run} onRunChange={reload} />}
+      {tab === "journeys" && <Journeys run={run} />}
+      {tab === "visual" && <VisualTab run={run} onRunChange={reload} />}
+      {tab === "wcag" && <WcagTab run={run} />}
+      {tab === "cookies" && <CookiesTab run={run} />}
       {tab === "agents" && <Agents run={run} />}
       {tab === "tools" && <Tools run={run} />}
     </div>
@@ -522,11 +566,13 @@ function IssueList({ groups, categories, unit }: { groups: IssueGroup[]; categor
   );
 }
 
-function Pages({ run }: { run: Run }) {
+function Pages({ run, onRunChange }: { run: Run; onRunChange: () => void }) {
   const pages = run.result!.pages;
+  const [inspect, setInspect] = useState<number | null>(null);
   return (
     <div className="pages">
-      {pages.map((p) => {
+      {inspect !== null && <Inspect run={run} index={inspect} onClose={() => setInspect(null)} onRunChange={onRunChange} />}
+      {pages.map((p, pi) => {
         const issues = groupFindings(run.result!.findings.filter((f) => f.pageUrl === p.url && f.severity !== "info")).length;
         return (
           <div className="page-card" key={p.url}>
@@ -556,7 +602,20 @@ function Pages({ run }: { run: Run }) {
                 )}
                 {p.metrics && <span>{(p.metrics.bytes / 1_000_000).toFixed(1)} MB</span>}
                 <span>{plural(issues, "issue")}</span>
+                <VisualBadge p={p} />
               </div>
+              {(p.inspect || p.visual) && (
+                <div className="row">
+                  <button className="btn small" onClick={() => setInspect(pi)}>
+                    Inspect page
+                  </button>
+                  {p.inspect && (
+                    <a className="btn ghost small" href={api.artifact(run.id, p.inspect.har)} download>
+                      HAR
+                    </a>
+                  )}
+                </div>
+              )}
               {p.files && p.files.length > 0 && (
                 <div className="page-files">
                   {p.files.map((f) => (
@@ -570,6 +629,190 @@ function Pages({ run }: { run: Run }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function VisualBadge({ p }: { p: PageResult }) {
+  const v = [p.visual?.desktop, p.visual?.phone].filter(Boolean);
+  if (!v.length) return null;
+  const changed = v.filter((x) => x!.status === "changed");
+  if (changed.length) return <span className="bad">Looks different ({Math.max(...changed.map((x) => x!.changed ?? 0))}%)</span>;
+  if (v.every((x) => x!.status === "new")) return <span className="muted">First picture saved</span>;
+  return <span className="ok">Looks the same</span>;
+}
+
+/** Each journey with a picture after every step, like a test runner's command log. */
+function Journeys({ run }: { run: Run }) {
+  const list = run.result!.journeys ?? [];
+  const [open, setOpen] = useState<string | null>(list.find((j) => !j.ok)?.id ?? list[0]?.id ?? null);
+  const [big, setBig] = useState<string | null>(null);
+  return (
+    <div className="journeys">
+      {big && (
+        <div className="inspect-backdrop" onClick={() => setBig(null)}>
+          <img className="big-shot" src={api.artifact(run.id, big)} alt="Picture after the step" />
+        </div>
+      )}
+      {list.map((j) => (
+        <div className={`card journey${j.ok ? "" : " failed"}`} key={j.id}>
+          <button className="journey-head" onClick={() => setOpen(open === j.id ? null : j.id)} aria-expanded={open === j.id}>
+            <span className={j.ok ? "ok strong" : "bad strong"}>{j.ok ? "✓ Passed" : "✗ Failed"}</span>
+            <span className="strong grow">{j.name}</span>
+            <span className="muted small">
+              {j.steps.filter((s) => s.ok).length} of {j.total} steps · {(j.ms / 1000).toFixed(1)} s{j.allowWrites ? " · may send forms" : " · read-only"}
+            </span>
+          </button>
+          {open === j.id && (
+            <ol className="journey-steps">
+              {j.steps.map((s, i) => (
+                <li key={i} className={s.ok ? "" : "bad"}>
+                  {s.shot && (
+                    <button className="thumb" onClick={() => setBig(s.shot!)} aria-label={`Picture after step ${i + 1}`}>
+                      <img src={api.artifact(run.id, s.shot)} alt="" />
+                    </button>
+                  )}
+                  <div className="grow">
+                    <code>{s.text}</code> <span className="muted small">{(s.ms / 1000).toFixed(1)} s</span>
+                    {s.error && <div className="bad small">{s.error}</div>}
+                    {s.blocked && <div className="muted small">Stopped (could change data): {s.blocked.join(", ")}</div>}
+                    {s.url && <div className="muted small">{s.url}</div>}
+                  </div>
+                </li>
+              ))}
+              {j.steps.length < j.total && <li className="muted">{j.total - j.steps.length} more steps not run</li>}
+            </ol>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Pages whose picture changed first, each with the compare view. */
+function VisualTab({ run, onRunChange }: { run: Run; onRunChange: () => void }) {
+  const pages = run.result!.pages.map((p, i) => ({ p, i })).filter(({ p }) => p.visual);
+  const changed = (x: (typeof pages)[number]) => x.p.visual?.desktop?.status === "changed" || x.p.visual?.phone?.status === "changed";
+  const sorted = [...pages.filter(changed), ...pages.filter((x) => !changed(x))];
+  const [open, setOpen] = useState<number | null>(sorted.find(changed)?.i ?? null);
+  return (
+    <div className="journeys">
+      {sorted.map(({ p, i }) => (
+        <div className="card journey" key={p.url}>
+          <button className="journey-head" onClick={() => setOpen(open === i ? null : i)} aria-expanded={open === i}>
+            <span className="strong grow">{p.title || p.url}</span>
+            <VisualBadge p={p} />
+          </button>
+          {open === i && <VisualCompare run={run} index={i} onRunChange={onRunChange} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const WCAG_TEXT: Record<CriterionStatus, string> = { fails: "Fails", passes: "No problems found", manual: "Check by hand", "not-tested": "Not tested" };
+
+/** WCAG 2.2 A and AA, criterion by criterion, like a VPAT / accessibility conformance report. */
+function WcagTab({ run }: { run: Run }) {
+  const report = useMemo(() => wcagReport(run.result!), [run.result]);
+  const [show, setShow] = useState<CriterionStatus | "all">("all");
+  const [level, setLevel] = useState<"A" | "AA" | "all">("all");
+  const rows = report.results.filter((r) => (show === "all" || r.status === show) && (level === "all" || r.level === level));
+  return (
+    <div>
+      <div className="wcag-summary">
+        {(["fails", "passes", "manual", "not-tested"] as CriterionStatus[]).map((s) => (
+          <button key={s} className={`card wcag-tile st-${s}${show === s ? " active" : ""}`} onClick={() => setShow(show === s ? "all" : s)}>
+            <b>{report.counts[s]}</b>
+            <span>{WCAG_TEXT[s]}</span>
+          </button>
+        ))}
+      </div>
+      <p className="muted small">
+        WCAG 2.2 level A and AA ({report.results.length} criteria). Automatic checks find about a third to a half of accessibility problems; the
+        criteria marked "Check by hand" need a person with a keyboard and a screen reader. The PDF report includes this table.
+      </p>
+      <div className="pills">
+        {(["all", "A", "AA"] as const).map((l) => (
+          <button key={l} className={`pill${level === l ? " active" : ""}`} onClick={() => setLevel(l)}>
+            {l === "all" ? "A and AA" : `Level ${l}`}
+          </button>
+        ))}
+      </div>
+      <div className="card table-card">
+        <table className="table wcag-table">
+          <thead>
+            <tr>
+              <th>Criterion</th>
+              <th>Level</th>
+              <th>Result</th>
+              <th>Problems found</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <a href={`https://www.w3.org/WAI/WCAG22/Understanding/${c.id}`} target="_blank" rel="noreferrer">
+                    {c.id}
+                  </a>{" "}
+                  {c.name}
+                </td>
+                <td>{c.level}</td>
+                <td className={`st-${c.status}`}>{WCAG_TEXT[c.status]}</td>
+                <td className="small">
+                  {c.problems.join(" · ")}
+                  {c.pages > 0 && <span className="muted"> ({plural(c.pages, "page")})</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Every cookie the site set (never the values), with its security flags. */
+function CookiesTab({ run }: { run: Run }) {
+  const list = run.result!.cookies ?? [];
+  const third = list.filter((c) => !c.firstParty).length;
+  return (
+    <div>
+      <p className="muted">
+        {plural(list.length, "cookie")} set during the test, {third} by other websites. Values are never stored. Session and login cookies should be
+        Secure and HttpOnly; cookies from other sites usually need consent first (GDPR, India's DPDP Act).
+      </p>
+      <div className="card table-card">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Set by</th>
+              <th>Secure</th>
+              <th>HttpOnly</th>
+              <th>SameSite</th>
+              <th>Ends</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((c) => (
+              <tr key={`${c.domain}|${c.path}|${c.name}`}>
+                <td>
+                  <code>{c.name}</code>
+                </td>
+                <td>
+                  {c.domain} {!c.firstParty && <span className="tag muted">other site</span>}
+                </td>
+                <td className={c.secure ? "ok" : "bad"}>{c.secure ? "Yes" : "No"}</td>
+                <td className={c.httpOnly ? "ok" : /sess|auth|token|sid|jwt/i.test(c.name) ? "bad" : "muted"}>{c.httpOnly ? "Yes" : "No"}</td>
+                <td>{c.sameSite}</td>
+                <td className="small">{c.expires ? new Date(c.expires).toLocaleDateString() : "When the browser closes"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -15,6 +15,49 @@ const header = (name: string, value: string): Fix["code"] => [
 ];
 
 const FIXES: Record<string, Fix> = {
+  // Visual compare and user journeys
+  "visual:changed": {
+    steps:
+      "Open the page in the report and press Inspect page, then Visual compare: the red parts show what moved. If the change was planned (a new banner, a redesign), press Approve so it becomes the new picture. If not, compare the last deploy's CSS and template changes for that part of the page; a missing stylesheet, a font that did not load, or a script error that stopped a slider are the usual causes.",
+    effort: "minutes",
+  },
+  "journey:failed": {
+    steps:
+      "Open the journey in the report: the picture after each step shows where it went wrong. If the page changed on purpose (a button renamed), update the journey's steps on the project page. If a request was stopped because it could change data and this is a staging or test site, allow the journey to send forms. Otherwise the step found a real bug: fix the button, link or page the step names, then test again.",
+    effort: "hours",
+  },
+  // Site audit
+  "seo:redirect-chain": {
+    steps: "Make the first address redirect straight to the final page (one 301), and change menus, links, the sitemap and canonical tags to the final address so no redirect is needed at all.",
+    code: [{ label: "Apache (.htaccess): one hop from http and www to the final https address", snippet: "RewriteEngine On\nRewriteCond %{HTTPS} off [OR]\nRewriteCond %{HTTP_HOST} ^www\\. [NC]\nRewriteRule ^ https://example.com%{REQUEST_URI} [L,R=301]" }],
+    effort: "minutes",
+  },
+  "seo:js-only-content": {
+    steps: "Render the main text on the server: server-side rendering (Next.js, Nuxt, Angular Universal), pre-rendering for static pages, or plain HTML for content pages. Keep JavaScript for interaction. Check with the Raw vs rendered HTML file on the page in the report.",
+    effort: "days",
+  },
+  "seo:js-only-tags": {
+    steps: "Put the <title>, <h1>, meta description and canonical link in the HTML the server sends (the template or SSR head), not only in client-side code such as react-helmet without SSR.",
+    effort: "hours",
+  },
+  "seo:js-only-links": {
+    steps: "Use real <a href=\"/page\"> links for navigation instead of click handlers or router calls without an href, so crawlers can follow them without running scripts.",
+    effort: "hours",
+  },
+  "seo:orphan-page": {
+    steps: "Link to each page from a menu, a category or hub page, or related posts. If a page is old, remove it from the sitemap and redirect it (301) to the closest current page.",
+    effort: "hours",
+  },
+  "sec:cors-reflects-origin": {
+    steps: "Never copy the request's Origin header into Access-Control-Allow-Origin. Keep a fixed list of your own sites and answer only those; send Access-Control-Allow-Credentials only for them.",
+    code: [{ label: "Node / Express", snippet: "const allowed = new Set([\"https://example.com\", \"https://admin.example.com\"]);\napp.use((req, res, next) => {\n  if (allowed.has(req.headers.origin)) {\n    res.set(\"Access-Control-Allow-Origin\", req.headers.origin);\n    res.set(\"Access-Control-Allow-Credentials\", \"true\");\n    res.set(\"Vary\", \"Origin\");\n  }\n  next();\n});" }],
+    effort: "hours",
+  },
+  "sec:csp-weak": {
+    steps: "Replace 'unsafe-inline' with a nonce on each inline script (or hashes) and add 'strict-dynamic'; remove 'unsafe-eval' and wildcard sources; add object-src 'none' and base-uri 'self'. Roll out with Content-Security-Policy-Report-Only first.",
+    code: [{ label: "A strict policy to start from", snippet: "Content-Security-Policy: script-src 'nonce-{RANDOM}' 'strict-dynamic'; object-src 'none'; base-uri 'self'" }],
+    effort: "hours",
+  },
   // Functional
   "page-load-failed": {
     steps: "Open the page yourself. If it times out, check the server error log and the hosting resource limits; if the domain does not resolve, check DNS.",

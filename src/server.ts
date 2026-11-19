@@ -24,6 +24,13 @@ import { openStores, type Settings, type Stores } from "./store.js";
 import { buildLogin, buildTarget, defaultName, type TargetInput } from "./targets.js";
 import type { Issue, IssueStatus, Login, ProductType, Project, ProjectTarget, Run, Schedule, Severity, User } from "./types.js";
 import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
+import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
+import { approve as approvePicture, type View } from "./runner/visual.js";
+import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
+import { WEB_PRODUCTS } from "./products.js";
+import { flakyIssues, trendPoints } from "./trends.js";
+import { cleanWatch, Watcher } from "./watch.js";
+import { reportHtml, reportPdf } from "./report-html.js";
 import { validateTarget } from "./runner/urls.js";
 
 export { validateTarget } from "./runner/urls.js";
@@ -55,6 +62,15 @@ export async function helperZip(dir = path.resolve(here, "../helper/mac")): Prom
   };
   await walk(dir, "glv-helper/");
   return zipSync(files, { level: 6 });
+}
+
+/** More tests at once than this would starve each one of CPU and memory on a normal server. */
+export const MAX_PARALLEL_PROJECTS = 8;
+
+/** How many tests (projects) run at the same time: the owner's setting, else SCAN_CONCURRENCY, else 2. */
+export function parallelProjects(asked?: number): number {
+  const n = Number(asked ?? process.env.SCAN_CONCURRENCY ?? 2);
+  return Number.isFinite(n) ? Math.max(1, Math.min(MAX_PARALLEL_PROJECTS, Math.round(n))) : 2;
 }
 
 /** Largest file that can be uploaded (APKs with native code can be big). */
@@ -135,14 +151,23 @@ export interface AppOptions {
   scheduler?: boolean;
 }
 
+let ownChecksLoaded = false;
+
 export async function createApp(opts: AppOptions) {
   const stores = openStores(opts.dataDir);
   migrateLooseRuns(stores);
-  const queue = new ScanQueue(stores, opts.dataDir, Number(process.env.SCAN_CONCURRENCY ?? 2));
+  const queue = new ScanQueue(stores, opts.dataDir, () => parallelProjects(stores.settings.get().parallelProjects));
   const auth = new Auth(stores.users);
   auth.bootstrapFromEnv();
   const stopScheduler = opts.scheduler ? startScheduler(stores.projects, queue) : () => {};
   helperHub.attach(stores.helpers);
+  const watcher = new Watcher(stores.watch, () => stores.projects.list());
+  const stopWatcher = opts.scheduler ? watcher.start() : () => {};
+  // Own checks are loaded once: switching the module takes effect after a restart.
+  if (moduleOn(stores.settings.get().modules, "own-checks") && !ownChecksLoaded) {
+    ownChecksLoaded = true;
+    await loadOwnChecks(path.join(opts.dataDir, "modules"), (m) => console.log(m));
+  }
 
   const app = Fastify({
     logger: opts.logger ? { level: process.env.LOG_LEVEL ?? "info" } : false,
@@ -151,6 +176,7 @@ export async function createApp(opts: AppOptions) {
   });
   app.addHook("onClose", async () => {
     stopScheduler();
+    stopWatcher();
     helperHub.close();
     await queue.shutdown();
   });
@@ -280,7 +306,10 @@ export async function createApp(opts: AppOptions) {
       defaultMaxPages: settings.defaultMaxPages,
       parallelPages: parallelPages(settings.parallelPages),
       maxParallel: MAX_PARALLEL,
+      parallelProjects: parallelProjects(settings.parallelProjects),
+      maxParallelProjects: MAX_PARALLEL_PROJECTS,
       vault: stores.vault.status(),
+      modules: MODULES.map((m) => ({ ...m, on: moduleOn(settings.modules, m.id), ready: moduleReady(m) })),
     };
   });
 
@@ -377,7 +406,7 @@ export async function createApp(opts: AppOptions) {
 
   app.get<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const runs = stores.runs.list(100, p.id);
+    const runs = stores.runs.list(1000, p.id);
     return {
       project: projectSummary(p),
       runs: runs.map(runSummary),
@@ -386,17 +415,49 @@ export async function createApp(opts: AppOptions) {
         .map((r) => ({ runId: r.id, at: r.createdAt, score: r.result!.overallScore, diff: r.diff }))
         .reverse(),
       agents: agentsFor(p.type, stores.settings.get().agents).map(describeAgent),
+      trends: trendPoints(runs),
+      flaky: flakyIssues(stores.issues.list(p.id), runs),
+      watch: WEB_PRODUCTS.includes(p.type) ? stores.watch.summary(p) : null,
+    };
+  });
+
+  // Uptime and SSL watch: check now, and the alerts and outages across projects.
+  app.post<{ Params: { id: string } }>("/api/projects/:id/watch/check", async (req) => {
+    const p = getProject(req.params.id);
+    if (!p.target.url) throw new HttpError(400, "This project has no address to watch.");
+    await watcher.checkProject(p);
+    return stores.watch.summary(p);
+  });
+  app.get("/api/watch", async () => {
+    const projects = new Map(stores.projects.list().map((p) => [p.id, p]));
+    return {
+      down: [...projects.values()].filter((p) => p.watch?.on && stores.watch.openIncident(p.id)).map((p) => ({ id: p.id, name: p.name, url: p.target.url, since: stores.watch.openIncident(p.id)!.startedAt })),
+      alerts: watcher.alerts.slice(0, 30),
+      incidents: stores.watch.incidents(undefined, 30).map((i) => ({ ...i, projectName: projects.get(i.projectId)?.name ?? "Deleted project" })),
     };
   });
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown; watch: unknown }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, ...targetInput } = b;
+    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, watch: watchInput, ...targetInput } = b;
     let login: Login | undefined;
     try {
+      if (watchInput !== undefined) {
+        if (!WEB_PRODUCTS.includes(p.type)) throw new Error("Uptime watch is for websites and web apps.");
+        const w = cleanWatch(watchInput as Record<string, unknown> | null);
+        if (w) next.watch = w;
+        else delete next.watch;
+      }
+      if (journeysInput !== undefined) {
+        if (!WEB_PRODUCTS.includes(p.type)) throw new Error("User journeys are for websites and web apps.");
+        if (!Array.isArray(journeysInput)) throw new Error("Journeys must be a list.");
+        if (journeysInput.length > MAX_JOURNEYS) throw new Error(`A project can have up to ${MAX_JOURNEYS} journeys.`);
+        next.journeys = journeysInput.map((j, i) => cleanJourney(j as Record<string, unknown>, i));
+        if (!next.journeys.length) delete next.journeys;
+      }
       if (toolsInput === null) delete next.tools;
       else if (toolsInput !== undefined) next.tools = cleanChoices(p.type, toolsInput, p.permissions ?? []);
       if (Object.keys(targetInput).length) {
@@ -483,6 +544,8 @@ export async function createApp(opts: AppOptions) {
     stores.issues.deleteForProject(p.id);
     stores.vault.delete(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
+    await rm(queue.baselineDir(p.id), { recursive: true, force: true });
+    stores.watch.deleteProject(p.id);
     stores.projects.delete(p.id);
     return reply.code(204).send();
   });
@@ -579,6 +642,58 @@ export async function createApp(opts: AppOptions) {
     });
   });
 
+  /** The tests running now and waiting, with their project names, and the limit. */
+  const queueOverview = () => {
+    const o = queue.overview();
+    const name = (id?: string) => (id ? stores.projects.get(id)?.name : undefined);
+    return {
+      limit: o.limit,
+      maxLimit: MAX_PARALLEL_PROJECTS,
+      running: o.running.map((r) => ({ ...r, name: name(r.projectId) ?? r.url })),
+      waiting: o.waiting.map((r) => ({ ...r, name: name(r.projectId) ?? r.url })),
+    };
+  };
+  app.get("/api/queue", async () => queueOverview());
+
+  /**
+   * Every running test's live view on one stream (the Live page): the same events as one test's
+   * stream, each with its runId, plus "runs" whenever a test starts or ends. One connection for all
+   * tests, because a browser allows only six open streams to a server.
+   */
+  app.get("/api/live", async (req, reply) => {
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    const write = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const subs = new Map<string, () => void>();
+    const sync = () => {
+      for (const id of queue.live.ids()) {
+        const live = queue.live.get(id);
+        if (!live || subs.has(id)) continue;
+        const send = (event: string, data: unknown) => {
+          // With many tests on one stream, a slow connection skips pictures first.
+          if (event === "frame" && res.writableLength > 2_000_000) return;
+          write(event, { runId: id, ...(data as object) });
+        };
+        subs.set(id, live.subscribe(send, () => subs.delete(id)));
+      }
+      write("runs", queueOverview());
+    };
+    sync();
+    const offChange = queue.live.onChange(() => setTimeout(sync, 0));
+    const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
+    req.raw.on("close", () => {
+      clearInterval(ping);
+      offChange();
+      for (const off of subs.values()) off();
+    });
+  });
+
   // The run's findings for CI and security dashboards: SARIF (GitHub code scanning and others) and JUnit XML.
   const exportOf = (id: string) => {
     const run = stores.runs.get(id);
@@ -587,6 +702,26 @@ export async function createApp(opts: AppOptions) {
     const project = (stores.projects.get(run.projectId ?? "")?.name ?? "report").replace(/[^\w-]+/g, "-").slice(0, 60);
     return { result: run.result, name: `glv-${project}-${run.id.slice(0, 8)}` };
   };
+  // The client report: a printable page, and the same page as a PDF printed by our own Chromium.
+  const clientReport = (id: string) => {
+    const run = stores.runs.get(id);
+    if (!run) throw new HttpError(404, "Run not found");
+    if (!run.result) throw new HttpError(409, "This test has no result yet.");
+    return { html: reportHtml(run, stores.projects.get(run.projectId ?? "")?.name ?? run.url), name: exportOf(id).name };
+  };
+  app.get<{ Params: { id: string } }>("/api/runs/:id/report.html", async (req, reply) => {
+    const { html } = clientReport(req.params.id);
+    // Only our inline styles: no scripts, nothing fetched.
+    reply.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:").header("X-Content-Type-Options", "nosniff");
+    return reply.type("text/html; charset=utf-8").send(html);
+  });
+  app.get<{ Params: { id: string } }>("/api/runs/:id/report.pdf", async (req, reply) => {
+    const { html, name } = clientReport(req.params.id);
+    const pdf = await reportPdf(html);
+    reply.header("Content-Disposition", `attachment; filename="${name}.pdf"`).header("X-Content-Type-Options", "nosniff");
+    return reply.type("application/pdf").send(pdf);
+  });
+
   app.get<{ Params: { id: string } }>("/api/runs/:id/report.sarif", async (req, reply) => {
     const { result, name } = exportOf(req.params.id);
     reply.header("Content-Disposition", `attachment; filename="${name}.sarif"`).header("X-Content-Type-Options", "nosniff");
@@ -655,6 +790,21 @@ export async function createApp(opts: AppOptions) {
     return reply.code(204).send();
   });
 
+  // Visual compare: make this run's picture of a page the approved one.
+  app.post<{ Params: { id: string; index: string } }>("/api/runs/:id/pages/:index/approve", async (req) => {
+    const run = stores.runs.get(req.params.id);
+    if (!run?.result || !run.projectId) throw new HttpError(404, "Run not found.");
+    const page = run.result.pages[Number(req.params.index)];
+    const { view } = body<{ view: View }>(req);
+    if (!page || (view !== "desktop" && view !== "phone")) throw new HttpError(400, "Pick a page and desktop or phone.");
+    const shot = view === "desktop" ? page.screenshot : page.mobileScreenshot;
+    if (!shot) throw new HttpError(409, "This page has no picture to approve.");
+    await approvePicture(queue.baselineDir(run.projectId), queue.artifactsDir(run.id), shot, page.url, view, run.id);
+    page.visual = { ...page.visual, [view]: { ...page.visual?.[view], status: "approved", approvedAt: new Date().toISOString() } };
+    stores.runs.save(run);
+    return { ok: true, visual: page.visual };
+  });
+
   app.get<{ Params: { id: string; file: string } }>("/api/runs/:id/artifacts/:file", async (req, reply) => {
     const { id, file } = req.params;
     if (!/^[\w-]+$/.test(id) || !/^[\w.-]+\.(jpg|png)$/.test(file)) {
@@ -671,6 +821,13 @@ export async function createApp(opts: AppOptions) {
           reply.header("Content-Disposition", `attachment; filename="${file}"`);
           reply.type("application/xml");
         }
+        return reply.sendFile(file, queue.artifactsDir(id));
+      }
+      // A page's network log as HAR, for Chrome's or any HAR viewer: downloaded, never shown.
+      if (/^[\w-]+$/.test(id) && /^page-\d+-network\.har$/.test(file)) {
+        reply.header("Content-Disposition", `attachment; filename="${file}"`);
+        reply.header("X-Content-Type-Options", "nosniff");
+        reply.type("application/json");
         return reply.sendFile(file, queue.artifactsDir(id));
       }
       // What agents saved about a page: the screen reader's view (text) and the network log (JSON).
@@ -747,7 +904,7 @@ export async function createApp(opts: AppOptions) {
   app.get("/api/owner/settings", async (req) => {
     ownerOnly(req);
     const settings = stores.settings.get();
-    return { ...settings, parallelPages: parallelPages(settings.parallelPages), maxParallel: MAX_PARALLEL };
+    return { ...settings, parallelPages: parallelPages(settings.parallelPages), maxParallel: MAX_PARALLEL, parallelProjects: parallelProjects(settings.parallelProjects) };
   });
 
   app.patch("/api/owner/settings", async (req) => {
@@ -762,8 +919,15 @@ export async function createApp(opts: AppOptions) {
     if (b.defaultMaxPages !== undefined) patch.defaultMaxPages = Math.min(Math.max(Number(b.defaultMaxPages) || 20, 1), 200);
     if (b.aiSummary !== undefined) patch.aiSummary = Boolean(b.aiSummary);
     if (b.parallelPages !== undefined) patch.parallelPages = parallelPages(Number(b.parallelPages) || 1);
+    if (b.parallelProjects !== undefined) patch.parallelProjects = parallelProjects(Number(b.parallelProjects) || 1);
+    if (b.modules && typeof b.modules === "object") {
+      patch.modules = { ...stores.settings.get().modules };
+      for (const [id, on] of Object.entries(b.modules)) if (MODULES.some((m) => m.id === id)) patch.modules[id] = Boolean(on);
+    }
     const saved = stores.settings.update(patch);
-    return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL };
+    // A higher limit starts waiting tests now.
+    if (patch.parallelProjects !== undefined) queue.kick();
+    return { ...saved, parallelPages: parallelPages(saved.parallelPages), maxParallel: MAX_PARALLEL, parallelProjects: parallelProjects(saved.parallelProjects) };
   });
 
   // ---- Mac helpers ------------------------------------------------------------------------------

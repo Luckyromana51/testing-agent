@@ -2,12 +2,18 @@ import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
 import type { HelperInfo } from "../../src/helpers.ts";
+import type { ModuleInfo } from "../../src/modules.ts";
+import type { FlakyIssue, TrendPoint } from "../../src/trends.ts";
+import type { Alert, Incident, WatchSummary } from "../../src/watch.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   Issue,
   IssueStatus,
+  Journey,
+  WatchConfig,
   Login,
   LoginSummary,
+  PageResult,
   ProductType,
   Project,
   Run,
@@ -68,6 +74,16 @@ export interface ProjectDetail {
   runs: RunSummary[];
   trend: { runId: string; at: string; score: number; diff?: RunDiff }[];
   agents: AgentInfo[];
+  trends: TrendPoint[];
+  flaky: FlakyIssue[];
+  /** Uptime and SSL watch (websites and web apps only). */
+  watch: WatchSummary | null;
+}
+
+export interface WatchOverview {
+  down: { id: string; name: string; url?: string; since: string }[];
+  alerts: Alert[];
+  incidents: (Incident & { projectName: string })[];
 }
 
 export type IssueSummary = Omit<Issue, "history"> & { projectName: string; events: number };
@@ -106,8 +122,13 @@ export interface Meta {
   /** Pages a web test opens at the same time, and the most the server allows. */
   parallelPages: number;
   maxParallel: number;
+  /** Tests (projects) run at the same time, and the most allowed. */
+  parallelProjects: number;
+  maxParallelProjects: number;
   /** Where the login vault's key comes from, and how many logins it holds. */
   vault: { source: "env" | "file"; keyId: string; saved: number; unreadable: number };
+  /** Optional modules (inspect screen, visual compare, journeys...) and whether each is on. */
+  modules: (ModuleInfo & { on: boolean; ready: boolean })[];
 }
 
 export interface Settings {
@@ -117,6 +138,16 @@ export interface Settings {
   /** Pages a web test opens at the same time. */
   parallelPages: number;
   maxParallel: number;
+  parallelProjects: number;
+  modules?: Record<string, boolean>;
+}
+
+/** The tests running now and waiting, and how many may run at the same time. */
+export interface QueueOverview {
+  limit: number;
+  maxLimit: number;
+  running: { runId: string; projectId?: string; name: string; url: string; startedAt?: string }[];
+  waiting: { runId: string; projectId?: string; name: string; url: string }[];
 }
 
 export interface Overview {
@@ -182,7 +213,7 @@ export const api = {
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
   createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[] } & TargetFields) =>
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
-  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[] } & TargetFields>) =>
+  updateProject: (id: string, b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[]; journeys: Journey[]; watch: WatchConfig } & TargetFields>) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
   /** Sends a file as the raw request body; returns the stored name to put in the project. */
   upload: async (file: File, onProgress?: (pct: number) => void) =>
@@ -201,6 +232,8 @@ export const api = {
       xhr.onerror = () => reject(new Error("The upload was interrupted. Check the connection and try again."));
       xhr.send(file);
     }),
+  watchCheck: (id: string) => call<WatchSummary>("POST", `/api/projects/${id}/watch/check`, {}),
+  watchOverview: () => call<WatchOverview>("GET", "/api/watch"),
   deleteProject: (id: string) => call("DELETE", `/api/projects/${id}`),
   retest: (id: string) => call<Run>("POST", `/api/projects/${id}/runs`, { trigger: "retest" }),
   addPermission: (id: string, b: PermissionDraft) =>
@@ -213,6 +246,8 @@ export const api = {
   cancelRun: (id: string) => call<Run>("POST", `/api/runs/${id}/cancel`),
   summarise: (id: string) => call<Run>("POST", `/api/runs/${id}/summary`),
   artifact: (id: string, file: string) => `/api/runs/${id}/artifacts/${file}`,
+  approvePicture: (id: string, index: number, view: "desktop" | "phone") =>
+    call<{ ok: true; visual: NonNullable<PageResult["visual"]> }>("POST", `/api/runs/${id}/pages/${index}/approve`, { view }),
 
   issues: (projectId?: string) => call<IssueSummary[]>("GET", `/api/issues${projectId ? `?projectId=${projectId}` : ""}`),
   issue: (id: string) => call<IssueDetail>("GET", `/api/issues/${id}`),
@@ -221,6 +256,7 @@ export const api = {
 
   overview: () => call<Overview>("GET", "/api/owner/overview"),
   settings: () => call<Settings>("GET", "/api/owner/settings"),
+  queue: () => call<QueueOverview>("GET", "/api/queue"),
   updateSettings: (b: Partial<Settings>) => call<Settings>("PATCH", "/api/owner/settings", b),
   users: () => call<User[]>("GET", "/api/owner/users"),
   addUser: (b: { name: string; email: string; password: string; role: "owner" | "member" }) =>

@@ -4,6 +4,9 @@ import { groupFindings } from "./group.js";
 import type { Issue, IssueStatus, Project, Run, RunDiff } from "./types.js";
 
 /** Statuses where the issue is still a problem. */
+/** Every place an issue was seen is kept (up to this many), so the board can list them all. */
+const MAX_OCCURRENCES = 1000;
+
 export const ACTIVE: IssueStatus[] = ["open", "in_progress", "reopened", "fixed"];
 const CLOSED: IssueStatus[] = ["verified"];
 
@@ -66,7 +69,7 @@ export function syncIssues(
   for (const g of groups) {
     seen.add(g.key);
     const f = g.first;
-    const occurrences = g.items.slice(0, 50).map((i) => ({ pageUrl: i.pageUrl, evidence: i.evidence?.split("\n")[0] }));
+    const occurrences = g.items.slice(0, MAX_OCCURRENCES).map((i) => ({ pageUrl: i.pageUrl, evidence: i.evidence?.split("\n")[0] }));
     const prev = byFingerprint.get(g.key);
     if (!prev) {
       seq += 1;

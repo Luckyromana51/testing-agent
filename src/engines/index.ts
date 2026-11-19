@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { scanSite } from "../runner/scan.js";
 import type { LiveSink } from "../live.js";
-import type { Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
+import type { Journey, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
 import { redact, secretsOf } from "../vault.js";
 import { scanApi } from "./api.js";
 
@@ -29,6 +29,14 @@ export interface EngineInput {
   parallel?: number;
   /** Web tests: where the live screens go. */
   live?: LiveSink;
+  /** Web tests: record the inspect screen. */
+  inspect?: boolean;
+  /** Web tests: the project's approved pictures, for visual compare. */
+  baselineDir?: string;
+  /** Web tests: user journeys to follow. */
+  journeys?: Journey[];
+  /** Web tests: the test mailbox (Mailpit) address, when the mail module is on. */
+  mailUrl?: string;
 }
 
 /** Full path of an uploaded file, refusing names that try to leave the uploads folder. */
@@ -100,6 +108,10 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
         onSession: input.onSession,
         parallel: input.parallel,
         live: input.live,
+        inspect: input.inspect,
+        baselineDir: input.baselineDir,
+        journeys: input.journeys,
+        mailUrl: input.mailUrl,
       });
   }
 }

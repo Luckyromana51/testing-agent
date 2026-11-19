@@ -214,17 +214,7 @@ function IssueDrawer({ id, onClose, onChanged }: { id: string; onClose: () => vo
             <p>{issue.detail}</p>
             <FixBox fix={fixFor(issue)} />
 
-            <h3 className="drawer-sub">Where ({issue.occurrences.length})</h3>
-            <ul className="finding-pages">
-              {issue.occurrences.slice(0, 20).map((o, n) => (
-                <li key={n}>
-                  <a href={o.pageUrl} target="_blank" rel="noreferrer">
-                    {o.pageUrl}
-                  </a>
-                  {o.evidence && <code className="muted small"> {o.evidence.slice(0, 140)}</code>}
-                </li>
-              ))}
-            </ul>
+            <WhereList key={issue.id} occurrences={issue.occurrences} />
 
             <h3 className="drawer-sub">History</h3>
             <ol className="timeline">
@@ -268,5 +258,45 @@ function IssueDrawer({ id, onClose, onChanged }: { id: string; onClose: () => vo
         )}
       </aside>
     </div>
+  );
+}
+
+/** Every place the issue was seen, with a filter and a copy button when the list is long. */
+function WhereList({ occurrences }: { occurrences: IssueSummary["occurrences"] }) {
+  const [q, setQ] = useState("");
+  const [copied, setCopied] = useState(false);
+  const shown = q ? occurrences.filter((o) => `${o.pageUrl} ${o.evidence ?? ""}`.toLowerCase().includes(q.toLowerCase())) : occurrences;
+  return (
+    <>
+      <div className="where-head">
+        <h3 className="drawer-sub">Where ({occurrences.length})</h3>
+        {occurrences.length > 1 && (
+          <button
+            className="btn small ghost"
+            onClick={async () => {
+              await navigator.clipboard?.writeText([...new Set(occurrences.map((o) => o.pageUrl))].join("\n")).catch(() => {});
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+          >
+            {copied ? "Copied" : "Copy addresses"}
+          </button>
+        )}
+      </div>
+      {occurrences.length > 10 && (
+        <input className="input where-filter" placeholder={`Filter the ${occurrences.length} places`} value={q} onChange={(e) => setQ(e.target.value)} />
+      )}
+      <ul className="finding-pages where-list">
+        {shown.map((o, n) => (
+          <li key={n}>
+            <a href={o.pageUrl} target="_blank" rel="noreferrer">
+              {o.pageUrl}
+            </a>
+            {o.evidence && <code className="muted small"> {o.evidence.slice(0, 140)}</code>}
+          </li>
+        ))}
+        {q && !shown.length && <li className="muted">No place has "{q}".</li>}
+      </ul>
+    </>
   );
 }
