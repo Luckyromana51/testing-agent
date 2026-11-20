@@ -23,6 +23,8 @@
     "@anthropic-ai/sdk": "^1.9.0",
     "@axe-core/playwright": "^4.14.0",
     "@fastify/static": "^8.3.0",
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
     "@playwright/test": "1.63.0",
     "fastify": "^5.12.8",
     "fflate": "^0.8.2",

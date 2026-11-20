@@ -12,7 +12,7 @@ export interface LiveScreen {
   slot: number;
   url?: string;
   /** "desktop" while the page is checked at 1366 px, "phone" at 390 px. */
-  view?: "desktop" | "phone";
+  view?: "desktop" | "tablet" | "phone";
   /** What the screen is doing, in a few words: "Opening the page", "Checking", "Waiting for a page". */
   doing?: string;
   /** Names of the agents checking the page right now. */

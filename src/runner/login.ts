@@ -1,4 +1,4 @@
-import type { BrowserContext, Locator, Page } from "playwright";
+import type { BrowserContext, Frame, Locator, Page } from "playwright";
 import type { Login } from "../types.js";
 import { codeInEmail, secondsLeft, totp } from "../app/totp.js";
 import { newVars, parseSteps, runStep, waitForEmail } from "./journeys.js";
@@ -31,7 +31,7 @@ const MESSAGE = '[role="alert"], .error, .alert-danger, .alert-error, .invalid-f
 /** A sign-in that did not work. The message says what to change; it never holds the password. */
 export class LoginError extends Error {}
 
-async function firstVisible(scope: Page | Locator, selectors: string[]): Promise<Locator | undefined> {
+async function firstVisible(scope: Page | Frame | Locator, selectors: string[]): Promise<Locator | undefined> {
   for (const sel of selectors) {
     const all = scope.locator(sel);
     const n = Math.min(await all.count(), 10);
@@ -43,7 +43,7 @@ async function firstVisible(scope: Page | Locator, selectors: string[]): Promise
   return undefined;
 }
 
-async function visibleWithin(page: Page, selector: string, ms: number): Promise<Locator | undefined> {
+async function visibleWithin(page: Page | Frame, selector: string, ms: number): Promise<Locator | undefined> {
   const el = page.locator(selector).first();
   try {
     await el.waitFor({ state: "visible", timeout: ms });
@@ -59,7 +59,7 @@ async function settle(page: Page): Promise<void> {
 }
 
 /** Presses the form's sign-in button, or Enter in the field when there is none. */
-async function submit(page: Page, scope: Page | Locator, login: Login, field: Locator): Promise<void> {
+async function submit(page: Page | Frame, scope: Page | Frame | Locator, login: Login, field: Locator): Promise<void> {
   let button: Locator | undefined;
   if (login.submitSelector) {
     button = await visibleWithin(page, login.submitSelector, 5_000);
@@ -136,16 +136,20 @@ export async function signIn(
     });
     if (res && res.status() >= 400) throw new LoginError(`The sign-in page answered HTTP ${res.status()}.`);
     await settle(page);
+    // The sign-in form may sit in a frame (Salesforce Visualforce pages, Zoho's embedded sign-in,
+    // sign-in boxes from an identity provider): use the frame that holds it.
+    const root = await signInFrame(page, login, opts.hints);
+    if (root !== page.mainFrame()) log("The sign-in form is inside a frame; signing in there");
 
     let password = login.passwordSelector
-      ? await visibleWithin(page, login.passwordSelector, 10_000)
-      : await firstVisible(page, [...(opts.hints?.password ? [opts.hints.password] : []), PASSWORD]);
+      ? await visibleWithin(root, login.passwordSelector, 10_000)
+      : await firstVisible(root, [...(opts.hints?.password ? [opts.hints.password] : []), PASSWORD]);
     if (login.passwordSelector && !password) throw new LoginError(`The password field "${login.passwordSelector}" was not found on the sign-in page.`);
     const form = password?.locator("xpath=ancestor::form[1]");
-    const scope: Page | Locator = form && (await form.count()) ? form : page;
+    const scope: Frame | Locator = form && (await form.count()) ? form : root;
 
     const user = login.usernameSelector
-      ? await visibleWithin(page, login.usernameSelector, 10_000)
+      ? await visibleWithin(root, login.usernameSelector, 10_000)
       : await firstVisible(scope, [...(opts.hints?.username ? [opts.hints.username] : []), ...USER_FIELDS]);
     if (!user) {
       throw new LoginError(
@@ -158,25 +162,49 @@ export async function signIn(
 
     if (!password) {
       // Two-step sign-in: the email first, then the password on the next screen.
-      await submit(page, page, login, user);
+      await submit(root, root, login, user);
       await settle(page);
-      password = await visibleWithin(page, PASSWORD, 10_000);
+      password = await visibleWithin(root.isDetached() ? page : root, PASSWORD, 10_000);
       if (!password) throw await explain(page, "No password field appeared on the sign-in page.");
     }
     await password.fill(login.password ?? "");
-    const passwordScope: Page | Locator = (await password.locator("xpath=ancestor::form[1]").count())
+    const passwordScope: Frame | Locator = (await password.locator("xpath=ancestor::form[1]").count())
       ? password.locator("xpath=ancestor::form[1]")
-      : page;
-    await submit(page, passwordScope, login, password);
+      : root;
+    await submit(root, passwordScope, login, password);
     await settle(page);
 
     const code = await twoStep(page, login, log, opts, startedAt);
-    await confirmSignedIn(page, login);
+    await confirmSignedIn(page, login, root !== page.mainFrame());
     log(`Signed in; the site opened ${page.url().split("?")[0]}`);
     return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname, ...(code ? { code } : {}) };
   } finally {
     await page.close().catch(() => {});
   }
+}
+
+/**
+ * The frame that holds the sign-in form: the page itself when its own fields are there, otherwise
+ * the first frame (same site or not, like an identity provider's box) with a password or user field.
+ */
+export async function signInFrame(page: Page, login: Login, hints?: SignInOptions["hints"]): Promise<Frame> {
+  const main = page.mainFrame();
+  const wanted = [login.passwordSelector ?? PASSWORD, ...(login.usernameSelector ? [login.usernameSelector] : []), ...(hints?.password ? [hints.password] : [])];
+  if (await firstVisible(main, wanted)) return main;
+  // Frames load after the page: give them a moment.
+  for (let i = 0; i < 6; i++) {
+    for (const f of page.frames()) {
+      if (f === main || f.isDetached()) continue;
+      if (await firstVisible(f, wanted).catch(() => undefined)) return f;
+    }
+    if (page.frames().length <= 1) break;
+    await page.waitForTimeout(500);
+  }
+  if (await firstVisible(main, USER_FIELDS)) return main;
+  for (const f of page.frames()) {
+    if (f !== main && !f.isDetached() && (await firstVisible(f, USER_FIELDS.slice(0, 6)).catch(() => undefined))) return f;
+  }
+  return main;
 }
 
 /** The saved sign-in steps, in journey words, with {{username}}, {{password}} and {{code}}. Forms may be sent. */
@@ -247,7 +275,7 @@ async function twoStep(page: Page, login: Login, log: (m: string) => void, opts:
   return code;
 }
 
-async function confirmSignedIn(page: Page, login: Login): Promise<void> {
+async function confirmSignedIn(page: Page, login: Login, framed = false): Promise<void> {
   if (login.successText) {
     const found = await page
       .getByText(login.successText, { exact: false })
@@ -258,5 +286,14 @@ async function confirmSignedIn(page: Page, login: Login): Promise<void> {
     if (!found) throw await explain(page, `After signing in, the page does not show "${login.successText}".`);
   } else if (await visibleWithin(page, PASSWORD, 1_000)) {
     throw await explain(page, "The sign-in form is still showing after submitting it, so the sign-in did not work.");
+  } else if (framed) {
+    // The form was in a frame: it is still there when the sign-in did not work.
+    for (const f of page.frames()) {
+      if (f === page.mainFrame() || f.isDetached()) continue;
+      if (await firstVisible(f, [PASSWORD]).catch(() => undefined)) {
+        const said = await firstVisible(f, [MESSAGE]).then((m) => m?.innerText().catch(() => "")).catch(() => "");
+        throw new LoginError(`The sign-in form is still showing after submitting it, so the sign-in did not work.${said ? ` The page says: "${said.replace(/\s+/g, " ").trim().slice(0, 200)}".` : ""} Check the user name and password in the login settings.`);
+      }
+    }
   }
 }

@@ -8,7 +8,10 @@ import { api } from "../api.ts";
  * the API file audit. Like the request panes of Postman and Insomnia, and the diff of oasdiff.
  */
 
-type Part = "endpoints" | "scenarios" | "changes" | "access" | "writes";
+type Part = "endpoints" | "scenarios" | "changes" | "access" | "writes" | "contract";
+
+const SOURCE: Record<string, string> = { openapi: "API file", found: "API file (found)", postman: "Postman collection", har: "HAR recording", curl: "cURL commands", graphql: "GraphQL schema", soap: "SOAP WSDL", grpc: "gRPC services", websocket: "WebSocket messages", pact: "Pact contract" };
+const PROTOCOL: Record<string, string> = { soap: "SOAP service", grpc: "gRPC", websocket: "WebSocket" };
 
 const tone = (s: number | null) => (s === null || s >= 500 ? "bad" : s >= 400 ? "warn" : "ok");
 
@@ -181,10 +184,32 @@ export function ApiReport({ run, onRunChange }: { run: Run; onRunChange: () => v
         )}
         <div className="card">
           <div className="stat-label">Where the endpoints came from</div>
-          <div className="strong">{{ openapi: "API file", found: "API file (found)", postman: "Postman collection", har: "HAR recording", curl: "cURL commands", graphql: "GraphQL schema" }[report.source]}</div>
+          <div className="strong">{SOURCE[report.source] ?? report.source}</div>
           {report.foundAt && <div className="muted small mono">{report.foundAt}</div>}
         </div>
-        {report.source !== "graphql" && (
+        {report.protocol && (
+          <div className="card">
+            <div className="stat-label">{PROTOCOL[report.protocol.kind]}</div>
+            <div className="strong">{report.protocol.service}</div>
+            <div className="muted small">
+              {report.protocol.operations} {report.protocol.kind === "websocket" ? "messages" : "operations"} · {report.protocol.called} calls made
+              {report.protocol.notCalled ? ` · ${report.protocol.notCalled} not called (they change data)` : ""}
+              {report.protocol.detail ? ` · ${report.protocol.detail}` : ""}
+            </div>
+          </div>
+        )}
+        {report.contract && (
+          <div className="card">
+            <div className="stat-label">Contract ({report.contract.consumer} → {report.contract.provider})</div>
+            {(() => {
+              const sent = report.contract.interactions.filter((x) => !x.skipped);
+              const ok = sent.filter((x) => x.ok).length;
+              return <div className={`strong ${ok === sent.length ? "ok" : "bad"}`}>{ok} of {sent.length} kept</div>;
+            })()}
+            <div className="muted small">Pact {report.contract.spec} · details in Contract</div>
+          </div>
+        )}
+        {!["graphql", "soap", "grpc", "websocket"].includes(report.source) && (
           <div className="card">
             <div className="stat-label">Postman</div>
             <a className="btn small" href={api.postmanUrl(run.id)}>
@@ -217,6 +242,11 @@ export function ApiReport({ run, onRunChange }: { run: Run; onRunChange: () => v
         {report.writes && (
           <button className={`pill${part === "writes" ? " active" : ""}`} onClick={() => setPart("writes")}>
             Write tests
+          </button>
+        )}
+        {report.contract && (
+          <button className={`pill${part === "contract" ? " active" : ""}`} onClick={() => setPart("contract")}>
+            Contract ({report.contract.interactions.filter((x) => !x.skipped && !x.ok).length} broken)
           </button>
         )}
       </div>
@@ -441,6 +471,48 @@ export function ApiReport({ run, onRunChange }: { run: Run; onRunChange: () => v
               )}
             </>
           )}
+        </div>
+      )}
+
+      {part === "contract" && report.contract && (
+        <div className="card table-card">
+          <p className="pad muted small">
+            What {report.contract.consumer} expects from {report.contract.provider}, from its Pact file. Each request was sent and the answer checked with the
+            file's matching rules. Extra fields in the answer are fine.
+          </p>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Interaction</th>
+                <th>Request</th>
+                <th>Answer</th>
+                <th>Kept</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.contract.interactions.map((x, i) => (
+                <tr key={`${x.description}${i}`}>
+                  <td>
+                    {x.description}
+                    {x.state && <div className="muted small">Provider state: {x.state}</div>}
+                  </td>
+                  <td className="mono small">
+                    <span className="badge">{x.method}</span> {x.path}
+                  </td>
+                  <td className={x.skipped ? "muted" : tone(x.status ?? null)}>{x.skipped ? "not sent" : (x.status ?? "none")}</td>
+                  <td className={x.skipped ? "muted small" : x.ok ? "ok" : "bad"}>
+                    {x.skipped ? x.skipped : x.ok ? "Yes" : (
+                      <ul className="small mono">
+                        {x.problems.map((p) => (
+                          <li key={p}>{p}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

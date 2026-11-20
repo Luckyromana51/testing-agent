@@ -8,6 +8,7 @@ import { runEngine } from "./engines/index.js";
 import { LiveHub, liveFeed } from "./live.js";
 import { defaultChoices, runTools, toolById } from "./tools/index.js";
 import { secretsOf } from "./vault.js";
+import { writeConsent } from "./permission.js";
 import type { Stores } from "./store.js";
 import { moduleOn } from "./modules.js";
 import type { Project, Run } from "./types.js";
@@ -233,6 +234,10 @@ export class ScanQueue {
           hookInbox: moduleOn(settings.get().modules, "webhooks") ? this.stores.hooks.inboxFor(project.id) : undefined,
           apiScenarios: project.type === "api" ? project.apiScenarios : undefined,
           apiBaselineFile: project.type === "api" ? this.apiBaselineFile(project.id) : undefined,
+          // Checks that change data: a test copy, or the client's written permission (newest copy).
+          writes: writeConsent(project.target, (projects.get(project.id) ?? project).permissions, run.trigger),
+          seo: project.seo,
+          rum: project.rumToken ? this.stores.rum.summary(project.id) : undefined,
         });
         const engine = screenless ? liveFeed.run(live, start) : start();
         // The engine stops its browser or clone on the signal; the run ends at once either way.

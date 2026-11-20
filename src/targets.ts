@@ -21,8 +21,47 @@ export interface TargetInput {
   system?: string;
   /** API: a GraphQL endpoint instead of a REST API file. */
   graphqlUrl?: string;
-  /** API: the project is a test server (tests may change data, and clean up). */
+  /** API and signed-in apps: the project is a test server or test copy (tests may change data, and clean up). */
   testServer?: boolean;
+  soapUrl?: string;
+  grpcUrl?: string;
+  protoFile?: string;
+  protoFileName?: string;
+  wsUrl?: string;
+  wsMessages?: string;
+  contractFile?: string;
+  contractFileName?: string;
+  /** Any project: the repository Claude's fixes are proposed to. */
+  fixRepoUrl?: string;
+  fixBranch?: string;
+}
+
+/** Extra uploaded files an API project takes, besides its API file. */
+const EXTRA_UPLOADS: Record<"protoFile" | "contractFile", RegExp> = { protoFile: /\.proto$/i, contractFile: /\.json$/i };
+
+/** "grpcs://host:443" from what was typed ("host:50051", "grpc://host:50051"...). */
+export function grpcAddress(raw: string): string {
+  const text = raw.trim();
+  const withScheme = /^grpcs?:\/\//i.test(text) ? text : `grpcs://${text}`;
+  let u: URL;
+  try {
+    u = new URL(withScheme.replace(/^grpc(s?):/i, "http$1:"));
+  } catch {
+    throw new Error(`"${text}" is not a gRPC address. Write it as host:port, like api.example.com:443.`);
+  }
+  const tls = /^grpcs:/i.test(withScheme);
+  // The same address rules as any other target (no private networks unless allowed).
+  validateTarget(`${tls ? "https" : "http"}://${u.host}/`);
+  return `${tls ? "grpcs" : "grpc"}://${u.hostname}:${u.port || (tls ? "443" : "80")}`;
+}
+
+/** "wss://host/path" from what was typed; ws:// is allowed (it is reported). */
+export function wsAddress(raw: string): string {
+  const text = raw.trim();
+  if (!/^wss?:\/\//i.test(text)) throw new Error("A WebSocket address starts with wss:// (or ws://).");
+  const http = text.replace(/^ws/i, "http");
+  const checked = validateTarget(http);
+  return checked.replace(/^http/i, "ws");
 }
 
 /** Which uploaded file types each product takes. */
@@ -61,6 +100,11 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
     if (set("url") || !t.url) t.url = validateTarget(clean(input.url));
     if (set("maxPages") || t.maxPages === undefined) t.maxPages = Math.min(Math.max(Number(input.maxPages) || defaultMaxPages, 1), 200);
     if (set("checkLinks") || t.checkLinks === undefined) t.checkLinks = input.checkLinks !== false;
+    if (set("testServer")) {
+      if (input.testServer === true) t.testServer = true;
+      else delete t.testServer;
+    }
+    fixRepo(t, input, set);
     if (set("system")) {
       const id = clean(input.system);
       if (!id) delete t.system;
@@ -90,9 +134,45 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
       if (input.testServer === true) t.testServer = true;
       else delete t.testServer;
     }
-    if (!t.specUrl && !t.file && !t.graphqlUrl && !t.url) {
-      throw new Error("Enter the address of the OpenAPI (Swagger) file, upload it (or a Postman collection, HAR file or cURL commands), give a GraphQL address, or give the API's base address so the test can look for the file.");
+    if (set("soapUrl")) {
+      const v = clean(input.soapUrl);
+      if (v) t.soapUrl = validateTarget(v);
+      else delete t.soapUrl;
     }
+    if (set("grpcUrl")) {
+      const v = clean(input.grpcUrl);
+      if (v) t.grpcUrl = grpcAddress(v);
+      else delete t.grpcUrl;
+    }
+    if (set("wsUrl")) {
+      const v = clean(input.wsUrl);
+      if (v) t.wsUrl = wsAddress(v);
+      else delete t.wsUrl;
+    }
+    if (set("wsMessages")) {
+      const v = typeof input.wsMessages === "string" ? input.wsMessages.slice(0, 5000).trim() : "";
+      if (v) t.wsMessages = v;
+      else delete t.wsMessages;
+    }
+    for (const key of ["protoFile", "contractFile"] as const) {
+      if (!set(key)) continue;
+      const nameKey = key === "protoFile" ? "protoFileName" : "contractFileName";
+      const file = clean(input[key]);
+      if (!file) {
+        delete t[key];
+        delete t[nameKey];
+        continue;
+      }
+      if (!existsSync(uploadedPath(uploadsDir, file))) throw new Error("The uploaded file was not found. Upload it again.");
+      if (!EXTRA_UPLOADS[key].test(file)) throw new Error(key === "protoFile" ? "Upload a .proto file." : "Upload the Pact contract as a .json file.");
+      t[key] = file;
+      t[nameKey] = clean(input[nameKey]).slice(0, 200) || file;
+    }
+    fixRepo(t, input, set);
+    if (!t.specUrl && !t.file && !t.graphqlUrl && !t.url && !t.soapUrl && !t.grpcUrl && !t.wsUrl && !t.contractFile) {
+      throw new Error("Enter the address of the OpenAPI (Swagger) file, upload it (or a Postman collection, HAR file or cURL commands), give a GraphQL, SOAP (WSDL), gRPC or WebSocket address, upload a Pact contract, or give the API's base address so the test can look for the file.");
+    }
+    if (t.contractFile && !t.url) throw new Error("A Pact contract needs the API's base address too: the contract's requests are sent there.");
     return t;
   }
 
@@ -110,6 +190,7 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
       if (branch) t.branch = branch;
       else delete t.branch;
     }
+    fixRepo(t, input, set);
     if (!t.repoUrl && !t.file) throw new Error("Enter the repository address, or upload a zip of the code.");
     return t;
   }
@@ -121,11 +202,29 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
   return t;
 }
 
+/** The repository Claude's fixes go to (a pull request), and the branch they start from. */
+function fixRepo(t: ProjectTarget, input: TargetInput, set: (k: keyof TargetInput) => boolean): void {
+  if (set("fixRepoUrl")) {
+    const v = clean(input.fixRepoUrl);
+    if (v) t.fixRepoUrl = validateRepoUrl(v);
+    else delete t.fixRepoUrl;
+  }
+  if (set("fixBranch")) {
+    const b = clean(input.fixBranch);
+    if (b && (!/^[\w./-]{1,100}$/.test(b) || b.startsWith("-") || b.includes(".."))) throw new Error("That branch name has characters Git does not allow.");
+    if (b) t.fixBranch = b;
+    else delete t.fixBranch;
+  }
+}
+
 /** A readable default name for a new project. */
 export function defaultName(type: ProductType, t: ProjectTarget): string {
   try {
     if (t.repoUrl) return new URL(t.repoUrl).pathname.split("/").filter(Boolean).slice(-1)[0]?.replace(/\.git$/, "") || "Code";
     if (t.specUrl) return `${new URL(t.specUrl).hostname.replace(/^www\./, "")} API`;
+    if (t.soapUrl) return `${new URL(t.soapUrl).hostname.replace(/^www\./, "")} SOAP`;
+    if (t.grpcUrl) return `${new URL(t.grpcUrl.replace(/^grpcs?:/, "http:")).hostname} gRPC`;
+    if (t.wsUrl) return `${new URL(t.wsUrl.replace(/^ws/, "http")).hostname} WebSocket`;
     if (t.url) return new URL(t.url).hostname.replace(/^www\./, "");
   } catch {
     /* fall through */
@@ -274,6 +373,7 @@ export function buildRole(type: ProductType, input: Partial<RoleLogin> & { login
     name,
     login: { ...login, roleName: name },
     ...(input.otherCompany ?? prev?.otherCompany ? { otherCompany: true } : {}),
+    ...(input.lockoutTest ?? prev?.lockoutTest ? { lockoutTest: true } : {}),
     ...(mustNotOpen ? { mustNotOpen } : {}),
   };
 }

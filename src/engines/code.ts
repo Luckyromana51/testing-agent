@@ -102,7 +102,7 @@ export function isolatedGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return { ...out, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
 }
 
-async function clone(repoUrl: string, branch: string | undefined, dir: string, login?: Login, signal?: AbortSignal): Promise<string> {
+export async function clone(repoUrl: string, branch: string | undefined, dir: string, login?: Login, signal?: AbortSignal): Promise<string> {
   const args = [
     // Never use this server's own saved Git logins for a client's repository.
     "-c",

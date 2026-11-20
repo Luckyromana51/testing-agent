@@ -10,7 +10,7 @@ const STATUS: Record<PermissionView["status"], string> = {
   revoked: "Withdrawn",
 };
 
-const KIND: Record<PermissionKind, string> = { load: "Load tests", attack: "Attack tests" };
+const KIND: Record<PermissionKind, string> = { load: "Load tests", attack: "Attack tests", changes: "Checks that change data" };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 const dateInput = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -59,7 +59,9 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
       <p className="muted small permission-intro">
         Load tests (k6, JMeter) and attack tests (ZAP's active scan, GLV's attack probes) send far more than a visitor would. They run only with the
         client's written permission: on the addresses it names, between its dates, within its limits, and while the client keeps a proof file on each
-        address. The proof is checked again before every test, and these tests never run on the schedule.
+        address. The proof is checked again before every test, and these tests never run on the schedule. Checks that change data (wrong passwords until
+        an account locks, test files uploaded, extra fields sent in saves, forms filled) need the same written permission on a live system; on a test copy,
+        tick "test copy" on the Signed-in app tab instead.
       </p>
       {list.length === 0 && !adding && <div className="muted">No permission yet: the load and attack tools stay off.</div>}
       {list.map((p) => (
@@ -228,6 +230,10 @@ function PermissionForm({ projectId, host, onDone }: { projectId: string; host: 
         <label className="check dark">
           <input type="checkbox" checked={kinds.includes("attack")} onChange={(e) => toggle("attack", e.target.checked)} /> Attack tests: security scans that try to break in
           (ZAP active, GLV probes)
+        </label>
+        <label className="check dark">
+          <input type="checkbox" checked={kinds.includes("changes")} onChange={(e) => toggle("changes", e.target.checked)} /> Checks that change data: account
+          lockout, file uploads, mass assignment, forgot password, forms filled by Claude (signed-in apps)
         </label>
       </div>
       <div className="form-row">

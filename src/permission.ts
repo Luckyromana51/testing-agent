@@ -9,11 +9,12 @@ import { validateTarget } from "./runner/urls.js";
  * on each address. The owner records the permission; every test checks it again before it starts.
  */
 
-export type PermissionKind = "load" | "attack";
+export type PermissionKind = "load" | "attack" | "changes";
 
 export const PERMISSION_KINDS: Record<PermissionKind, string> = {
   load: "Load tests (many users at once)",
   attack: "Attack tests (security scans that try to break in)",
+  changes: "Checks that change data (account lockout, file uploads, mass assignment, forms)",
 };
 
 export interface Proof {
@@ -119,8 +120,8 @@ export function buildPermission(b: PermissionInput, by: string, now = Date.now()
   if (hosts.length > LIMITS.hosts) throw new Error(`At most ${LIMITS.hosts} addresses in one permission.`);
   // The platform's own rule on which addresses it may test (no private networks unless allowed).
   for (const h of hosts) validateTarget(`https://${h}/`);
-  const kinds = (Array.isArray(b.kinds) ? b.kinds : []).filter((k): k is PermissionKind => k === "load" || k === "attack");
-  if (!kinds.length) throw new Error("Choose what the client allows: load tests, attack tests or both.");
+  const kinds = (Array.isArray(b.kinds) ? b.kinds : []).filter((k): k is PermissionKind => k === "load" || k === "attack" || k === "changes");
+  if (!kinds.length) throw new Error("Choose what the client allows: load tests, attack tests, checks that change data, or more than one.");
   const from = Date.parse(String(b.from ?? ""));
   const until = Date.parse(String(b.until ?? ""));
   if (Number.isNaN(from) || Number.isNaN(until)) throw new Error("Set the first and last day of the permission.");
@@ -257,7 +258,7 @@ export interface Permit {
 export function permitFor(permissions: Permission[] | undefined, kind: PermissionKind, urls: string[], now = Date.now()): Permit | string {
   const list = (permissions ?? []).filter((p) => p.kinds.includes(kind));
   const hosts = [...new Set(urls.map(hostOfUrl).filter(Boolean))];
-  const what = kind === "load" ? "load tests" : "attack tests";
+  const what = kind === "load" ? "load tests" : kind === "attack" ? "attack tests" : "checks that change data";
   if (!list.length) return `No permission from the client for ${what}. The owner adds it on the project page.`;
   const usable = list.filter((p) => permissionStatus(p, now) === "active");
   const covering = usable.filter((p) => p.hosts.some((h) => hosts.includes(h)));
@@ -286,4 +287,26 @@ export function hasPermission(permissions: Permission[] | undefined, kind: Permi
   return (permissions ?? [])
     .filter((p) => p.kinds.includes(kind) && !p.revokedAt && Date.parse(p.until) >= now)
     .sort((a, b) => b.maxUsers - a.maxUsers)[0];
+}
+
+/**
+ * Whether a signed-in app test may run the checks that change data (account lockout, test file
+ * uploads, mass assignment, forgot password, forms filled by Claude). Yes on a project marked as a
+ * test copy; on anything else only under the client's written "changes" permission, with its proof
+ * file on the host. Scheduled tests never change data.
+ */
+export function writeConsent(
+  target: { url?: string; testServer?: boolean },
+  permissions: Permission[] | undefined,
+  trigger: "manual" | "schedule" | "retest" | undefined,
+  now = Date.now(),
+): { allowed: boolean; testCopy?: boolean; why: string } {
+  if (trigger === "schedule") return { allowed: false, why: "Scheduled tests never change data: start a test by hand to run these checks." };
+  if (target.testServer) return { allowed: true, testCopy: true, why: "The project is marked as a test copy, so the test may change data (and cleans up after itself)." };
+  if (!target.url) return { allowed: false, why: "No address to check a permission for." };
+  const permit = permitFor(permissions, "changes", [target.url], now);
+  if (typeof permit === "string") {
+    return { allowed: false, why: `${permit} Or, for a staging or test copy, tick "This is a test copy" on the project's Signed-in app tab.` };
+  }
+  return { allowed: true, why: `The client allowed checks that change data in writing: ${permit.permission.grantedBy} (${permit.permission.reference}), until ${permit.permission.until.slice(0, 10)}.` };
 }

@@ -729,6 +729,18 @@ button {
 .shot.mobile {
   flex: 0 0 90px;
 }
+.shot.tablet {
+  flex: 0 0 140px;
+}
+.ask-fix {
+  margin: 10px 0;
+  display: grid;
+  gap: 6px;
+}
+.form-fill-fields {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
 .page-info {
   padding: 12px 14px;
 }

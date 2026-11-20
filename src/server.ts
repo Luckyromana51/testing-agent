@@ -14,7 +14,7 @@ import { Auth, checkPasswordRules, fromOutside, hashPassword, loginTurnedOff, re
 import { groupFindings } from "./group.js";
 import { cleanInfo, HelperError, helperHub, MAX_ARTIFACT_BYTES, type Helper } from "./helpers.js";
 import { ACTIVE, projectKey } from "./issues.js";
-import { buildPermission, permissionStatus, verifyPermission, type PermissionInput } from "./permission.js";
+import { buildPermission, permissionStatus, writeConsent, verifyPermission, type PermissionInput } from "./permission.js";
 import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
 import { startScheduler } from "./scheduler.js";
@@ -32,6 +32,7 @@ import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
 import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
 import { cleanScenario, MAX_SCENARIOS } from "./agents/api/scenarios.js";
 import { mockAddress, registerApiRoutes } from "./api-routes.js";
+import { registerMoreRoutes, rumSnippet } from "./more-routes.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
@@ -358,6 +359,9 @@ export async function createApp(opts: AppOptions) {
       })(),
       permissions: (p.permissions ?? []).map((x) => ({ ...x, status: permissionStatus(x) })),
       mockAddress: p.mockToken ? mockAddress(p.mockToken) : null,
+      rumSnippet: p.rumToken ? rumSnippet(p.rumToken) : null,
+      repoToken: stores.vault.repoSummary(p.id),
+      writes: writeConsent(p.target, p.permissions, "manual"),
     };
   };
 
@@ -403,8 +407,8 @@ export async function createApp(opts: AppOptions) {
   app.addContentTypeParser("application/octet-stream", (_req, payload, done) => done(null, payload));
   app.post("/api/uploads", { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
     const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? "")).replace(/[^\w. ()-]/g, "_").slice(0, 200);
-    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl)$/i)?.[0]?.toLowerCase();
-    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt) or a JMeter plan (.jmx).");
+    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl|proto|csv)$/i)?.[0]?.toLowerCase();
+    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt), a gRPC .proto file, a Pact contract (.json), a Search Console export (.csv) or a JMeter plan (.jmx).");
     if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
     await mkdir(queue.uploadsDir(), { recursive: true });
     const file = `${randomUUID()}${ext}`;
@@ -596,6 +600,8 @@ export async function createApp(opts: AppOptions) {
     stores.issues.deleteForProject(p.id);
     stores.vault.delete(p.id);
     stores.vault.deleteRole(p.id);
+    stores.vault.deleteRepoToken(p.id);
+    stores.rum.deleteForProject(p.id);
     stores.hooks.close(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     await rm(queue.baselineDir(p.id), { recursive: true, force: true });
@@ -659,6 +665,7 @@ export async function createApp(opts: AppOptions) {
   });
 
   registerApiRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message) });
+  await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
   await app.register(async (scope) => {

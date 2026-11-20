@@ -1,3 +1,4 @@
+import { RumStore } from "./rum.js";
 import { HookStore } from "./app/hooks.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -262,6 +263,8 @@ export interface Stores {
   watch: WatchStore;
   /** Webhook inboxes of projects. */
   hooks: HookStore;
+  /** Real visitors' speed numbers, from the in-house snippet. */
+  rum: RumStore;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -276,5 +279,6 @@ export function openStores(dataDir: string): Stores {
     helpers: new HelperStore(db),
     watch: new WatchStore(db),
     hooks: new HookStore(db),
+    rum: new RumStore(db),
   };
 }

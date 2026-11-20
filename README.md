@@ -312,7 +312,7 @@ For a web app, SaaS or CRM project, the test signs in with the saved login and t
 
 The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data (except the saves of a journey allowed to send forms).
 
-Not built yet: the Salesforce guest-user data check (Mandiant's AuraInspector method), which needs a real Salesforce Experience site to prove; and account lock, file upload and mass assignment tests, which send many requests or change data and so need the client permission step.
+Checks that change data (account lockout on a spare account you mark, file upload safety with harmless marker files, mass assignment on a save a journey made, forgot-password, the Salesforce guest data check and Claude filling forms) run only on a project marked as a test copy, or with the client's written "Checks that change data" permission, never on scheduled re-tests. Each report lists what ran, what was put back and anything left to delete by hand. The Salesforce guest check is proven against a demo Aura endpoint; its first run on a real Experience Cloud site is still to come.
 
 ## What the categories cover
 
@@ -554,12 +554,11 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 
 ## Not built yet (next steps from the plan)
 
-- API: SOAP, gRPC and WebSocket APIs, contract tests between services (like Pact), and GraphQL mutations on a test server
-
-- Claude choosing and filling forms on its own while signed in, on a test copy of the client's system
-- Jira export, and AI fix pull requests
+- GraphQL mutations on a test server
+- Jira export
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
 - More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps, screenshot compare and PDF reports
-- GLV's own SEO audit, and a local copy of the OSV database kept up to date on the server
+- A local copy of the OSV database kept up to date on the server
+- SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export
