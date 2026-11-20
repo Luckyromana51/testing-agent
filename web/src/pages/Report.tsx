@@ -8,6 +8,7 @@ import { api } from "../api.ts";
 import { CATEGORY_LABEL, go, isMajor, pathOf, plural, scoreTone, SEVERITIES, usePoll } from "../lib.ts";
 import { FixBox, Sev } from "../ui.tsx";
 import { LiveView } from "./LiveView.tsx";
+import { RunCode } from "./LiveCode.tsx";
 import { Inspect, VisualCompare } from "./Inspect.tsx";
 import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
 
@@ -174,6 +175,7 @@ export function Report({ id }: { id: string }) {
             </ul>
           </div>
         </div>
+        {run.status === "running" && <RunCode runId={run.id} api={run.product === "api"} />}
       </div>
     );
   }

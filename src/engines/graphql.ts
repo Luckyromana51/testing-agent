@@ -12,6 +12,7 @@ import type { ApiScanOptions } from "./api.js";
 import { API_CATEGORIES } from "./api.js";
 import { resolveAuth, type AuthParts } from "./api-auth.js";
 import type { ApiOperation, Json } from "./openapi.js";
+import { tellCall } from "../runner/live-code.js";
 
 /*
  * GraphQL APIs, like graphql-cop and InQL: reads the schema (introspection), runs read-only
@@ -92,6 +93,12 @@ export function deepQuery(types: Map<string, GqlType>, root: string, depth: numb
 }
 
 async function post(request: APIRequestContext, url: string, auth: AuthParts | undefined, payload: unknown): Promise<Omit<ApiCall, "op"> & { gql?: Json }> {
+  const out = await postQuiet(request, url, auth, payload);
+  tellCall({ method: "POST", url, headers: { ...(auth?.headers ?? {}), "content-type": "application/json" }, body: payload }, out);
+  return out;
+}
+
+async function postQuiet(request: APIRequestContext, url: string, auth: AuthParts | undefined, payload: unknown): Promise<Omit<ApiCall, "op"> & { gql?: Json }> {
   const started = Date.now();
   try {
     const res = await request.post(url, { data: payload as object, headers: { ...(auth?.headers ?? {}), accept: "application/json" }, timeout: 20_000, failOnStatusCode: false });

@@ -5,7 +5,7 @@ import { agentsFor } from "./agents/registry.js";
 import { aiEnabled, reusableSummary, summariseWithClaude, summaryKey } from "./ai/triage.js";
 import { syncIssues } from "./issues.js";
 import { runEngine } from "./engines/index.js";
-import { LiveHub } from "./live.js";
+import { LiveHub, liveFeed } from "./live.js";
 import { defaultChoices, runTools, toolById } from "./tools/index.js";
 import { secretsOf } from "./vault.js";
 import type { Stores } from "./store.js";
@@ -205,7 +205,9 @@ export class ScanQueue {
         const roles = login?.kind === "web" || login?.kind === "api" ? this.stores.vault.roles(project.id) : [];
         if (roles.length) log(`Also testing as ${roles.length} other account${roles.length === 1 ? "" : "s"}: ${roles.map((r) => r.name).join(", ")}`);
         let cookie: string | undefined;
-        const engine = runEngine({
+        // Tests without screens (API, code, apps) send their calls and problems to the code panel through liveFeed.
+        const screenless = ["api", "code", "android", "ios"].includes(project.type);
+        const start = () => runEngine({
           product: project.type,
           target: project.target,
           login,
@@ -232,6 +234,7 @@ export class ScanQueue {
           apiScenarios: project.type === "api" ? project.apiScenarios : undefined,
           apiBaselineFile: project.type === "api" ? this.apiBaselineFile(project.id) : undefined,
         });
+        const engine = screenless ? liveFeed.run(live, start) : start();
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
         result = await Promise.race([
