@@ -7,6 +7,8 @@ import { chromium } from "playwright";
 import { auraGetItems, auraRecords, stuckFields, withExtraFields } from "../src/app/changes.js";
 import { fillerValue } from "../src/app/forms.js";
 import { writeConsent } from "../src/permission.js";
+import { LiveRun } from "../src/live.js";
+import { liveSignIn } from "../src/runner/hand-over.js";
 import { signIn } from "../src/runner/login.js";
 import { scanSite } from "../src/runner/scan.js";
 import type { ScanResult } from "../src/types.js";
@@ -78,6 +80,54 @@ describe("signed-in app checks that change data (demo CRM 2)", () => {
       await signIn(ctx, login());
       await assert.rejects(signIn(await b.newContext(), { ...login(), password: "nope-nope" }), /still showing.*Wrong email or password/);
     } finally {
+      await b.close();
+    }
+  });
+
+  it("presses Enter when the sign-in button does nothing", async () => {
+    const b = await chromium.launch();
+    try {
+      const s = await signIn(await b.newContext(), { ...login(), loginUrl: `${crm.base}/login-enter` });
+      assert.match(s.landedUrl, /\/home$/);
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("hands a sign-in it cannot finish to the person watching live", async () => {
+    const b = await chromium.launch();
+    const live = new LiveRun();
+    const seen: string[] = [];
+    let handed = false;
+    live.subscribe((event, data) => {
+      if (event === "screen" && (data as { handOver?: string }).handOver) handed = true;
+      if (event === "screen") seen.push((data as { doing?: string }).doing ?? "");
+    }, () => {});
+    const viewer = (async () => {
+      while (!handed) await new Promise((r) => setTimeout(r, 100));
+      // The person fills the emptied form, ticks the box and presses Sign in on the picture
+      // (viewport 1000 x 800), then Done.
+      assert.equal(await live.input(0, { type: "click", x: 0.03, y: 0.16 }), true);
+      await live.input(0, { type: "type", text: CRM2_USER.email });
+      await live.input(0, { type: "key", key: "Tab" });
+      await live.input(0, { type: "type", text: CRM2_USER.password });
+      await live.input(0, { type: "click", x: 0.02, y: 0.03 });
+      await live.input(0, { type: "click", x: 0.1, y: 0.3 });
+      await new Promise((r) => setTimeout(r, 1500));
+      await live.input(0, { type: "done" });
+    })();
+    try {
+      const ctx = await b.newContext({ viewport: { width: 1000, height: 800 } });
+      const cast = async () => async () => {};
+      const s = await signIn(ctx, { ...login(), loginUrl: `${crm.base}/login-robot` }, () => {}, liveSignIn(live, cast));
+      await viewer;
+      assert.match(s.landedUrl, /\/home$/);
+      assert.ok(seen.includes("Signing in"));
+      assert.equal(await live.input(0, { type: "done" }), false, "the screen is not handed over any more");
+      // Nobody watching: it fails with its reason, as before.
+      await assert.rejects(signIn(await b.newContext(), { ...login(), loginUrl: `${crm.base}/login-robot` }), /not a robot/);
+    } finally {
+      live.end("done");
       await b.close();
     }
   });

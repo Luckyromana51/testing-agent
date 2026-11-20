@@ -18,7 +18,17 @@ export interface LiveScreen {
   /** Names of the agents checking the page right now. */
   agents?: string[];
   state: "busy" | "idle" | "done";
+  /** Set while the test waits for the viewer to finish something by hand on this screen (a CAPTCHA, a code): why. */
+  handOver?: string;
 }
+
+/** What a viewer does on a screen it was handed: x and y are fractions (0 to 1) of the picture. */
+export type LiveInput =
+  | { type: "click"; x: number; y: number }
+  | { type: "type"; text: string }
+  | { type: "key"; key: string }
+  | { type: "scroll"; dy: number }
+  | { type: "done" };
 
 /**
  * One line of the code panel beside a screen: what the page loads, what it prints, what the test
@@ -62,6 +72,8 @@ export interface LiveSink {
   code?(item: LiveCode): void;
   /** How to read the HTML a screen shows right now, or undefined when its page closes. Only asked when a viewer clicks for it. */
   pageSource?(slot: number, read: (() => Promise<string>) | undefined): void;
+  /** Lets viewers click and type on a screen (while the test hands it over), or stops that with undefined. */
+  control?(slot: number, handle: ((input: LiveInput) => Promise<void>) | undefined): void;
 }
 
 /**
@@ -98,6 +110,7 @@ export class LiveRun implements LiveSink {
   private codeLines = new Map<number, LiveCode[]>();
   private codeOut: LiveCode[] = [];
   private sources = new Map<number, () => Promise<string>>();
+  private controls = new Map<number, (input: LiveInput) => Promise<void>>();
   private timer?: NodeJS.Timeout;
   private ended?: string;
 
@@ -161,6 +174,19 @@ export class LiveRun implements LiveSink {
     }
   }
 
+  control(slot: number, handle: ((input: LiveInput) => Promise<void>) | undefined): void {
+    if (handle) this.controls.set(slot, handle);
+    else this.controls.delete(slot);
+  }
+
+  /** A viewer's click or key on a screen. False when the screen is not handed over. */
+  async input(slot: number, input: LiveInput): Promise<boolean> {
+    const handle = this.controls.get(slot);
+    if (!handle) return false;
+    await handle(input).catch(() => {});
+    return true;
+  }
+
   /** A line of the test's progress log. */
   log(line: string): void {
     this.broadcast("log", { line });
@@ -208,6 +234,7 @@ export class LiveRun implements LiveSink {
     this.frames.clear();
     this.codeLines.clear();
     this.sources.clear();
+    this.controls.clear();
   }
 
   private unsubscribe(send: LiveSend): void {

@@ -85,6 +85,20 @@ export async function startDemoCrm2(): Promise<DemoCrm2> {
       return res.end();
     }
 
+    // A sign-in whose button does nothing: only Enter in the password field sends it (some JS forms).
+    if (p === "/login-enter")
+      return html(page("Sign in", `<form method="post" action="/session"><input type="email" name="email"><input type="password" name="password" id="pw"><button type="submit" onclick="event.preventDefault()">Sign in</button></form><script>document.getElementById("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.target.form.submit(); } });</script>`));
+    // A sign-in with a "robot" box a person must tick: the test hands it over in the live view.
+    if (p === "/login-robot")
+      return html(page("Sign in", `${url.searchParams.has("e") ? '<div class="error">Tick "I am not a robot"</div>' : ""}<form method="post" action="/session-robot" style="margin:0"><label style="position:fixed;left:0;top:0;width:300px;height:100px;display:block;background:#eee"><input type="checkbox" name="human" style="width:40px;height:40px"> I am not a robot</label><div style="position:fixed;left:0;top:120px"><input type="email" name="email"><input type="password" name="password"></div><button style="position:fixed;left:0;top:200px;width:300px;height:100px">Sign in</button></form>`));
+    if (p === "/session-robot" && req.method === "POST") {
+      if (form.get("human") !== "on" || users.get(form.get("email") ?? "") !== form.get("password")) return go("/login-robot?e=1");
+      const s = randomBytes(8).toString("hex");
+      sessions.set(s, form.get("email")!);
+      res.writeHead(303, { location: "/home", "set-cookie": `sid=${s}; Path=/; HttpOnly; SameSite=Lax` });
+      return res.end();
+    }
+
     // ---- Forgot password: says whether the account exists ----------------------------------------
     if (p === "/forgot" && req.method === "GET") return html(page("Forgot password", `<h1>Reset your password</h1><form method="post" action="/forgot"><label>Email <input type="email" name="email" required></label><button>Send reset link</button></form>`));
     if (p === "/forgot" && req.method === "POST") {

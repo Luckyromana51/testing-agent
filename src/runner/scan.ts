@@ -14,6 +14,7 @@ import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
+import { liveSignIn } from "./hand-over.js";
 import { APPS, captureCalls, hideSocketSecrets, reportCall, sortCalls } from "../app/calls.js";
 import { exploreApp } from "../app/explore.js";
 import { chosenSystem, detectSystem, profileOf } from "../app/systems.js";
@@ -740,7 +741,8 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
           log(`The sign-in page looks like ${sys.name}`);
         }
       }
-      signedIn = await signIn(context, opts.login, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints });
+      live?.screen({ slot: 0, view: "desktop", doing: "Signing in", agents: [], state: "busy" });
+      signedIn = await signIn(context, opts.login, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints, ...liveSignIn(live, castScreen, opts.signal) });
       if (isApp) {
         const cap = captureCalls(context, new URL(startUrl).origin);
         site.calls = cap.calls;

@@ -83,7 +83,9 @@ async function explain(page: Page, fallback: string): Promise<LoginError> {
   }
   const message = await firstVisible(page, [MESSAGE]);
   const said = message ? (await message.innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 200) : "";
-  return new LoginError(`${fallback}${said ? ` The page says: "${said}".` : ""} Check the user name and password in the login settings.`);
+  const invisible = await page.locator('.grecaptcha-badge, script[src*="recaptcha/api.js?render="], script[src*="recaptcha/enterprise.js"]').count().catch(() => 0);
+  const hint = invisible ? " The page uses Google's invisible reCAPTCHA, which often refuses automated browsers without saying so: use a test account or server without it, or finish the sign-in by hand in the live view." : " Check the user name and password in the login settings.";
+  return new LoginError(`${fallback}${said ? ` The page says: "${said}".` : ""}${hint}`);
 }
 
 export interface SignedIn {
@@ -103,6 +105,13 @@ export interface SignInOptions {
   beforeCode?: (page: Page) => Promise<void>;
   /** Type this code instead of a new one (to check a used code is refused). */
   fixedCode?: string;
+  /** The sign-in page as soon as it opens (to show it in the live view). Returns a function that stops showing it. */
+  onPage?: (page: Page) => Promise<(() => Promise<void>) | undefined>;
+  /**
+   * When the sign-in does not work by itself (a CAPTCHA, a code with no saved secret, a form the
+   * test cannot send): lets a person watching live finish it by hand. Resolves true when they say done.
+   */
+  handOver?: (page: Page, why: string) => Promise<boolean>;
 }
 
 /**
@@ -121,13 +130,21 @@ export async function signIn(
   const loginUrl = validateTarget(login.loginUrl);
   const page = await context.newPage();
   const startedAt = new Date().toISOString();
+  const stopCast = await opts.onPage?.(page).catch(() => undefined);
   try {
     log(`Signing in at ${loginUrl} as ${login.username}`);
     if (login.steps?.trim()) {
       await signInWithSteps(page, loginUrl, login, opts.signal);
       await settle(page);
-      const code = await twoStep(page, login, log, opts, startedAt);
-      await confirmSignedIn(page, login);
+      let code: string | undefined;
+      try {
+        code = await twoStep(page, login, log, opts, startedAt);
+        await confirmSignedIn(page, login);
+      } catch (err) {
+        if (!(err instanceof LoginError) || !opts.handOver || !(await opts.handOver(page, err.message))) throw err;
+        await settle(page);
+        await confirmSignedIn(page, login);
+      }
       log(`Signed in with the sign-in steps; the site opened ${page.url().split("?")[0]}`);
       return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname, ...(code ? { code } : {}) };
     }
@@ -171,16 +188,57 @@ export async function signIn(
     const passwordScope: Frame | Locator = (await password.locator("xpath=ancestor::form[1]").count())
       ? password.locator("xpath=ancestor::form[1]")
       : root;
+    const before = page.url();
     await submit(root, passwordScope, login, password);
+    let outcome = await afterSubmit(page, root, before);
+    if (outcome === "nothing") {
+      // The button did not seem to do anything: some forms only send on Enter, or from their own submit.
+      log("Nothing changed after pressing the sign-in button; trying Enter in the password field");
+      if (!root.isDetached() && (await password.isVisible().catch(() => false))) await password.press("Enter").catch(() => {});
+      outcome = await afterSubmit(page, root, before);
+      if (outcome === "nothing" && !root.isDetached()) {
+        await password.evaluate((el) => (el as HTMLInputElement).form?.requestSubmit()).catch(() => {});
+        outcome = await afterSubmit(page, root, before);
+      }
+    }
     await settle(page);
 
-    const code = await twoStep(page, login, log, opts, startedAt);
-    await confirmSignedIn(page, login, root !== page.mainFrame());
+    let code: string | undefined;
+    try {
+      code = await twoStep(page, login, log, opts, startedAt);
+      await confirmSignedIn(page, login, root !== page.mainFrame(), outcome === "nothing");
+    } catch (err) {
+      if (!(err instanceof LoginError) || !opts.handOver) throw err;
+      log("The sign-in needs a person: waiting for someone watching live to finish it by hand");
+      if (!(await opts.handOver(page, err.message))) throw err;
+      await settle(page);
+      await confirmSignedIn(page, login, root !== page.mainFrame());
+      log("Finished by hand in the live view");
+    }
     log(`Signed in; the site opened ${page.url().split("?")[0]}`);
     return { landedUrl: page.url(), loginPath: new URL(loginUrl).pathname, ...(code ? { code } : {}) };
   } finally {
+    await stopCast?.().catch(() => {});
     await page.close().catch(() => {});
   }
+}
+
+/**
+ * After the sign-in button: waits (up to 12 s) for a sign of what happened. "moved": the address
+ * changed or the form went away; "said": the page shows a message, a code field or a CAPTCHA;
+ * "nothing": the same page with the same form, so the button may not have sent it.
+ */
+async function afterSubmit(page: Page, root: Frame, before: string): Promise<"moved" | "said" | "nothing"> {
+  const until = Date.now() + 12_000;
+  await page.waitForTimeout(400);
+  while (Date.now() < until) {
+    if (page.url() !== before || root.isDetached()) return "moved";
+    if (!(await firstVisible(root, [PASSWORD]).catch(() => undefined))) return "moved";
+    if (await firstVisible(page, [MESSAGE, ONE_TIME_CODE, CAPTCHA]).catch(() => undefined)) return "said";
+    if (root !== page.mainFrame() && (await firstVisible(root, [MESSAGE]).catch(() => undefined))) return "said";
+    await page.waitForTimeout(500);
+  }
+  return "nothing";
 }
 
 /**
@@ -275,7 +333,10 @@ async function twoStep(page: Page, login: Login, log: (m: string) => void, opts:
   return code;
 }
 
-async function confirmSignedIn(page: Page, login: Login, framed = false): Promise<void> {
+async function confirmSignedIn(page: Page, login: Login, framed = false, nothingHappened = false): Promise<void> {
+  const stuck = nothingHappened
+    ? "Pressing the sign-in button changed nothing the test could see: the same page and form stayed for 12 seconds, also after Enter. The button may not be a normal button (add its CSS selector in the login settings), the site may block automated browsers (an invisible CAPTCHA), or the password was refused without a message. Watch the test live to see it, and finish the sign-in by hand there if needed."
+    : "The sign-in form is still showing after submitting it, so the sign-in did not work.";
   if (login.successText) {
     const found = await page
       .getByText(login.successText, { exact: false })
@@ -285,14 +346,14 @@ async function confirmSignedIn(page: Page, login: Login, framed = false): Promis
       .catch(() => false);
     if (!found) throw await explain(page, `After signing in, the page does not show "${login.successText}".`);
   } else if (await visibleWithin(page, PASSWORD, 1_000)) {
-    throw await explain(page, "The sign-in form is still showing after submitting it, so the sign-in did not work.");
+    throw await explain(page, stuck);
   } else if (framed) {
     // The form was in a frame: it is still there when the sign-in did not work.
     for (const f of page.frames()) {
       if (f === page.mainFrame() || f.isDetached()) continue;
       if (await firstVisible(f, [PASSWORD]).catch(() => undefined)) {
         const said = await firstVisible(f, [MESSAGE]).then((m) => m?.innerText().catch(() => "")).catch(() => "");
-        throw new LoginError(`The sign-in form is still showing after submitting it, so the sign-in did not work.${said ? ` The page says: "${said.replace(/\s+/g, " ").trim().slice(0, 200)}".` : ""} Check the user name and password in the login settings.`);
+        throw new LoginError(`${stuck}${said ? ` The page says: "${said.replace(/\s+/g, " ").trim().slice(0, 200)}".` : ""} Check the user name and password in the login settings.`);
       }
     }
   }

@@ -17,6 +17,7 @@ import { ACTIVE, projectKey } from "./issues.js";
 import { buildPermission, permissionStatus, writeConsent, verifyPermission, type PermissionInput } from "./permission.js";
 import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
+import type { LiveInput } from "./live.js";
 import { startScheduler } from "./scheduler.js";
 import { TOOLS, cleanChoices, defaultChoices, describeTool, toolStatus } from "./tools/index.js";
 import { toJunit, toSarif } from "./export.js";
@@ -784,6 +785,26 @@ export async function createApp(opts: AppOptions) {
     const html = await live.source(Number(req.params.slot));
     if (html === undefined) return reply.code(404).send({ error: "This screen has no page open right now." });
     return reply.type("text/plain; charset=utf-8").header("cache-control", "no-store").send(html);
+  });
+
+  /**
+   * A click or key from the live view, on a screen the test handed over (to finish a sign-in by
+   * hand: a CAPTCHA, a two-step code). Ignored on any other screen.
+   */
+  app.post<{ Params: { id: string; slot: string } }>("/api/runs/:id/live/input/:slot", async (req, reply) => {
+    const live = queue.live.get(req.params.id);
+    if (!live) return reply.code(404).send({ error: "This test is not running any more." });
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const frac = (v: unknown) => (typeof v === "number" && v >= 0 && v <= 1 ? v : undefined);
+    let input: LiveInput | undefined;
+    if (b.type === "click" && frac(b.x) !== undefined && frac(b.y) !== undefined) input = { type: "click", x: b.x as number, y: b.y as number };
+    else if (b.type === "type" && typeof b.text === "string" && b.text.length <= 500) input = { type: "type", text: b.text };
+    else if (b.type === "key" && typeof b.key === "string" && /^(Enter|Tab|Backspace|Escape|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Space)$/.test(b.key)) input = { type: "key", key: b.key };
+    else if (b.type === "scroll" && typeof b.dy === "number" && Math.abs(b.dy) <= 3000) input = { type: "scroll", dy: b.dy };
+    else if (b.type === "done") input = { type: "done" };
+    if (!input) return reply.code(400).send({ error: "Unknown input." });
+    if (!(await live.input(Number(req.params.slot), input))) return reply.code(409).send({ error: "This screen is not waiting for you." });
+    return { ok: true };
   });
 
   /** The tests running now and waiting, with their project names, and the limit. */

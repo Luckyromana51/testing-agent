@@ -2520,6 +2520,25 @@ body.dragging-rows * {
   object-fit: contain;
   object-position: center top;
 }
+.live-picture img.clickable {
+  cursor: crosshair;
+  outline: 3px solid var(--accent, #2563eb);
+}
+.live-handover {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, var(--card, #fff));
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+}
+.live-handover-why {
+  font-size: 13px;
+}
+.live-handover .row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .live-picture img:not([src]) {
   visibility: hidden;
 }
