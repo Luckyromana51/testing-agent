@@ -18,6 +18,31 @@ export interface LiveScreen {
   state: "busy" | "idle" | "done";
 }
 
+/**
+ * One line of the code panel beside a screen: what the page loads, what it prints, what the test
+ * does to it (as Playwright code) and what the checks found, with their fix. "page" starts a new page
+ * on the screen and clears the older lines. `at` is milliseconds since that page started opening.
+ */
+export type LiveCode = { slot: number; at: number } & (
+  | { kind: "page"; url: string }
+  | { kind: "step"; label: string; code?: string; ms?: number; ok?: boolean; detail?: string }
+  | { kind: "net"; method: string; url: string; status: number; type: string; ms?: number; bytes?: number; failed?: string }
+  | { kind: "console"; level: string; text: string; source?: string }
+  | {
+      kind: "found";
+      rule: string;
+      severity: string;
+      title: string;
+      detail: string;
+      evidence?: string;
+      agent?: string;
+      fix?: { steps: string; code?: { label: string; snippet: string }[]; effort: string };
+    }
+);
+
+/** Lines kept per screen for a viewer who opens the code panel in the middle of a page. */
+export const CODE_KEEP = 600;
+
 /** What a test engine reports while it runs. Every call is cheap when nobody is watching. */
 export interface LiveSink {
   /** True while at least one person watches this test live. */
@@ -29,6 +54,10 @@ export interface LiveSink {
   screen(info: LiveScreen): void;
   /** A JPEG picture of a screen, base64-encoded, as the browser sends it. */
   frame(slot: number, jpegBase64: string, width: number, height: number): void;
+  /** A line of the code panel. Kept for a moment (the newest lines per screen) and sent only to viewers with the code panel open. */
+  code?(item: LiveCode): void;
+  /** How to read the HTML a screen shows right now, or undefined when its page closes. Only asked when a viewer clicks for it. */
+  pageSource?(slot: number, read: (() => Promise<string>) | undefined): void;
 }
 
 /** Sends one server-sent event to one viewer. A viewer on a slow connection may skip pictures. */
@@ -45,6 +74,11 @@ export class LiveRun implements LiveSink {
   private dirtyFrames = new Set<number>();
   private dirtyScreens = new Set<number>();
   private count = 0;
+  /** Viewers with the code panel open. */
+  private coders = new Set<LiveSend>();
+  private codeLines = new Map<number, LiveCode[]>();
+  private codeOut: LiveCode[] = [];
+  private sources = new Map<number, () => Promise<string>>();
   private timer?: NodeJS.Timeout;
   private ended?: string;
 
@@ -74,6 +108,40 @@ export class LiveRun implements LiveSink {
     this.dirtyFrames.add(slot);
   }
 
+  /** True while at least one viewer has the code panel open. */
+  coding(): boolean {
+    return this.coders.size > 0;
+  }
+
+  code(item: LiveCode): void {
+    if (this.ended) return;
+    let lines = this.codeLines.get(item.slot);
+    if (!lines || item.kind === "page") {
+      lines = [];
+      this.codeLines.set(item.slot, lines);
+    }
+    lines.push(item);
+    // The page line stays first, so a late viewer still sees which page the lines are about.
+    if (lines.length > CODE_KEEP) lines.splice(lines[0].kind === "page" ? 1 : 0, 1);
+    if (this.coders.size) this.codeOut.push(item);
+  }
+
+  pageSource(slot: number, read: (() => Promise<string>) | undefined): void {
+    if (read) this.sources.set(slot, read);
+    else this.sources.delete(slot);
+  }
+
+  /** The HTML a screen shows right now, or undefined when the screen has no page open. */
+  async source(slot: number): Promise<string | undefined> {
+    const read = this.sources.get(slot);
+    if (!read) return undefined;
+    try {
+      return await read();
+    } catch {
+      return undefined; // the page closed while it was read
+    }
+  }
+
   /** A line of the test's progress log. */
   log(line: string): void {
     this.broadcast("log", { line });
@@ -83,7 +151,7 @@ export class LiveRun implements LiveSink {
    * Adds a viewer: it gets the current screens and pictures at once, then every change.
    * `close` is called when the test ends. Returns a function that removes the viewer.
    */
-  subscribe(send: LiveSend, close: () => void): () => void {
+  subscribe(send: LiveSend, close: () => void, opts: { code?: boolean } = {}): () => void {
     if (this.ended) {
       send("end", { status: this.ended });
       close();
@@ -95,6 +163,11 @@ export class LiveRun implements LiveSink {
     if (this.count) send("screens", { count: this.count });
     for (const s of this.screens.values()) send("screen", s);
     for (const [slot, f] of this.frames) send("frame", { slot, ...f });
+    if (opts.code) {
+      this.coders.add(send);
+      const items = [...this.codeLines.values()].flat();
+      if (items.length) send("code", { items });
+    }
     if (first) {
       this.timer = setInterval(() => this.flush(), FLUSH_MS);
       this.timer.unref();
@@ -114,9 +187,13 @@ export class LiveRun implements LiveSink {
       this.unsubscribe(send);
     }
     this.frames.clear();
+    this.codeLines.clear();
+    this.sources.clear();
   }
 
   private unsubscribe(send: LiveSend): void {
+    this.coders.delete(send);
+    if (!this.coders.size) this.codeOut = [];
     if (!this.viewers.delete(send) || this.viewers.size) return;
     clearInterval(this.timer);
     this.timer = undefined;
@@ -138,6 +215,12 @@ export class LiveRun implements LiveSink {
       if (f) for (const send of this.viewers.keys()) send("frame", { slot, ...f });
     }
     this.dirtyFrames.clear();
+    if (this.codeOut.length) {
+      // Many lines come at once while a page loads: they go out together, at most every 200 ms.
+      const items = this.codeOut;
+      this.codeOut = [];
+      for (const send of this.coders) send("code", { items });
+    }
   }
 }
 

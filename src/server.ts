@@ -737,7 +737,7 @@ export async function createApp(opts: AppOptions) {
    * one screen shows and which agents are checking it), "frame" (a JPEG picture), "log" and "end".
    * Pictures are only made while someone is connected here.
    */
-  app.get<{ Params: { id: string } }>("/api/runs/:id/live", async (req, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { code?: string } }>("/api/runs/:id/live", async (req, reply) => {
     const run = stores.runs.get(req.params.id);
     if (!run) return reply.code(404).send({ error: "Run not found" });
     reply.hijack();
@@ -762,11 +762,21 @@ export async function createApp(opts: AppOptions) {
       write(event, data);
     };
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
-    const off = live.subscribe(send, () => res.end());
+    // With ?code=1 the viewer has the code panel open and also gets "code" events.
+    const off = live.subscribe(send, () => res.end(), { code: req.query.code === "1" });
     req.raw.on("close", () => {
       clearInterval(ping);
       off();
     });
+  });
+
+  /** The HTML one live screen shows right now (after its scripts ran), for the code panel. Read only when asked. */
+  app.get<{ Params: { id: string; slot: string } }>("/api/runs/:id/live/source/:slot", async (req, reply) => {
+    const live = queue.live.get(req.params.id);
+    if (!live) return reply.code(404).send({ error: "This test is not running any more." });
+    const html = await live.source(Number(req.params.slot));
+    if (html === undefined) return reply.code(404).send({ error: "This screen has no page open right now." });
+    return reply.type("text/plain; charset=utf-8").header("cache-control", "no-store").send(html);
   });
 
   /** The tests running now and waiting, with their project names, and the limit. */

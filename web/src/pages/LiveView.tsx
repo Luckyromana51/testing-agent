@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { LiveScreen } from "../../../src/live.ts";
+import type { LiveCode, LiveScreen } from "../../../src/live.ts";
+import { CodePanel } from "./LiveCode.tsx";
 
 /**
  * The live view of a running web test: what each test browser screen shows right now, side by side,
@@ -56,6 +57,8 @@ interface Layout {
   side: number;
   height: number;
   panel: boolean;
+  /** The code panel beside the screens: off until the viewer turns it on. */
+  code?: boolean;
 }
 
 const DEFAULT_LAYOUT: Layout = {
@@ -255,6 +258,7 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
   const [layout, setLayoutState] = useState<Layout>(loadLayout);
   const [max, setMax] = useState<number | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [codeLines, setCodeLines] = useState<Record<number, LiveCode[]>>({});
   const phone = useMedia("(max-width: 760px)");
   const pictures = useMemo(() => new Pictures(), []);
   const body = useRef<HTMLDivElement>(null);
@@ -269,7 +273,9 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
 
   useEffect(() => {
     pictures.onFirst = (slot) => setPictured((p) => ({ ...p, [slot]: true }));
-    const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/live`);
+    // The code panel's lines come only while it is open (?code=1); the server sends what it kept so far.
+    setCodeLines({});
+    const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/live${layout.code ? "?code=1" : ""}`);
     source.onopen = () => setLink("live");
     source.onerror = () => setLink((l) => (l === "ended" ? l : "again"));
     source.addEventListener("screens", (e) => setCount(JSON.parse((e as MessageEvent).data).count));
@@ -281,6 +287,18 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
       const f = JSON.parse((e as MessageEvent).data) as { slot: number; img: string };
       pictures.frame(f.slot, f.img);
     });
+    source.addEventListener("code", (e) => {
+      const { items } = JSON.parse((e as MessageEvent).data) as { items: LiveCode[] };
+      setCodeLines((all) => {
+        const next = { ...all };
+        for (const item of items) {
+          const list = item.kind === "page" ? [] : (next[item.slot] ?? []).slice(-599);
+          list.push(item);
+          next[item.slot] = list;
+        }
+        return next;
+      });
+    });
     source.addEventListener("log", (e) => {
       const { line } = JSON.parse((e as MessageEvent).data) as { line: string };
       setLog((l) => [...l.slice(-49), line]);
@@ -291,7 +309,7 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
       source.close();
     });
     return () => source.close();
-  }, [runId, pictures]);
+  }, [runId, pictures, layout.code]);
 
   const total = count ?? 0;
   const shown = Math.max(1, Math.min(layout.panes, total || 1));
@@ -477,6 +495,11 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
     </aside>
   );
 
+  const codePanel = layout.code ? <CodePanel runId={runId} total={total} screens={screens} lines={codeLines} phone={phone} /> : null;
+  const bodyKey = layout.panel ? "body:code+panel" : "body:code";
+  const bodyDefault = layout.panel ? [0.46, 0.34, 0.2] : [0.56, 0.44];
+  const bodySizes = layout.sizes[bodyKey]?.length === bodyDefault.length ? layout.sizes[bodyKey] : bodyDefault;
+
   const startHeightDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !body.current) return;
     e.preventDefault();
@@ -575,6 +598,14 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
           </div>
         )}
         <div className="live-controls">
+          <button
+            className={`btn small ${layout.code ? "" : "ghost"}`}
+            aria-pressed={Boolean(layout.code)}
+            title="Show the test's code, the page code, network, console and what the checks found, beside the screens"
+            onClick={() => setLayout((l) => ({ ...l, code: !l.code }))}
+          >
+            {layout.code ? "Hide code" : "Show code"}
+          </button>
           {!phone && (
             <button className="btn ghost small" aria-pressed={layout.panel} onClick={() => setLayout((l) => ({ ...l, panel: !l.panel }))}>
               {layout.panel ? "Hide activity" : "Show activity"}
@@ -595,12 +626,22 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
       {phone ? (
         <div className="live-body phone">
           {stage}
+          {codePanel}
           {panel}
         </div>
       ) : (
         <>
           <div className="live-body" ref={body} style={{ height: shape === "grid" && shown > 4 ? Math.max(layout.height, Math.ceil(shown / Math.ceil(Math.sqrt(shown))) * 250) : layout.height }}>
-            {layout.panel ? (
+            {layout.code ? (
+              <Split
+                dir="row"
+                sizes={bodySizes}
+                onSizes={(s) => setLayout((l) => ({ ...l, sizes: { ...l.sizes, [bodyKey]: s } }))}
+                label="the code panel"
+              >
+                {layout.panel ? [stage, codePanel, panel] : [stage, codePanel]}
+              </Split>
+            ) : layout.panel ? (
               <Split
                 dir="row"
                 sizes={[1 - layout.side, layout.side]}

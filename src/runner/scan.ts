@@ -7,6 +7,7 @@ import { listen } from "../agents/web/signals.js";
 import type { LiveSink } from "../live.js";
 import type { AgentStat, Box, CookieInfo, Finding, JourneyResult, PageResult, ScanOptions, ScanResult } from "../types.js";
 import { Inspector } from "./inspect.js";
+import { feedCode, stepCode } from "./live-code.js";
 import { runJourneys } from "./journeys.js";
 import { compareVisuals } from "./visual.js";
 import { keepFirstSightings } from "../agents/web/once.js";
@@ -275,6 +276,7 @@ async function scanPage(
   // Becomes the final address after redirects (http -> https, example.com -> www.example.com).
   let url = requestedUrl;
   const signals = listen(page);
+  const codeFeed = feedCode(page, slot, live, url);
   const inspector = opts.inspect ? new Inspector(page, url, DESKTOP) : undefined;
   if (inspector) await inspector.startCoverage();
   const findings: Finding[] = [];
@@ -304,9 +306,13 @@ async function scanPage(
     busy.add(agent.name);
     show("Checking");
     const at = inspector?.now() ?? 0;
+    const t = Date.now();
     try {
       const found = await runner.run(agent, url, () => agent.run(ctx()));
-      inspector?.step(agent.name, { at, ms: inspector.now() - at, ok: true, detail: found.length ? `${found.length} finding${found.length === 1 ? "" : "s"}` : undefined });
+      const detail = found.length ? `${found.length} finding${found.length === 1 ? "" : "s"}` : undefined;
+      inspector?.step(agent.name, { at, ms: inspector.now() - at, ok: true, detail });
+      codeFeed.step(agent.name, { code: stepCode.agent(agent.id, agent.name), ms: Date.now() - t, ok: !found.length, detail: detail ?? "Nothing found" });
+      codeFeed.found(found);
       return found;
     } finally {
       busy.delete(agent.name);
@@ -344,14 +350,17 @@ async function scanPage(
       loading(async () => {
         show("Opening the page");
         started = Date.now();
+        codeFeed.step(`Open ${url}`, { code: stepCode.open(url) });
         const at = inspector?.now() ?? 0;
         try {
           const answer = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
           result.loadMs = Date.now() - started;
           inspector?.step(`Open ${url}`, { at, ms: inspector.now() - at, ok: true, detail: answer ? `HTTP ${answer.status()}` : undefined });
+          codeFeed.step("Page opened", { ms: result.loadMs ?? undefined, ok: (answer?.status() ?? 200) < 400, detail: answer ? `HTTP ${answer.status()}` : undefined });
           return answer;
         } catch (err) {
           inspector?.step(`Open ${url}`, { at, ms: inspector.now() - at, ok: false, detail: (err as Error).message.split("\n")[0] });
+          codeFeed.step("Page did not open", { ok: false, detail: (err as Error).message.split("\n")[0] });
           throw err;
         }
       });
@@ -368,7 +377,9 @@ async function scanPage(
     result.url = url;
     if (url !== requestedUrl) result.redirectedFrom = requestedUrl;
     // Give late scripts a moment to throw errors or fire requests.
+    if (url !== requestedUrl) codeFeed.step(`Landed on ${url}`, { detail: "The site sent the browser here" });
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+    codeFeed.step("Wait for the page to go quiet", { code: stepCode.wait() });
     // Web fonts change the size of text: checks of overlapping or cut-off text, and the pictures,
     // must see the page with its fonts, or they find different things from run to run.
     await waitForFonts(page);
@@ -387,8 +398,10 @@ async function scanPage(
         pageUrl: url,
       }),
     );
+    codeFeed.found(findings);
     await runStage("end");
     await saveInspect();
+    codeFeed.stop();
     await stopCast?.();
     await page.close();
     return { result, findings, links, throttled };
@@ -406,6 +419,7 @@ async function scanPage(
           pageUrl: url,
         }),
       );
+      codeFeed.found(findings.slice(-1));
     }
     links = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href).filter(Boolean));
 
@@ -417,6 +431,7 @@ async function scanPage(
       inspector.step("Desktop picture");
     }
     const shot = `page-${index}.jpg`;
+    codeFeed.step("Desktop picture", { code: stepCode.picture(shot) });
     const moving = await stillPicture(page, path.join(opts.artifactsDir, shot), Boolean(opts.baselineDir));
     if (moving?.length) result.moving = { desktop: moving };
     result.screenshot = shot;
@@ -426,11 +441,13 @@ async function scanPage(
 
     view = "phone";
     show("Resizing to a phone");
+    codeFeed.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`, { code: stepCode.resize(MOBILE.width, MOBILE.height) });
     await page.setViewportSize(MOBILE);
     await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
     await settleLayout(page);
     inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
     const mshot = `page-${index}-mobile.jpg`;
+    codeFeed.step("Phone picture", { code: stepCode.picture(mshot) });
     const mmoving = await stillPicture(page, path.join(opts.artifactsDir, mshot), Boolean(opts.baselineDir));
     if (mmoving?.length) result.moving = { ...result.moving, phone: mmoving };
     result.mobileScreenshot = mshot;
@@ -440,6 +457,8 @@ async function scanPage(
   } finally {
     await runStage("end");
     await saveInspect();
+    codeFeed.step("Page finished", { ok: true, detail: `${findings.length} finding${findings.length === 1 ? "" : "s"} on this page` });
+    codeFeed.stop();
     await stopCast?.();
     await page.close();
   }
