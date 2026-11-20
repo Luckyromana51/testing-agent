@@ -1,6 +1,6 @@
 import type { Page, Request } from "playwright";
 import { fixFor } from "../fixes.js";
-import type { LiveCode, LiveSink } from "../live.js";
+import { liveFeed, type LiveCode, type LiveSink } from "../live.js";
 import type { Finding } from "../types.js";
 
 /**
@@ -133,4 +133,71 @@ export function feedCode(page: Page, slot: number, live: LiveSink | undefined, u
       live.pageSource?.(slot, undefined);
     },
   };
+}
+
+/** Headers and body fields that carry a login: shown as ••• in the code panel. */
+const SECRET_NAME = /^(authorization|cookie|proxy-authorization)$|token|secret|key|session|auth|password|passwd|pwd|otp|csrf|xsrf/i;
+
+function maskBody(body: unknown): string {
+  let text: string;
+  if (typeof body === "string") {
+    try {
+      return maskBody(JSON.parse(body));
+    } catch {
+      text = body.replace(/((?:^|&)[^=&]*(?:pass|token|secret|key|otp)[^=&]*=)[^&]*/gi, "$1•••");
+    }
+  } else {
+    text = JSON.stringify(body, (k, v) => (k && SECRET_NAME.test(k) && (typeof v === "string" || typeof v === "number") ? "•••" : v));
+  }
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
+/** An API call as a cURL command anyone can paste into a terminal; logins are masked. */
+export function curlOf(method: string, url: string, headers: Record<string, string> = {}, body?: unknown, queryKey?: string): string {
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const parts = ["curl"];
+  if (method !== "GET") parts.push("-X", method);
+  const shown = hideUrlSecrets(url) + (queryKey ? `${url.includes("?") ? "&" : "?"}${encodeURIComponent(queryKey)}=•••` : "");
+  parts.push(q(shown));
+  for (const [k, v] of Object.entries(headers)) parts.push("-H", q(`${k}: ${SECRET_NAME.test(k) ? "•••" : v}`));
+  if (body !== undefined && body !== null) parts.push("--data", q(maskBody(body)));
+  return parts.join(" ");
+}
+
+/** Sends an API call of a test without screens to the code panel (screen 0). */
+export function tellCall(r: { method: string; url: string; headers?: Record<string, string>; body?: unknown; queryKey?: string }, answer: { status: number | null; ms: number; error?: string }): void {
+  const live = liveFeed.get();
+  if (!live?.code) return;
+  live.code({
+    slot: 0,
+    at: 0,
+    kind: "call",
+    method: r.method,
+    url: hideUrlSecrets(r.url).slice(0, 2000),
+    curl: curlOf(r.method, r.url, r.headers, r.body, r.queryKey),
+    status: answer.status ?? 0,
+    ms: answer.ms,
+    failed: answer.error,
+  });
+}
+
+/** Sends findings of a test without screens to the code panel (screen 0), with their fix. */
+export function tellFound(list: Finding[]): void {
+  const live = liveFeed.get();
+  if (!live?.code) return;
+  for (const f of list) {
+    const fix = fixFor(f);
+    live.code({
+      slot: 0,
+      at: 0,
+      kind: "found",
+      rule: f.rule,
+      severity: f.severity,
+      title: f.title,
+      detail: f.detail.slice(0, 2000),
+      evidence: f.evidence?.slice(0, 4000),
+      agent: f.agent,
+      fix: { steps: fix.steps, code: fix.code, effort: fix.effort },
+    });
+  }
 }

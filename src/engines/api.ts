@@ -5,6 +5,7 @@ import { CouldNotTestError, explainLoadError } from "../runner/coverage.js";
 import { scoreFindings } from "../runner/score.js";
 import { validateTarget } from "../runner/urls.js";
 import { redact } from "../vault.js";
+import { tellCall } from "../runner/live-code.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ApiCallView, ApiScenario, Category, Login, PageResult, RoleLogin, ScanResult } from "../types.js";
@@ -103,6 +104,13 @@ type Sent = { method: string; url: string; headers: Record<string, string>; body
 
 /** One request, never throwing: failures come back as status null with the reason. */
 async function callOnce(request: APIRequestContext, r: Sent): Promise<Omit<ApiCall, "op">> {
+  const out = await callOnceQuiet(request, r);
+  // The code panel shows each call as a cURL command, with logins masked.
+  tellCall({ method: r.method, url: r.url, headers: r.headers, body: r.body, queryKey: r.query?.[0] }, out);
+  return out;
+}
+
+async function callOnceQuiet(request: APIRequestContext, r: Sent): Promise<Omit<ApiCall, "op">> {
   const started = Date.now();
   try {
     const res = await request.fetch(withQuery(r.url, r.query), {

@@ -2,6 +2,7 @@ import type { EngineAgent } from "../agents/types.js";
 import { NotTestedError } from "../runner/coverage.js";
 import { finding } from "../runner/finding.js";
 import type { AgentStat, Finding } from "../types.js";
+import { tellFound } from "../runner/live-code.js";
 
 /**
  * Runs the agents of a non-web engine one after another and keeps per-agent numbers.
@@ -25,11 +26,13 @@ export async function runEngineAgents<Ctx>(
       for (const f of out) f.agent ??= agent.id;
       stat.findings = out.length;
       findings.push(...out);
+      tellFound(out);
     } catch (err) {
       if (err instanceof NotTestedError) {
         // The check could not be done: report it as not tested, keeping what it did find.
         for (const f of err.partial) f.agent ??= agent.id;
         stat.findings = err.partial.length;
+        tellFound(err.partial);
         stat.untested = err.message;
         findings.push(...err.partial);
         log(`${agent.name}: not tested (${err.message})`);

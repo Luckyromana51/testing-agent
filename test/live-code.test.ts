@@ -5,8 +5,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { CODE_KEEP, LiveRun, type LiveCode } from "../src/live.js";
-import { hideUrlSecrets, stepCode } from "../src/runner/live-code.js";
+import { CODE_KEEP, LiveRun, liveFeed, type LiveCode } from "../src/live.js";
+import { curlOf, hideUrlSecrets, stepCode } from "../src/runner/live-code.js";
+import { scanApi } from "../src/engines/api.js";
+import { startDemoApi2, TOKEN_A } from "./fixtures/demo-api2.js";
+import os from "node:os";
 import { scanSite } from "../src/runner/scan.js";
 import { createApp } from "../src/server.js";
 import { startDemoSite } from "./fixtures/demo-site.js";
@@ -179,5 +182,39 @@ describe("code panel: routes", () => {
     for (let i = 0; i < 600 && !["done", "failed", "incomplete"].includes(String(stores.runs.get(id)?.status)); i++) await wait(100);
     const gone = await fetch(`${base}/api/runs/${id}/live/source/0`, { headers: { cookie } });
     assert.equal(gone.status, 404);
+  });
+});
+
+describe("code panel: API tests", () => {
+  it("writes a call as cURL with logins masked", () => {
+    const c = curlOf("POST", "https://a.test/login?x=1", { authorization: "Bearer abc.def", "x-api-key": "K1", accept: "application/json" }, { user: "me", password: "hunter2" }, "api_key");
+    assert.match(c, /^curl -X POST 'https:\/\/a\.test\/login\?x=1&api_key=•••'/);
+    assert.ok(!c.includes("abc.def") && !c.includes("K1") && !c.includes("hunter2"), c);
+    assert.match(c, /-H 'accept: application\/json'/);
+    assert.match(c, /"user":"me"/);
+    assert.match(curlOf("GET", "https://a.test/it's"), /'https:\/\/a\.test\/it'\\''s'/);
+  });
+
+  it("sends each API call and each problem to the code panel while the test runs", async () => {
+    const demo = await startDemoApi2(4186);
+    const dir = await mkdtemp(path.join(os.tmpdir(), "glv-apicode-"));
+    const live = new LiveRun();
+    const coder = viewer();
+    live.subscribe(coder.send, coder.close, { code: true });
+    try {
+      await liveFeed.run(live, () =>
+        scanApi({ specUrl: "http://localhost:4186/openapi.json", auth: { kind: "api", authType: "bearer", token: TOKEN_A }, artifactsDir: dir }),
+      );
+      live.end("done");
+    } finally {
+      demo.server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+    const items = coder.items();
+    const calls = items.filter((i): i is Extract<LiveCode, { kind: "call" }> => i.kind === "call");
+    assert.ok(calls.length > 3, "the calls were sent");
+    assert.ok(calls.every((c) => c.curl.startsWith("curl ")));
+    assert.ok(calls.every((c) => !c.curl.includes(TOKEN_A)), "the token never shows");
+    assert.ok(items.some((i) => i.kind === "found" && i.fix?.steps), "problems come with their fix");
   });
 });

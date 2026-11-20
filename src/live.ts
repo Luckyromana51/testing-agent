@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 /**
  * Live view of a running test: what each browser screen shows and what its agents are doing,
  * sent to the dashboard as it happens. Nothing is recorded: when nobody watches, the browser
@@ -28,6 +30,8 @@ export type LiveCode = { slot: number; at: number } & (
   | { kind: "step"; label: string; code?: string; ms?: number; ok?: boolean; detail?: string }
   | { kind: "net"; method: string; url: string; status: number; type: string; ms?: number; bytes?: number; failed?: string }
   | { kind: "console"; level: string; text: string; source?: string }
+  /** An API call of a test without screens (API, GraphQL), as a cURL command with logins masked. */
+  | { kind: "call"; method: string; url: string; curl: string; status: number; ms: number; failed?: string }
   | {
       kind: "found";
       rule: string;
@@ -59,6 +63,21 @@ export interface LiveSink {
   /** How to read the HTML a screen shows right now, or undefined when its page closes. Only asked when a viewer clicks for it. */
   pageSource?(slot: number, read: (() => Promise<string>) | undefined): void;
 }
+
+/**
+ * The live sink of the test running in this async call chain. Engines without screens (API, code)
+ * use it to send their calls and problems to the code panel without passing it down every call.
+ * Their lines all go on screen 0.
+ */
+const current = new AsyncLocalStorage<LiveSink>();
+export const liveFeed = {
+  run<T>(sink: LiveSink, fn: () => Promise<T>): Promise<T> {
+    return current.run(sink, fn);
+  },
+  get(): LiveSink | undefined {
+    return current.getStore();
+  },
+};
 
 /** Sends one server-sent event to one viewer. A viewer on a slow connection may skip pictures. */
 export type LiveSend = (event: string, data: unknown) => void;

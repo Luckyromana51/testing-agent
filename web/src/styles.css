@@ -4035,3 +4035,19 @@ button.net-row:hover,
     color: #6fd38c;
   }
 }
+
+.run-code {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.run-code .code-panel {
+  width: 100%;
+  height: 560px;
+}
+.code-line.curl {
+  margin-left: 0;
+  color: var(--text);
+}
