@@ -9,6 +9,9 @@ import { PermissionCard } from "./Permission.tsx";
 import { JourneysEditor } from "./Journeys.tsx";
 import { AppSetup } from "./AppSetup.tsx";
 import { ApiSetup } from "./ApiSetup.tsx";
+import { FixRepoCard, GrowthTab } from "./WebExtras.tsx";
+
+const PUBLIC_TYPES = ["website", "ecommerce", "webapp", "saas"];
 import { TrendsCard } from "./Trends.tsx";
 import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
@@ -87,7 +90,7 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
-type ProjectTab = "overview" | "app" | "api" | "trends" | "watch" | "journeys" | "tests";
+type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "tests";
 
 export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: User }) {
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
@@ -122,6 +125,8 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
     ["overview", "Overview"],
     ...(isApp ? ([["app", "Signed-in app", p.roles?.length ? `${p.roles.length + 1} accounts` : undefined]] as [ProjectTab, string, string?][]) : []),
     ...(p.type === "api" ? ([["api", "API setup", p.apiScenarios?.length ? `${p.apiScenarios.length} scenario${p.apiScenarios.length === 1 ? "" : "s"}` : undefined]] as [ProjectTab, string, string?][]) : []),
+    ...(isWeb ? ([["growth", PUBLIC_TYPES.includes(p.type) ? "Visitors and SEO" : "Real visitors", p.rumSnippet ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
+    ...(isWeb || p.type === "code" ? ([["fixes", "Claude fixes", p.fixPrs?.length ? String(p.fixPrs.length) : undefined]] as [ProjectTab, string, string?][]) : []),
     ["trends", "Trends", flaky.length ? `${flaky.length} flaky` : undefined],
     ...(watch && (p.target.url || p.type === "api") ? ([["watch", p.type === "api" ? "API watch" : "Uptime and SSL", watch.down ? "down" : p.watch?.on ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
@@ -264,6 +269,34 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
       {current === "app" && isApp && <AppSetup project={p} onChanged={reload} meta={meta} />}
 
       {current === "api" && p.type === "api" && <ApiSetup project={p} onChanged={reload} />}
+
+      {current === "growth" && isWeb && <GrowthTab project={p} onChanged={reload} />}
+
+      {current === "fixes" && (
+        <>
+          <h2 className="section-title">Where Claude opens fix pull requests</h2>
+          <FixRepoCard project={p} onChanged={reload} />
+          {(p.fixPrs?.length ?? 0) > 0 && (
+            <>
+              <h2 className="section-title">Pull requests Claude opened</h2>
+              <div className="card table-card">
+                <table className="table">
+                  <tbody>
+                    {p.fixPrs!.map((x) => (
+                      <tr key={x.id}>
+                        <td className="mono small">{x.issue}</td>
+                        <td>{x.title}</td>
+                        <td>{x.status === "opened" && x.url ? <a href={x.url} target="_blank" rel="noreferrer">Open the pull request</a> : <span className="bad small">{x.error ?? "Failed"}</span>}</td>
+                        <td className="muted small">{timeAgo(x.at)} · {x.by}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {current === "watch" && watch && (
         <WatchCard key={JSON.stringify(p.watch ?? null)} api={p.type === "api"} hasJourneys={(p.type === "api" ? Boolean(p.apiScenarios?.some((x) => !x.off)) : Boolean(p.journeys?.some((j) => !j.off && !j.allowWrites))) && meta.modules.some((m) => m.id === "journey-watch" && m.on)} projectId={p.id} config={p.watch} summary={watch} onSave={(w) => save({ watch: w })} onChanged={reload} />

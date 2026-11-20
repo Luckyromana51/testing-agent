@@ -1,5 +1,6 @@
 import { AppReport } from "./AppReport.tsx";
 import { ApiReport } from "./ApiReport.tsx";
+import { ChangesTab, SeoTab } from "./ReportExtras.tsx";
 import { useMemo, useState } from "react";
 import { fixFor } from "../../../src/fixes.ts";
 import { groupFindings, type IssueGroup } from "../../../src/group.ts";
@@ -53,7 +54,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "api" | "app" | "journeys" | "visual" | "wcag" | "cookies" | "agents" | "tools">("summary");
+  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "api" | "app" | "journeys" | "visual" | "wcag" | "cookies" | "changes" | "seo" | "agents" | "tools">("summary");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -339,6 +340,17 @@ export function Report({ id }: { id: string }) {
             Cookies ({result.cookies.length})
           </button>
         )}
+        {(result.changes || (result.forms && result.forms.length > 0)) && (
+          <button className={tab === "changes" ? "active" : ""} onClick={() => setTab("changes")}>
+            Checks that change data {result.changes?.leftOver.length ? <span className="tab-count bad">{result.changes.leftOver.length} left</span> : null}
+          </button>
+        )}
+        {(result.seo || result.rum) && (
+          <button className={tab === "seo" ? "active" : ""} onClick={() => setTab("seo")}>
+            {result.seo ? "SEO" : "Real visitors"}
+            {result.seo && result.rum ? " and visitors" : ""}
+          </button>
+        )}
         {result.agentStats && (
           <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>
             Agents ({result.agentStats.filter((s) => !s.id.startsWith("tool.")).length})
@@ -379,6 +391,8 @@ export function Report({ id }: { id: string }) {
       {tab === "visual" && <VisualTab run={run} onRunChange={reload} />}
       {tab === "wcag" && <WcagTab run={run} />}
       {tab === "cookies" && <CookiesTab run={run} />}
+      {tab === "changes" && <ChangesTab run={run} />}
+      {tab === "seo" && <SeoTab result={result} />}
       {tab === "agents" && <Agents run={run} />}
       {tab === "tools" && <Tools run={run} />}
     </div>
@@ -599,6 +613,7 @@ function Pages({ run, onRunChange }: { run: Run; onRunChange: () => void }) {
           <div className="page-card" key={p.url}>
             <div className="shots">
               {p.screenshot && <img className="shot" src={api.artifact(run.id, p.screenshot)} alt={`Desktop view of ${p.url}`} />}
+              {p.tabletScreenshot && <img className="shot tablet" src={api.artifact(run.id, p.tabletScreenshot)} alt={`Tablet view of ${p.url}`} />}
               {p.mobileScreenshot && (
                 <img className="shot mobile" src={api.artifact(run.id, p.mobileScreenshot)} alt={`Phone view of ${p.url}`} />
               )}

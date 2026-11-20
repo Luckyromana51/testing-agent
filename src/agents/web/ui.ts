@@ -378,3 +378,57 @@ export const readabilityAgent: PageAgent = {
     return out;
   },
 };
+
+// ---------------------------------------------------------------------------------------------
+// Tablet size (820 x 1180, an iPad Air held upright): the width where desktop menus are often
+// hidden and the phone menu button is not shown yet, so the menu disappears completely.
+
+const TABLET_JS = `(function () {
+  var out = { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, navLinks: 0, toggles: 0, hiddenNav: 0, small: [] };
+  function shown(el) { var r = el.getBoundingClientRect(); var s = getComputedStyle(el); return r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) > 0.05; }
+  var navs = document.querySelectorAll("nav, header [role=navigation], [role=navigation]");
+  navs.forEach(function (n) {
+    var links = n.querySelectorAll("a[href]");
+    var visible = 0; links.forEach(function (a) { if (shown(a)) visible++; });
+    out.navLinks += visible;
+    if (links.length >= 3 && visible === 0) out.hiddenNav++;
+  });
+  document.querySelectorAll("button, [role=button], [aria-controls], [aria-expanded], .navbar-toggler, .menu-toggle, .hamburger, [class*=burger], [class*=menu-toggle]").forEach(function (b) { if (shown(b)) out.toggles++; });
+  var targets = document.querySelectorAll("a[href], button, input:not([type=hidden]), select, [role=button]");
+  for (var i = 0; i < targets.length && out.small.length < 8; i++) {
+    var el = targets[i]; if (!shown(el)) continue;
+    var r = el.getBoundingClientRect();
+    if ((r.width < 24 || r.height < 24) && (el.innerText || "").trim().length < 3 && r.top < innerHeight * 3) out.small.push((el.getAttribute("aria-label") || el.tagName.toLowerCase()) + " " + Math.round(r.width) + "x" + Math.round(r.height));
+  }
+  return out;
+})()`;
+
+export const tabletAgent: PageAgent = {
+  id: "web.tablet",
+  name: "Tablet layout",
+  description:
+    "Resizes to a tablet held upright (820 x 1180, like an iPad Air): sideways scrolling, a menu that vanishes because the desktop menu is hidden and the phone menu button is not shown yet, tap targets too small for a finger, and text drawn over other text.",
+  category: "mobile",
+  engine: "web",
+  products: WEB_PRODUCTS,
+  stage: "tablet",
+  skipErrorPages: true,
+  async run({ page, url }) {
+    const out: Finding[] = [];
+    const r = (await page.evaluate(TABLET_JS)) as { overflow: number; navLinks: number; toggles: number; hiddenNav: number; small: string[] };
+    if (r.overflow > 5) {
+      out.push(finding({ category: "mobile", rule: "tablet-overflow", severity: "medium", title: `Page scrolls sideways on tablets (${r.overflow}px too wide)`, detail: "At 820 px wide something is wider than the screen. Desktop layouts with fixed widths (a 960 px container, a wide table, a big image) break first on tablets. Use max-width: 100% and let rows wrap.", pageUrl: url, evidence: `scrollWidth - clientWidth = ${r.overflow}px at 820 x 1180` }));
+    }
+    if (r.hiddenNav > 0 && r.navLinks === 0 && r.toggles === 0) {
+      out.push(finding({ category: "mobile", rule: "tablet-menu-missing", severity: "high", title: "The menu disappears on tablets", detail: "At 820 px wide the site's navigation links are hidden and no menu button is shown, so tablet visitors cannot reach other pages. The desktop menu is usually hidden below one breakpoint (say 992 px) and the phone button shown only below another (say 768 px): make the two breakpoints the same.", pageUrl: url, evidence: `${r.hiddenNav} navigation block(s) with links, none visible; no menu button visible` }));
+    }
+    if (r.small.length >= 3) {
+      out.push(finding({ category: "mobile", rule: "tablet-small-targets", severity: "low", title: `${r.small.length} buttons or links are too small to tap on a tablet`, detail: "Fingers need targets of at least 24 x 24 px (WCAG 2.2, 2.5.8), better 44 x 44 px. Icons that work with a mouse are often too small to tap.", pageUrl: url, evidence: r.small.join("\n"), count: r.small.length }));
+    }
+    const pairs = (await page.evaluate(OVERLAP_JS)) as string[];
+    if (pairs.length) {
+      out.push(finding({ category: "mobile", rule: "ui:text-overlap-tablet", severity: "medium", title: `Text is drawn over other text in ${pairs.length} place${pairs.length === 1 ? "" : "s"} on a tablet`, detail: "At a tablet's width (820 px) text that fitted on a desktop wraps and runs into other text. Look for fixed heights and position: absolute.", pageUrl: url, evidence: list(pairs), count: pairs.length }));
+    }
+    return out;
+  },
+};

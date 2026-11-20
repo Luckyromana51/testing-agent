@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Login, RoleSummary } from "../../../src/types.ts";
 import { api, type HookMessageView, type Meta, type ProjectSummary } from "../api.ts";
 import { describeLogin, LoginFields, type LoginDraft } from "./LoginFields.tsx";
+import { TestCopyCard } from "./WebExtras.tsx";
 
 /**
  * The project page's "Signed-in app" tab: the other accounts the access grid tests with (roles,
@@ -11,6 +12,8 @@ export function AppSetup({ project, onChanged, meta }: { project: ProjectSummary
   const hooksOn = meta.modules.some((m) => m.id === "webhooks" && m.on);
   return (
     <>
+      <h2 className="section-title">Test copy or live app</h2>
+      <TestCopyCard project={project} onChanged={onChanged} />
       <h2 className="section-title">Which system it is</h2>
       <SystemCard project={project} meta={meta} onChanged={onChanged} />
       <h2 className="section-title">Other accounts (roles)</h2>
@@ -152,6 +155,7 @@ export function RolesCard({ project, onChanged }: { project: ProjectSummary; onC
                 <td>
                   {r.name} {r.otherCompany && <span className="badge warn">another company</span>}
                   {r.login.unreadable && <span className="badge bad">enter again</span>}
+                  {r.lockoutTest && <span className="badge">lockout check</span>}
                 </td>
                 <td>
                   {kind === "api" ? describeLogin(r.login) : r.login.username}
@@ -195,6 +199,7 @@ function RoleForm({ projectId, role, mainLoginUrl, onDone, kind = "web" }: { pro
   const [name, setName] = useState(role?.name ?? "");
   const [otherCompany, setOtherCompany] = useState(Boolean(role?.otherCompany));
   const [mustNotOpen, setMustNotOpen] = useState(role?.mustNotOpen ?? "");
+  const [lockoutTest, setLockoutTest] = useState(Boolean(role?.lockoutTest));
   const [login, setLogin] = useState<LoginDraft>(() => {
     if (!role) return kind === "api" ? { authType: "bearer" } : { loginUrl: mainLoginUrl };
     const { hasPassword: _p, hasToken: _t, hasTotp: _h, unreadable: _u, updatedAt: _d, ...rest } = role.login;
@@ -220,6 +225,12 @@ function RoleForm({ projectId, role, mainLoginUrl, onDone, kind = "web" }: { pro
           <textarea className="input code" rows={3} value={mustNotOpen} onChange={(e) => setMustNotOpen(e.target.value)} placeholder={kind === "api" ? "/admin*\n/users/*/salary\n/reports/finance" : "/admin\n/settings/billing\n/api/users/*"} spellCheck={false} />
         </label>
       )}
+      {kind === "web" && (
+        <label className="check dark small">
+          <input type="checkbox" checked={lockoutTest} onChange={(e) => setLockoutTest(e.target.checked)} /> A spare account for the lockout check: the
+          test may type wrong passwords on it until the app locks it (it may stay locked for a while). Never tick this for a real person's account.
+        </label>
+      )}
       {error && <div className="error">{error}</div>}
       <div className="row">
         <button
@@ -229,7 +240,7 @@ function RoleForm({ projectId, role, mainLoginUrl, onDone, kind = "web" }: { pro
             setBusy(true);
             setError("");
             try {
-              await api.saveRole(projectId, { id: role?.id, name, otherCompany, mustNotOpen: otherCompany ? "" : mustNotOpen, login });
+              await api.saveRole(projectId, { id: role?.id, name, otherCompany, mustNotOpen: otherCompany ? "" : mustNotOpen, lockoutTest, login });
               onDone();
             } catch (err) {
               setError((err as Error).message);

@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Response } from "playwright";
-import type { AccessGrid, AppScreen, AppSocket, Category, Finding, Login, PageResult, ProductType, RoleLogin, SystemInfo } from "../types.js";
+import type { AccessGrid, AppScreen, AppSocket, Category, ChangeReport, Finding, FormFill, Login, PageResult, ProductType, RoleLogin, RumSummary, SeoInput, SeoReport, SystemInfo, WriteConsent } from "../types.js";
 
 /** Which test engine runs an agent: the browser, the API caller, the offline code reader, or the app reader. */
 export type Engine = "web" | "api" | "code" | "mobile";
@@ -16,6 +16,8 @@ export interface AgentInfo {
   defaultOff?: boolean;
   /** Only useful on a signed-in test (it checks the pages behind the login); skipped otherwise. */
   needsLogin?: boolean;
+  /** Changes data: runs only on a test copy or under the client's written permission. */
+  needsConsent?: boolean;
 }
 
 /** Everything the browser saw while loading one page. */
@@ -76,6 +78,18 @@ export interface SiteState {
   /** Filled in by the access agent for the report. */
   access?: AccessGrid;
   signal?: AbortSignal;
+  /** Whether checks that change data may run (a test copy, or the client's written permission). */
+  consent?: WriteConsent;
+  /** The checks that change data: what ran, what was cleaned up, what is left (filled in by them). */
+  changes?: ChangeReport;
+  /** Forms filled and sent on a test copy. */
+  forms?: FormFill[];
+  /** The SEO audit's input and its report. */
+  seoInput?: SeoInput;
+  seoReport?: SeoReport;
+  uploadsDir?: string;
+  /** Real visitors' speed. */
+  rum?: RumSummary;
 }
 
 /** One app call with its answer, kept in memory while the test runs. */
@@ -151,11 +165,12 @@ export interface SiteContext {
 /**
  * When a page agent runs:
  * - page: after the page loads, at desktop size
+ * - tablet: after the window is resized to a tablet held upright (820 x 1180)
  * - mobile: after the window is resized to a phone
  * - end: last, once every console message and request has been seen
  */
 export interface PageAgent extends AgentInfo {
-  stage: "page" | "mobile" | "end";
+  stage: "page" | "tablet" | "mobile" | "end";
   /** Skip pages that answered 4xx/5xx (they are already reported once). */
   skipErrorPages?: boolean;
   /**

@@ -14,9 +14,10 @@ import { Auth, checkPasswordRules, fromOutside, hashPassword, loginTurnedOff, re
 import { groupFindings } from "./group.js";
 import { cleanInfo, HelperError, helperHub, MAX_ARTIFACT_BYTES, type Helper } from "./helpers.js";
 import { ACTIVE, projectKey } from "./issues.js";
-import { buildPermission, permissionStatus, verifyPermission, type PermissionInput } from "./permission.js";
+import { buildPermission, permissionStatus, writeConsent, verifyPermission, type PermissionInput } from "./permission.js";
 import { PRODUCTS } from "./products.js";
 import { ScanQueue } from "./queue.js";
+import type { LiveInput } from "./live.js";
 import { startScheduler } from "./scheduler.js";
 import { TOOLS, cleanChoices, defaultChoices, describeTool, toolStatus } from "./tools/index.js";
 import { toJunit, toSarif } from "./export.js";
@@ -32,6 +33,7 @@ import { MAX_PARALLEL, parallelPages } from "./runner/scan.js";
 import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
 import { cleanScenario, MAX_SCENARIOS } from "./agents/api/scenarios.js";
 import { mockAddress, registerApiRoutes } from "./api-routes.js";
+import { registerMoreRoutes, rumSnippet } from "./more-routes.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
@@ -358,6 +360,9 @@ export async function createApp(opts: AppOptions) {
       })(),
       permissions: (p.permissions ?? []).map((x) => ({ ...x, status: permissionStatus(x) })),
       mockAddress: p.mockToken ? mockAddress(p.mockToken) : null,
+      rumSnippet: p.rumToken ? rumSnippet(p.rumToken) : null,
+      repoToken: stores.vault.repoSummary(p.id),
+      writes: writeConsent(p.target, p.permissions, "manual"),
     };
   };
 
@@ -403,8 +408,8 @@ export async function createApp(opts: AppOptions) {
   app.addContentTypeParser("application/octet-stream", (_req, payload, done) => done(null, payload));
   app.post("/api/uploads", { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
     const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? "")).replace(/[^\w. ()-]/g, "_").slice(0, 200);
-    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl)$/i)?.[0]?.toLowerCase();
-    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt) or a JMeter plan (.jmx).");
+    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl|proto|csv)$/i)?.[0]?.toLowerCase();
+    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt), a gRPC .proto file, a Pact contract (.json), a Search Console export (.csv) or a JMeter plan (.jmx).");
     if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
     await mkdir(queue.uploadsDir(), { recursive: true });
     const file = `${randomUUID()}${ext}`;
@@ -596,6 +601,8 @@ export async function createApp(opts: AppOptions) {
     stores.issues.deleteForProject(p.id);
     stores.vault.delete(p.id);
     stores.vault.deleteRole(p.id);
+    stores.vault.deleteRepoToken(p.id);
+    stores.rum.deleteForProject(p.id);
     stores.hooks.close(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     await rm(queue.baselineDir(p.id), { recursive: true, force: true });
@@ -659,6 +666,7 @@ export async function createApp(opts: AppOptions) {
   });
 
   registerApiRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message) });
+  await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
   await app.register(async (scope) => {
@@ -777,6 +785,26 @@ export async function createApp(opts: AppOptions) {
     const html = await live.source(Number(req.params.slot));
     if (html === undefined) return reply.code(404).send({ error: "This screen has no page open right now." });
     return reply.type("text/plain; charset=utf-8").header("cache-control", "no-store").send(html);
+  });
+
+  /**
+   * A click or key from the live view, on a screen the test handed over (to finish a sign-in by
+   * hand: a CAPTCHA, a two-step code). Ignored on any other screen.
+   */
+  app.post<{ Params: { id: string; slot: string } }>("/api/runs/:id/live/input/:slot", async (req, reply) => {
+    const live = queue.live.get(req.params.id);
+    if (!live) return reply.code(404).send({ error: "This test is not running any more." });
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const frac = (v: unknown) => (typeof v === "number" && v >= 0 && v <= 1 ? v : undefined);
+    let input: LiveInput | undefined;
+    if (b.type === "click" && frac(b.x) !== undefined && frac(b.y) !== undefined) input = { type: "click", x: b.x as number, y: b.y as number };
+    else if (b.type === "type" && typeof b.text === "string" && b.text.length <= 500) input = { type: "type", text: b.text };
+    else if (b.type === "key" && typeof b.key === "string" && /^(Enter|Tab|Backspace|Escape|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Space)$/.test(b.key)) input = { type: "key", key: b.key };
+    else if (b.type === "scroll" && typeof b.dy === "number" && Math.abs(b.dy) <= 3000) input = { type: "scroll", dy: b.dy };
+    else if (b.type === "done") input = { type: "done" };
+    if (!input) return reply.code(400).send({ error: "Unknown input." });
+    if (!(await live.input(Number(req.params.slot), input))) return reply.code(409).send({ error: "This screen is not waiting for you." });
+    return { ok: true };
   });
 
   /** The tests running now and waiting, with their project names, and the limit. */

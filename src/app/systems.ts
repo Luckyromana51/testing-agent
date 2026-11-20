@@ -49,7 +49,7 @@ export const SYSTEMS: SystemProfile[] = [
     id: "salesforce",
     name: "Salesforce",
     kind: "crm",
-    url: /(\.force\.com|\.salesforce\.com|\.lightning\.force\.com)/i,
+    url: /(\.force\.com|\.salesforce\.com|\.lightning\.force\.com|\.my\.site\.com|\.salesforce-sites\.com)/i,
     html: /\bsalesforce\b|\bslds-|one-app-nav-bar/i,
     login: { username: "#username", password: "#password", submit: "#Login" },
     nav: ["one-app-nav-bar a", ".slds-context-bar a", "one-app-launcher-menu-item a", "[role=tablist] a[role=tab]"],

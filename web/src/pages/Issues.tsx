@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fixFor } from "../../../src/fixes.ts";
-import type { IssueStatus, Severity } from "../../../src/types.ts";
+import type { FixPr, IssueStatus, Severity } from "../../../src/types.ts";
 import { api, type IssueSummary } from "../api.ts";
 import { CATEGORY_LABEL, go, isMajor, pathOf, SEVERITIES, STATUS_LABEL, timeAgo, usePoll } from "../lib.ts";
 import { Empty, FixBox, Sev, StatusBadge } from "../ui.tsx";
@@ -213,6 +213,7 @@ function IssueDrawer({ id, onClose, onChanged }: { id: string; onClose: () => vo
 
             <p>{issue.detail}</p>
             <FixBox fix={fixFor(issue)} />
+            <AskClaudeFix issueId={issue.id} onChanged={onChanged} />
 
             <WhereList key={issue.id} occurrences={issue.occurrences} />
 
@@ -298,5 +299,67 @@ function WhereList({ occurrences }: { occurrences: IssueSummary["occurrences"] }
         {q && !shown.length && <li className="muted">No place has "{q}".</li>}
       </ul>
     </>
+  );
+}
+
+/** Claude writes the fix and opens a pull request on the project's repository. */
+function AskClaudeFix({ issueId, onChanged }: { issueId: string; onChanged: () => void }) {
+  const [state, setState] = useState<{ working: boolean; prs: FixPr[] } | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let stop = false;
+    let t: ReturnType<typeof setTimeout>;
+    const load = () =>
+      api
+        .fixStatus(issueId)
+        .then((s) => {
+          if (stop) return;
+          setState((old) => {
+            if (old?.working && !s.working) onChanged();
+            return s;
+          });
+          t = setTimeout(load, s.working ? 3000 : 30_000);
+        })
+        .catch(() => undefined);
+    void load();
+    return () => {
+      stop = true;
+      clearTimeout(t);
+    };
+  }, [issueId]);
+  return (
+    <div className="ask-fix">
+      <button
+        className="btn"
+        disabled={!state || state.working}
+        onClick={async () => {
+          setError("");
+          try {
+            await api.askFix(issueId);
+            setState((s) => ({ working: true, prs: s?.prs ?? [] }));
+            setTimeout(() => api.fixStatus(issueId).then(setState).catch(() => undefined), 3000);
+          } catch (e) {
+            setError((e as Error).message);
+          }
+        }}
+      >
+        {state?.working ? "Claude is writing the fix…" : "Ask Claude to fix (opens a pull request)"}
+      </button>
+      {error && <div className="error small">{error}</div>}
+      {state?.prs.map((pr) => (
+        <div key={pr.id} className="small">
+          {pr.status === "opened" && pr.url ? (
+            <>
+              <a href={pr.url} target="_blank" rel="noreferrer">
+                Pull request
+              </a>{" "}
+              on {pr.branch}: {pr.files.join(", ")} <span className="muted">({timeAgo(pr.at)})</span>
+            </>
+          ) : (
+            <span className="bad">No pull request: {pr.error}</span>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }

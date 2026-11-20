@@ -29,6 +29,8 @@ import { exposedAgent } from "../app/exposed.js";
 import { loginRedirectAgent, twoStepAgent } from "../app/signin.js";
 import { csrfAgent, idNumbersAgent, sessionAgent, tokensAgent, userEnumAgent } from "../app/session.js";
 import { tablesAgent } from "../app/tables.js";
+import { forgotPasswordAgent, lockoutAgent, massAssignAgent, salesforceGuestAgent, uploadAgent } from "../app/changes.js";
+import { formFillAgent } from "../app/forms.js";
 import { appInstallAgent } from "./web/pwa.js";
 import { linkGraphAgent, thinContentAgent, urlsAgent } from "./web/seo-site.js";
 import { jsErrorsAgent, mixedContentAgent, resourcesAgent } from "./web/signals.js";
@@ -41,7 +43,8 @@ import {
   wordpressAgent,
 } from "./web/site.js";
 import { speedAgent } from "./web/speed.js";
-import { coverAgent, cutTextAgent, overlapAgent, overlapPhoneAgent, readabilityAgent } from "./web/ui.js";
+import { coverAgent, cutTextAgent, overlapAgent, overlapPhoneAgent, readabilityAgent, tabletAgent } from "./web/ui.js";
+import { seoAuditAgent } from "../seo/audit.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -63,6 +66,7 @@ export const WEB_AGENTS: WebAgent[] = [
   wordpressAgent,
   privacyAgent,
   speedAgent,
+  tabletAgent,
   mobileAgent,
   // Keyboard, zoom, screen readers and motion.
   keyboardAgent,
@@ -92,6 +96,7 @@ export const WEB_AGENTS: WebAgent[] = [
   linkGraphAgent,
   thinContentAgent,
   urlsAgent,
+  seoAuditAgent,
   // Security, passive: only what every visitor already gets.
   infoLeakAgent,
   jsLibrariesAgent,
@@ -123,6 +128,14 @@ export const WEB_AGENTS: WebAgent[] = [
   userEnumAgent,
   twoStepAgent,
   loginRedirectAgent,
+  // Checks that change data, with consent only (a test copy, or the client's written permission):
+  // they run last, the lockout check very last.
+  salesforceGuestAgent,
+  forgotPasswordAgent,
+  massAssignAgent,
+  uploadAgent,
+  formFillAgent,
+  lockoutAgent,
 ];
 
 /** All agents of every engine. */
@@ -130,8 +143,8 @@ export const ALL_AGENTS: AgentInfo[] = [...WEB_AGENTS, ...API_AGENTS, ...CODE_AG
 
 /** Plain description of an agent, without its code, for the dashboard. */
 export function describeAgent(a: AgentInfo): AgentInfo {
-  const { id, name, description, category, engine, products, defaultOff, needsLogin } = a;
-  return { id, name, description, category, engine, products, defaultOff, needsLogin };
+  const { id, name, description, category, engine, products, defaultOff, needsLogin, needsConsent } = a;
+  return { id, name, description, category, engine, products, defaultOff, needsLogin, needsConsent };
 }
 
 /**

@@ -8,6 +8,10 @@ import type { Alert, Incident, WatchSummary } from "../../src/watch.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   ApiScenario,
+  FixPr,
+  RumSummary,
+  SeoInput,
+  WriteConsent,
   Issue,
   IssueStatus,
   Journey,
@@ -54,7 +58,19 @@ export type ProjectSummary = Project & {
   hookAddress: string | null;
   /** The API mock server's address, when it is on. */
   mockAddress: string | null;
+  /** The real-visitor speed snippet, when it is on. */
+  rumSnippet: string | null;
+  /** Whether a token for the fix repository is saved (never the token). */
+  repoToken: { saved: boolean; username?: string; updatedAt?: string; fromGitLogin?: boolean };
+  /** Whether checks that change data may run now, and why. */
+  writes: WriteConsent;
 };
+
+export interface RumView {
+  on: boolean;
+  snippet: string | null;
+  summary: RumSummary | null;
+}
 
 export interface HookMessageView {
   id: number;
@@ -123,8 +139,19 @@ export interface TargetFields {
   system?: string;
   /** API: a GraphQL endpoint instead of a REST API file. */
   graphqlUrl?: string;
-  /** API: the project is a test server (tests may change data, and clean up). */
+  /** API: the project is a test server (tests may change data, and clean up). Apps: a test copy. */
   testServer?: boolean;
+  soapUrl?: string;
+  grpcUrl?: string;
+  protoFile?: string;
+  protoFileName?: string;
+  wsUrl?: string;
+  wsMessages?: string;
+  contractFile?: string;
+  contractFileName?: string;
+  /** Where Claude opens fix pull requests (the website's or app's source). */
+  fixRepoUrl?: string;
+  fixBranch?: string;
   /** A login to save (secrets left empty keep the saved ones), or null to remove it. */
   login?: Partial<Login> | null;
 }
@@ -308,6 +335,13 @@ export const api = {
   /** API projects: approve a test's API file as the new version, the Postman file, and the mock server. */
   approveApiFile: (runId: string) => call<{ ok: true }>("POST", `/api/runs/${runId}/api-baseline`, {}),
   postmanUrl: (runId: string) => `/api/runs/${runId}/postman`,
+  rum: (id: string) => call<RumView>("GET", `/api/projects/${id}/rum`),
+  setRum: (id: string, b: { on?: boolean; clear?: boolean; fresh?: boolean }) => call<RumView>("POST", `/api/projects/${id}/rum`, b),
+  saveSeo: (id: string, b: SeoInput) => call<ProjectSummary>("PUT", `/api/projects/${id}/seo`, b),
+  saveRepoToken: (id: string, b: { username?: string; token: string }) => call<ProjectSummary>("PUT", `/api/projects/${id}/repo-token`, b),
+  deleteRepoToken: (id: string) => call<ProjectSummary>("DELETE", `/api/projects/${id}/repo-token`),
+  askFix: (issueId: string) => call<{ started: boolean }>("POST", `/api/issues/${issueId}/fix`, {}),
+  fixStatus: (issueId: string) => call<{ working: boolean; prs: FixPr[] }>("GET", `/api/issues/${issueId}/fix`),
   mock: (id: string) => call<MockView>("GET", `/api/projects/${id}/mock`),
 };
 

@@ -58,6 +58,8 @@ export interface PageResult {
   };
   screenshot?: string;
   mobileScreenshot?: string;
+  /** The page at tablet size (820 x 1180, an iPad Air held upright). */
+  tabletScreenshot?: string;
   /** More files about the page that agents saved (the screen reader view, the network log...). */
   files?: { label: string; file: string }[];
   /** The inspect screen's recording (page-N-inspect.json), with the page's HTML and HAR. */
@@ -179,6 +181,48 @@ export interface ScanOptions {
   system?: string;
   /** Webhook inbox for journeys: where to read what the app sent. */
   hookInbox?: HookInbox;
+  /**
+   * Checks that change data (account lockout, file uploads, mass assignment, forgot password, the
+   * Salesforce guest check, Claude filling forms) run only when this says so: the project is a test
+   * copy, or the client allowed it in writing (a "changes" permission with its proof file).
+   */
+  writes?: WriteConsent;
+  /** The project's SEO audit input: keywords per page, known backlinks, a Search Console export. */
+  seo?: SeoInput;
+  /** Speed numbers from real visitors (the in-house speed snippet), folded into the report. */
+  rum?: RumSummary;
+  /** Where uploaded files are kept (the Search Console export). */
+  uploadsDir?: string;
+}
+
+/** Whether a test may change data, and why. */
+export interface WriteConsent {
+  allowed: boolean;
+  /** The project is marked as a test copy (not just allowed by a permission on a live system). */
+  testCopy?: boolean;
+  /** "The project is marked as a test copy" or "Permission from Ravi Kumar, CTO (Email of 18 Nov)". */
+  why: string;
+}
+
+/** What the owner gave the SEO audit (see src/seo/audit.ts). */
+export interface SeoInput {
+  /** One per line: "https://site/page | keyword one, keyword two" (or "/page | words"). */
+  keywords?: string;
+  /** Pages on other sites that link here, one address per line (from the client, an outreach list, Search Console's Links export). */
+  backlinks?: string;
+  /** An uploaded Search Console "Queries" or "Pages" CSV export (the client's own data), under data/uploads. */
+  gscFile?: string;
+  gscFileName?: string;
+}
+
+/** Real visitors' speed for a project, from the in-house snippet (see src/rum.ts). */
+export interface RumSummary {
+  since: string;
+  visits: number;
+  /** 75th percentile of each number, as Google's Core Web Vitals use. */
+  p75: { lcp?: number; cls?: number; inp?: number; ttfb?: number; fcp?: number };
+  byDevice: { device: "phone" | "tablet" | "desktop"; visits: number; p75: RumSummary["p75"] }[];
+  pages: { path: string; visits: number; p75: RumSummary["p75"] }[];
 }
 
 /** Reads the project's webhook inbox (see src/app/hooks.ts). */
@@ -247,6 +291,53 @@ export interface ScanResult {
   system?: SystemInfo;
   /** API tests: every call with its request and answer, scenarios, changes and the access grid. */
   api?: ApiReport;
+  /** Signed-in apps: the checks that change data, what they made and what was cleaned up. */
+  changes?: ChangeReport;
+  /** Signed-in apps: forms Claude (or the form filler) filled and sent on a test copy. */
+  forms?: FormFill[];
+  /** Websites: the SEO audit (keywords, backlinks, Search Console). */
+  seo?: SeoReport;
+  /** Websites: real visitors' speed, when the speed snippet is on the site. */
+  rum?: RumSummary;
+}
+
+/** The checks that change data, for the report. */
+export interface ChangeReport {
+  allowed: boolean;
+  why: string;
+  /** The checks that ran: "Account lockout", "File uploads"... */
+  ran: string[];
+  /** Checks that did not run, and why. */
+  skipped: { check: string; why: string }[];
+  /** Things the test made and put back or removed. */
+  cleanedUp: string[];
+  /** Things the test made that it could not remove: delete them by hand. */
+  leftOver: string[];
+}
+
+/** A form filled and sent on a test copy. */
+export interface FormFill {
+  pageUrl: string;
+  form: string;
+  /** Who chose the values: Claude, or the built-in filler when no API key is set. */
+  by: "claude" | "filler";
+  fields: { name: string; label?: string; type: string; value: string }[];
+  status?: number;
+  /** "saved", "refused" (the form showed its own error), "server-error", "no-change", "blocked". */
+  outcome: "saved" | "refused" | "server-error" | "no-change" | "blocked";
+  message?: string;
+  shot?: string;
+}
+
+/** The SEO audit's results. What needs outside data is said plainly. */
+export interface SeoReport {
+  keywords: { page: string; keyword: string; inTitle: boolean; inH1: boolean; inUrl: boolean; inDescription: boolean; count: number; score: number }[];
+  backlinks: { from: string; status: number | null; linked: boolean; to?: string; anchor?: string; rel?: string; note?: string }[];
+  /** From the Search Console export: queries or pages, with their average position. */
+  searchConsole?: { kind: "queries" | "pages"; rows: { key: string; clicks: number; impressions: number; ctr: number; position: number }[]; nearTop: number };
+  /** Links from the site to other sites, and how many are broken or nofollow. */
+  outbound: { total: number; domains: number; broken: string[]; nofollow: number; sponsored: number };
+  limits: string[];
 }
 
 /** One call the API test made, for the Endpoints tab (secrets are never in it). */
@@ -340,7 +431,7 @@ export interface ApiAccessRow {
 
 export interface ApiReport {
   /** Where the endpoint list came from. */
-  source: "openapi" | "found" | "postman" | "har" | "curl" | "graphql";
+  source: "openapi" | "found" | "postman" | "har" | "curl" | "graphql" | "soap" | "grpc" | "websocket" | "pact";
   /** The address the API file was found at, when the test looked for it. */
   foundAt?: string;
   calls: ApiCallView[];
@@ -356,6 +447,28 @@ export interface ApiReport {
   /** The API file audit: a score out of 100 and how many rules it breaks. */
   audit?: { score: number; failed: number; rules: number };
   graphql?: { queries: number; mutations: number; types: number; introspection: boolean };
+  /** SOAP, gRPC and WebSocket tests: what the service offers and what was called. */
+  protocol?: { kind: "soap" | "grpc" | "websocket"; service: string; operations: number; called: number; notCalled: number; detail?: string };
+  /** Contract tests (Pact): each interaction the consumer expects, and whether the API still does it. */
+  contract?: ContractReport;
+}
+
+export interface ContractReport {
+  consumer: string;
+  provider: string;
+  /** The Pact file's version (2, 3 or 4). */
+  spec: string;
+  interactions: {
+    description: string;
+    state?: string;
+    method: string;
+    path: string;
+    ok: boolean;
+    /** Why it was not sent (a change on a live API) or what did not match. */
+    skipped?: string;
+    problems: string[];
+    status?: number | null;
+  }[];
 }
 
 export interface SystemInfo {
@@ -445,8 +558,25 @@ export interface ProjectTarget {
   specUrl?: string;
   /** API: a GraphQL endpoint to test instead of a REST API file. */
   graphqlUrl?: string;
-  /** API: the project is a test server, so tests may create, change and delete data (and clean up). */
+  /** API and signed-in apps: the project is a test server or test copy, so tests may create, change and delete data (and clean up). */
   testServer?: boolean;
+  /** API: a SOAP service's WSDL address. */
+  soapUrl?: string;
+  /** API: a gRPC server, host:port (grpcs:// for TLS, grpc:// for plain). */
+  grpcUrl?: string;
+  /** API: an uploaded .proto file for the gRPC server (otherwise the server's reflection is used). */
+  protoFile?: string;
+  protoFileName?: string;
+  /** API: a WebSocket address (wss://...). */
+  wsUrl?: string;
+  /** API: messages to send on the WebSocket, one per line, each optionally "=> text the answer must have". */
+  wsMessages?: string;
+  /** API: an uploaded Pact contract (JSON) the API must keep. */
+  contractFile?: string;
+  contractFileName?: string;
+  /** Any project: the source repository fixes are proposed to (a pull request), with its own token in the vault. */
+  fixRepoUrl?: string;
+  fixBranch?: string;
   /** Source code: Git repository to clone (https). */
   repoUrl?: string;
   branch?: string;
@@ -507,6 +637,8 @@ export interface RoleLogin {
   otherCompany?: boolean;
   /** Addresses this role must never open, one per line: /admin, /settings/billing, /users/* */
   mustNotOpen?: string;
+  /** A spare account the lockout check may lock (wrong passwords until the site blocks it). */
+  lockoutTest?: boolean;
 }
 
 /** What the dashboard sees of a role: no secrets. */
@@ -612,6 +744,27 @@ export interface Project {
   apiScenarios?: ApiScenario[];
   /** The mock server's secret address part, when the mock is on. */
   mockToken?: string;
+  /** The real-visitor speed snippet's id, when it is on. */
+  rumToken?: string;
+  /** SEO audit input. */
+  seo?: SeoInput;
+  /** Pull requests Claude opened with fixes. */
+  fixPrs?: FixPr[];
+}
+
+/** A fix Claude wrote and opened as a pull request on the project's repository. */
+export interface FixPr {
+  id: string;
+  /** The issue key or finding rule it fixes. */
+  issue: string;
+  title: string;
+  url?: string;
+  branch: string;
+  files: string[];
+  status: "opened" | "failed";
+  error?: string;
+  at: string;
+  by: string;
 }
 
 /** Uptime and SSL watch for a website project (see src/watch.ts). */

@@ -216,13 +216,83 @@ function Split({
   );
 }
 
-function Picture({ slot, pictures }: { slot: number; pictures: Pictures }) {
+function Picture({ slot, pictures, onPoint }: { slot: number; pictures: Pictures; onPoint?: (x: number, y: number) => void }) {
   const img = useRef<HTMLImageElement>(null);
   useEffect(() => pictures.attach(slot, img.current!), [slot, pictures]);
-  return <img ref={img} alt={`What screen ${slot + 1} shows`} draggable={false} />;
+  return (
+    <img
+      ref={img}
+      alt={`What screen ${slot + 1} shows`}
+      draggable={false}
+      className={onPoint ? "clickable" : undefined}
+      onClick={(e) => {
+        const el = img.current;
+        if (!onPoint || !el || !el.naturalWidth) return;
+        // The picture is drawn with object-fit: contain, at the top: find where it really is.
+        const box = el.getBoundingClientRect();
+        const scale = Math.min(box.width / el.naturalWidth, box.height / el.naturalHeight);
+        const w = el.naturalWidth * scale;
+        const left = box.left + (box.width - w) / 2;
+        const x = (e.clientX - left) / w;
+        const y = (e.clientY - box.top) / (el.naturalHeight * scale);
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) onPoint(x, y);
+      }}
+    />
+  );
 }
 
-const VIEW_LABEL = { desktop: "Desktop 1366 px", phone: "Phone 390 px" } as const;
+/** The bar under a screen the test handed over: type, press keys, and say when the sign-in is done. */
+function HandOverBar({ runId, slot, why }: { runId: string; slot: number; why: string }) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const send = async (b: Record<string, unknown>) => {
+    setError("");
+    try {
+      await liveInput(runId, slot, b);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <div className="live-handover" role="region" aria-label="Finish the sign-in by hand">
+      <div className="live-handover-why">
+        <b>Your turn.</b> The sign-in could not finish by itself: {why} Click on the picture to use the page, type below, then press Done.
+      </div>
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (text) void send({ type: "type", text }).then(() => setText(""));
+        }}
+      >
+        <input className="input grow" value={text} onChange={(e) => setText(e.target.value)} placeholder="Text to type into the field you clicked (a code, a word from a CAPTCHA)" autoComplete="off" />
+        <button className="btn small" type="submit" disabled={!text}>
+          Type
+        </button>
+        <button className="btn ghost small" type="button" onClick={() => send({ type: "key", key: "Enter" })}>
+          Enter
+        </button>
+        <button className="btn ghost small" type="button" onClick={() => send({ type: "key", key: "Tab" })}>
+          Tab
+        </button>
+        <button className="btn ghost small" type="button" onClick={() => send({ type: "scroll", dy: 400 })}>
+          Scroll
+        </button>
+        <button className="btn primary small" type="button" onClick={() => send({ type: "done" })}>
+          Done
+        </button>
+      </form>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
+
+async function liveInput(runId: string, slot: number, body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`/api/runs/${runId}/live/input/${slot}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+}
+
+const VIEW_LABEL = { desktop: "Desktop 1366 px", tablet: "Tablet 820 px", phone: "Phone 390 px" } as const;
 
 function ShapeIcon({ shape, n }: { shape: Shape; n: number }) {
   // A small drawing of the shape: one rectangle per screen.
@@ -419,7 +489,7 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
           {s?.url ?? " "}
         </div>
         <div className={`live-picture${s?.view === "phone" ? " phone" : ""}${opening ? " opening" : ""}`}>
-          <Picture slot={slot} pictures={pictures} />
+          <Picture slot={slot} pictures={pictures} onPoint={s?.handOver ? (x, y) => void liveInput(runId, slot, { type: "click", x, y }).catch(() => {}) : undefined} />
           {!pictured[slot] ? (
             <div className="live-wait">{state === "done" ? "This screen has finished" : s?.url ? "Waiting for the first picture" : "Waiting for a page"}</div>
           ) : (
@@ -427,6 +497,7 @@ export function LiveView({ runId, progress }: { runId: string; progress: string[
             opening && <div className="live-wait over">Opening the next page…</div>
           )}
         </div>
+        {s?.handOver && <HandOverBar runId={runId} slot={slot} why={s.handOver} />}
       </section>
     );
   };

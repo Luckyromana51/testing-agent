@@ -44,10 +44,21 @@ const sameScreen = (a: string, b: string) => normaliseUrl(a) === normaliseUrl(b)
 async function menuItems(page: Page, selectors: string[]): Promise<Item[]> {
   return (await page.evaluate(
     `(function (selectors) {
-      var out = [], seen = new Set(), n = document.querySelectorAll("[data-glv-x]").length;
+      var out = [], seen = new Set(), n = deepAll("[data-glv-x]").length;
+      // Lightning (Salesforce), Zoho's Lyte and other web-component apps draw their menus inside
+      // shadow roots, which querySelectorAll does not enter: walk every open shadow root too.
+      function deepAll(sel) {
+        var found = [], roots = [document];
+        for (var r = 0; r < roots.length && r < 400; r++) {
+          try { found.push.apply(found, roots[r].querySelectorAll(sel)); } catch (e) { return found; }
+          var all = roots[r].querySelectorAll("*");
+          for (var k = 0; k < all.length; k++) if (all[k].shadowRoot) roots.push(all[k].shadowRoot);
+        }
+        return found;
+      }
       for (var s = 0; s < selectors.length; s++) {
         var els;
-        try { els = document.querySelectorAll(selectors[s]); } catch (e) { continue; }
+        try { els = deepAll(selectors[s]); } catch (e) { continue; }
         for (var i = 0; i < els.length && out.length < 250; i++) {
           var el = els[i];
           if (seen.has(el)) continue;
@@ -110,6 +121,29 @@ export async function exploreApp(context: BrowserContext, startUrl: string, opts
     await settle(page, 300);
     // Marks are lost with the page; the same menu gets the same marks again, in the same order.
     await menuItems(page, selectors).catch(() => {});
+    await frameScreens(url);
+  };
+  /**
+   * Screens inside frames: older parts of an app (Salesforce Visualforce, Zoho's embedded pages,
+   * reports) are drawn in an iframe. The frame's own address and the links in it are screens too.
+   */
+  const framed = new Set<string>();
+  const frameScreens = async (screenUrl: string) => {
+    for (const f of page.frames()) {
+      if (f === page.mainFrame() || f.isDetached()) continue;
+      let src: string;
+      try {
+        src = normaliseUrl(f.url());
+      } catch {
+        continue;
+      }
+      if (!/^https?:/.test(src) || new URL(src).origin !== origin || framed.has(src)) continue;
+      framed.add(src);
+      const label = (await f.title().catch(() => "")) || new URL(src).pathname;
+      add(src, `Frame in ${new URL(screenUrl).pathname}: ${label.slice(0, 40)}`, false);
+      const links = (await f.$$eval("a[href]", (as) => as.slice(0, 200).map((a) => [(a as HTMLAnchorElement).href, ((a as HTMLElement).innerText || "").trim().slice(0, 40)])).catch(() => [])) as [string, string][];
+      for (const [href, text] of links) if (/^https?:/.test(href) && !DANGER_WORDS.test(text)) add(href, `Frame in ${new URL(screenUrl).pathname} > ${text || "link"}`, false);
+    }
   };
 
   /** Explores one screen's menu items; returns the screens it reached by clicking. */

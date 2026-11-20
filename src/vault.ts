@@ -108,6 +108,9 @@ export class Vault {
       project_id TEXT NOT NULL, role_id TEXT NOT NULL, info TEXT NOT NULL, secret TEXT NOT NULL,
       key_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (project_id, role_id)
     )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS repo_logins (
+      project_id TEXT PRIMARY KEY, info TEXT NOT NULL, secret TEXT NOT NULL, key_id TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`);
     const { current, others, source } = loadKeys(dataDir, env);
     this.current = current;
     this.source = source;
@@ -149,7 +152,7 @@ export class Vault {
       else login[k] = v;
     }
     for (const k of SECRET_FIELDS) if (!secret[k] && prev?.login[k]) secret[k] = prev.login[k];
-    const info = { name: role.name, login, otherCompany: role.otherCompany || undefined, mustNotOpen: role.mustNotOpen || undefined };
+    const info = { name: role.name, login, otherCompany: role.otherCompany || undefined, mustNotOpen: role.mustNotOpen || undefined, lockoutTest: role.lockoutTest || undefined };
     const aad = roleAad(projectId, role.id);
     this.db
       .prepare(
@@ -268,6 +271,43 @@ export class Vault {
 
   delete(projectId: string): void {
     this.db.prepare("DELETE FROM logins WHERE project_id = ?").run(projectId);
+  }
+
+  /**
+   * The token for the repository Claude's fixes go to (a pull request): needs write access to make
+   * a branch and open the pull request. Kept apart from the test's own login.
+   */
+  saveRepoToken(projectId: string, username: string | undefined, token: string): void {
+    const aad = `${projectId}|repo`;
+    this.db
+      .prepare(
+        `INSERT INTO repo_logins (project_id, info, secret, key_id, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET info = excluded.info, secret = excluded.secret, key_id = excluded.key_id, updated_at = excluded.updated_at`,
+      )
+      .run(projectId, JSON.stringify({ username: username || undefined }), seal(this.current, JSON.stringify({ token }), aad), this.current.id, new Date().toISOString());
+  }
+
+  /** The fix repository's token, for opening a pull request only. Falls back to a code project's Git login. */
+  repoToken(projectId: string): { username?: string; token: string } | undefined {
+    const row = this.db.prepare("SELECT * FROM repo_logins WHERE project_id = ?").get(projectId) as { info: string; secret: string; key_id: string } | undefined;
+    if (row) {
+      const key = this.keys.get(row.key_id);
+      if (!key) throw new Error("The repository token was encrypted with a different SECRET_KEY. Enter it again on the project page.");
+      return { ...(JSON.parse(row.info) as { username?: string }), ...(JSON.parse(open(key, row.secret, `${projectId}|repo`)) as { token: string }) };
+    }
+    const git = this.get(projectId, { quiet: true });
+    return git?.kind === "git" && git.token ? { username: git.username, token: git.token } : undefined;
+  }
+
+  repoSummary(projectId: string): { saved: boolean; username?: string; updatedAt?: string; fromGitLogin?: boolean } {
+    const row = this.db.prepare("SELECT * FROM repo_logins WHERE project_id = ?").get(projectId) as { info: string; updated_at: string } | undefined;
+    if (row) return { saved: true, ...(JSON.parse(row.info) as { username?: string }), updatedAt: row.updated_at };
+    const git = this.summary(projectId);
+    return git?.kind === "git" && git.hasToken ? { saved: true, fromGitLogin: true, username: git.username } : { saved: false };
+  }
+
+  deleteRepoToken(projectId: string): void {
+    this.db.prepare("DELETE FROM repo_logins WHERE project_id = ?").run(projectId);
   }
 
   status(): VaultStatus {

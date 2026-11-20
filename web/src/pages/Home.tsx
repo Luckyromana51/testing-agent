@@ -97,6 +97,15 @@ export function FilePicker({
   );
 }
 
+type ApiKind = "rest" | "graphql" | "soap" | "grpc" | "websocket";
+const API_KINDS: [ApiKind, string][] = [
+  ["rest", "REST API"],
+  ["graphql", "GraphQL"],
+  ["soap", "SOAP"],
+  ["grpc", "gRPC"],
+  ["websocket", "WebSocket"],
+];
+
 const WEB_TYPES: ProductType[] = ["website", "ecommerce", "webapp", "saas", "crm"];
 
 /** Second screen: the details for the chosen product type. */
@@ -104,8 +113,14 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
   const product = meta.products.find((p) => p.type === type);
   const [url, setUrl] = useState("");
   const [specUrl, setSpecUrl] = useState("");
-  const [apiKind, setApiKind] = useState<"rest" | "graphql">("rest");
+  const [apiKind, setApiKind] = useState<ApiKind>("rest");
   const [graphqlUrl, setGraphqlUrl] = useState("");
+  const [soapUrl, setSoapUrl] = useState("");
+  const [grpcUrl, setGrpcUrl] = useState("");
+  const [proto, setProto] = useState<Upload | null>(null);
+  const [wsUrl, setWsUrl] = useState("");
+  const [wsMessages, setWsMessages] = useState("");
+  const [pact, setPact] = useState<Upload | null>(null);
   const [testServer, setTestServer] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
@@ -141,13 +156,24 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
   const fields: TargetFields = isWeb
     ? { url, maxPages, checkLinks }
     : type === "api"
-      ? apiKind === "graphql"
-        ? { graphqlUrl, testServer }
-        : { specUrl: specUrl || undefined, url: url || undefined, testServer, ...file }
+      ? {
+          ...(apiKind === "graphql"
+            ? { graphqlUrl }
+            : apiKind === "soap"
+              ? { soapUrl }
+              : apiKind === "grpc"
+                ? { grpcUrl, ...(proto ? { protoFile: proto.file, protoFileName: proto.fileName } : {}) }
+                : apiKind === "websocket"
+                  ? { wsUrl, wsMessages: wsMessages || undefined }
+                  : { specUrl: specUrl || undefined, ...file }),
+          url: url || undefined,
+          testServer,
+          ...(pact ? { contractFile: pact.file, contractFileName: pact.fileName } : {}),
+        }
       : type === "code"
         ? { repoUrl: repoUrl || undefined, branch: branch || undefined, ...file }
         : file;
-  const ready = isWeb ? Boolean(url) : type === "api" ? (apiKind === "graphql" ? Boolean(graphqlUrl) : Boolean(specUrl || upload || url)) : type === "code" ? Boolean(repoUrl || upload) : Boolean(upload);
+  const ready = isWeb ? Boolean(url) : type === "api" ? (pact && !url ? false : { graphql: Boolean(graphqlUrl), soap: Boolean(soapUrl), grpc: Boolean(grpcUrl), websocket: Boolean(wsUrl), rest: Boolean(specUrl || upload || url) }[apiKind]) : type === "code" ? Boolean(repoUrl || upload) : Boolean(upload);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -205,18 +231,54 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
         {type === "api" && (
           <>
             <div className="tabs" role="tablist" aria-label="Kind of API">
-              <button type="button" role="tab" aria-selected={apiKind === "rest"} className={apiKind === "rest" ? "active" : ""} onClick={() => setApiKind("rest")}>
-                REST API
-              </button>
-              <button type="button" role="tab" aria-selected={apiKind === "graphql"} className={apiKind === "graphql" ? "active" : ""} onClick={() => setApiKind("graphql")}>
-                GraphQL
-              </button>
+              {API_KINDS.map(([k, label]) => (
+                <button key={k} type="button" role="tab" aria-selected={apiKind === k} className={apiKind === k ? "active" : ""} onClick={() => setApiKind(k)}>
+                  {label}
+                </button>
+              ))}
             </div>
             {apiKind === "graphql" ? (
               <label className="form-field">
                 <span>GraphQL address</span>
                 <input className="input" placeholder="https://api.example.com/graphql" value={graphqlUrl} onChange={(e) => setGraphqlUrl(e.target.value)} required autoFocus />
               </label>
+            ) : apiKind === "soap" ? (
+              <label className="form-field">
+                <span>Address of the WSDL</span>
+                <input className="input" placeholder="https://api.example.com/OrderService?wsdl" value={soapUrl} onChange={(e) => setSoapUrl(e.target.value)} required autoFocus />
+              </label>
+            ) : apiKind === "grpc" ? (
+              <>
+                <label className="form-field">
+                  <span>gRPC server address</span>
+                  <input className="input" placeholder="grpcs://api.example.com:443" value={grpcUrl} onChange={(e) => setGrpcUrl(e.target.value)} required autoFocus />
+                </label>
+                <FilePicker
+                  accept=".proto"
+                  label="The .proto file (optional)"
+                  hint="needed only when the server has reflection turned off"
+                  value={proto}
+                  onChange={setProto}
+                />
+              </>
+            ) : apiKind === "websocket" ? (
+              <>
+                <label className="form-field">
+                  <span>WebSocket address</span>
+                  <input className="input" placeholder="wss://api.example.com/socket" value={wsUrl} onChange={(e) => setWsUrl(e.target.value)} required autoFocus />
+                </label>
+                <label className="form-field">
+                  <span>Messages to send (optional)</span>
+                  <textarea
+                    className="input"
+                    placeholder={'{"type":"ping"} => pong\n{"type":"subscribe","channel":"orders"} => subscribed'}
+                    value={wsMessages}
+                    onChange={(e) => setWsMessages(e.target.value)}
+                    spellCheck={false}
+                  />
+                  <span className="muted small">One message a line. Add {"=>"} and a word to say what its answer must contain.</span>
+                </label>
+              </>
             ) : (
               <>
                 <label className="form-field">
@@ -243,6 +305,19 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
                 </label>
               </>
             )}
+            {apiKind !== "rest" && (
+              <label className="form-field">
+                <span>API base address {pact ? "(needed for the contract test)" : "(optional)"}</span>
+                <input className="input" placeholder="https://api.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />
+              </label>
+            )}
+            <FilePicker
+              accept=".json"
+              label="Pact contract (optional)"
+              hint="the pacts/*.json file your website's or app's tests write; its requests are sent to the base address"
+              value={pact}
+              onChange={setPact}
+            />
             <label className="check">
               <input type="checkbox" checked={testServer} onChange={(e) => setTestServer(e.target.checked)} />
               <span>
@@ -254,6 +329,10 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
                 ? "POST, PUT, PATCH and DELETE endpoints are tested too: a record of each kind is created from the file's example, read back, changed and deleted, with mass assignment and input checks. Never tick this for a live server."
                 : apiKind === "graphql"
                   ? "Only queries are sent, made from the schema. Mutations are counted but never sent."
+                  : apiKind === "soap" || apiKind === "grpc"
+                    ? "Only operations whose names say they read (Get, List, Find, Check...) are called. The others are counted but never called."
+                    : apiKind === "websocket"
+                      ? "Only the messages you list are sent, plus checks that connect without a login and from another website."
                   : "Only read-only GET requests are sent. Operations that change data (POST, PUT, PATCH, DELETE) are counted but never called."}
             </div>
           </>

@@ -14,6 +14,7 @@ import { keepFirstSightings } from "../agents/web/once.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
+import { liveSignIn } from "./hand-over.js";
 import { APPS, captureCalls, hideSocketSecrets, reportCall, sortCalls } from "../app/calls.js";
 import { exploreApp } from "../app/explore.js";
 import { chosenSystem, detectSystem, profileOf } from "../app/systems.js";
@@ -26,6 +27,8 @@ export { isCrawlable, normaliseUrl } from "./urls.js";
 
 const DESKTOP = { width: 1366, height: 900 };
 const MOBILE = { width: 390, height: 844 };
+/** An iPad Air held upright. */
+export const TABLET = { width: 820, height: 1180 };
 const RETRY_STATUSES = [429, 502, 503, 504];
 /** More pages at once than this does not make a test faster: the site and the server become the limit. */
 export const MAX_PARALLEL = 16;
@@ -57,10 +60,11 @@ class AgentRunner {
   /** Agents left out on purpose, with the reason shown in the report. */
   skipped: AgentStat[];
 
-  constructor(agents: WebAgent[], loggedIn: boolean) {
+  constructor(agents: WebAgent[], loggedIn: boolean, consent?: { allowed: boolean; why: string }) {
     const skip = (a: WebAgent): string | undefined => {
       if (loggedIn && a.category === "seo") return "Left out while signed in: private pages are not meant for search engines.";
       if (!loggedIn && a.needsLogin) return "Needs a saved login: add one on the project page to test the pages behind it.";
+      if (a.needsConsent && !consent?.allowed) return `Changes data, so it runs only with consent. ${consent?.why ?? "Mark the project as a test copy, or record the client's written permission for checks that change data."}`;
       return undefined;
     };
     this.agents = agents.filter((a) => !skip(a));
@@ -284,7 +288,7 @@ async function scanPage(
   let links: string[] = [];
   let res: Response | null = null;
   let throttled = false;
-  let view: "desktop" | "phone" = "desktop";
+  let view: "desktop" | "tablet" | "phone" = "desktop";
   const busy = new Set<string>();
   const show = (doing: string) => live?.screen({ slot, url, view, doing, agents: [...busy], state: "busy" });
 
@@ -439,6 +443,22 @@ async function scanPage(
     await runStage("page");
     await inspector?.stopCoverage();
 
+    // Tablet: between desktop and phone, where menus often vanish. Only when an agent checks it.
+    if (runner.pageAgents("tablet").length) {
+      view = "tablet";
+      show("Resizing to a tablet");
+      codeFeed.step(`Resize to a tablet (${TABLET.width}×${TABLET.height})`, { code: stepCode.resize(TABLET.width, TABLET.height) });
+      await page.setViewportSize(TABLET);
+      await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
+      await settleLayout(page);
+      inspector?.step(`Resize to a tablet (${TABLET.width}×${TABLET.height})`);
+      const tshot = `page-${index}-tablet.jpg`;
+      codeFeed.step("Tablet picture", { code: stepCode.picture(tshot) });
+      await stillPicture(page, path.join(opts.artifactsDir, tshot));
+      result.tabletScreenshot = tshot;
+      await runStage("tablet");
+    }
+
     view = "phone";
     show("Resizing to a phone");
     codeFeed.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`, { code: stepCode.resize(MOBILE.width, MOBILE.height) });
@@ -495,7 +515,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const log = (m: string) => opts.onProgress?.(m);
   await mkdir(opts.artifactsDir, { recursive: true });
 
-  const runner = new AgentRunner(selectAgents(opts), Boolean(opts.login));
+  const runner = new AgentRunner(selectAgents(opts), Boolean(opts.login), opts.writes);
   log(`${runner.stats.size} specialist agents assigned`);
   if (opts.login && runner.skipped.some((s) => s.category === "seo")) {
     log("Search engine checks are left out: the test runs signed in, and private pages are not for search engines");
@@ -533,6 +553,10 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     roles: opts.roles,
     mailUrl: opts.mailUrl,
     signal: opts.signal,
+    consent: opts.writes,
+    seoInput: opts.seo,
+    uploadsDir: opts.uploadsDir,
+    rum: opts.rum,
   };
   const isApp = APPS.includes(opts.product ?? "website");
   let stopCalls: (() => void) | undefined;
@@ -717,7 +741,8 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
           log(`The sign-in page looks like ${sys.name}`);
         }
       }
-      signedIn = await signIn(context, opts.login, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints });
+      live?.screen({ slot: 0, view: "desktop", doing: "Signing in", agents: [], state: "busy" });
+      signedIn = await signIn(context, opts.login, log, { mailUrl: opts.mailUrl, signal: opts.signal, hints: loginHints, ...liveSignIn(live, castScreen, opts.signal) });
       if (isApp) {
         const cap = captureCalls(context, new URL(startUrl).origin);
         site.calls = cap.calls;
@@ -892,6 +917,12 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   if (opts.login && runner.skipped.some((s) => s.category === "seo")) {
     notes.push("Search engine checks were left out because the test ran signed in: private pages are not meant to be found on Google.");
   }
+  // The report's "Checks that change data" box lists the ones left out for want of consent too.
+  const consentSkipped = runner.skipped.filter((a) => WEB_AGENTS.find((w) => w.id === a.id)?.needsConsent && a.skipped?.startsWith("Changes data"));
+  if (isApp && opts.login && consentSkipped.length) {
+    site.changes ??= { allowed: Boolean(opts.writes?.allowed), why: opts.writes?.why ?? "Checks that change data were not asked for.", ran: [], skipped: [], cleanedUp: [], leftOver: [] };
+    for (const a of consentSkipped) if (!site.changes.skipped.some((x) => x.check === a.name)) site.changes.skipped.push({ check: a.name, why: opts.writes?.why ?? "Not allowed." });
+  }
   dropDuplicates(findings);
   // Signed in, the pages are private: search engine advice does not apply, from any agent, and
   // the search category is left out of the score instead of shown as untested.
@@ -918,6 +949,10 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
     ...(site.sockets?.length ? { sockets: site.sockets.map((x) => ({ url: hideSocketSecrets(x.url), pageUrl: x.pageUrl })) } : {}),
     ...(site.access ? { access: site.access } : {}),
     ...(site.system ? { system: site.system } : {}),
+    ...(site.changes ? { changes: site.changes } : {}),
+    ...(site.forms?.length ? { forms: site.forms } : {}),
+    ...(site.seoReport ? { seo: site.seoReport } : {}),
+    ...(site.rum ? { rum: site.rum } : {}),
   };
 }
 
