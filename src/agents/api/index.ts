@@ -12,7 +12,8 @@ import { apiScenariosAgent } from "./scenarios.js";
 import { apiTokensAgent } from "./tokens.js";
 import { apiWritesAgent } from "./writes.js";
 
-import { documentedResponse, type ApiAgent } from "./shared.js";
+import { documentedResponse, findLeak, type ApiAgent } from "./shared.js";
+import { HANDBOOK_API_AGENTS } from "./handbook-api.js";
 export { documentedResponse, type ApiAgent };
 
 const ok = (c: ApiCall) => c.status !== null && c.status >= 200 && c.status < 300;
@@ -345,27 +346,7 @@ export const apiExposureAgent: ApiAgent = {
 
 /* ---------------------------------------------------------------------------------------------- */
 
-const LEAKS: { re: RegExp; what: string }[] = [
-  { re: /SQLSTATE\[|You have an error in your SQL syntax|\bORA-\d{5}\b|PG::\w+Error|psycopg2\.|SQLITE_ERROR|Unclosed quotation mark|invalid input syntax for (type )?\w+|mysqli?_\w+\(\)/i, what: "a database error" },
-  { re: /Werkzeug Debugger|Whoops! There was an error|Illuminate\\|Symfony\\Component\\|ActiveRecord::\w+|django\.(core|db)\./, what: "a framework debug page" },
-  { re: /Traceback \(most recent call last\)/, what: "a Python traceback" },
-  { re: /(Fatal error|Parse error|Warning|Notice|Uncaught \w+):? .{0,200} in \/[\w./-]+(?: on line |:)\d+/, what: "a PHP error with a file path" },
-  { re: /Stack trace:\s*#0/, what: "a PHP stack trace" },
-  { re: /System\.\w+Exception|\bat [\w.]+\(.*\) in [\w:\\/.]+:line \d+/, what: "a .NET exception" },
-  { re: /\bat [\w.$]+\([\w$]+\.java:\d+\)/, what: "a Java stack trace" },
-  { re: /\bat [\w.<>$\s]+\(?(?:file:\/\/)?[\w./\\:@-]+\.(?:js|ts|mjs|cjs):\d+:\d+\)?/, what: "a Node.js stack trace" },
-];
-
-export function findLeak(text: string): { what: string; snippet: string } | null {
-  const sample = text.slice(0, 50_000);
-  for (const { re, what } of LEAKS) {
-    const m = re.exec(sample);
-    if (m) {
-      return { what, snippet: sample.slice(m.index, m.index + 160).split("\n").slice(0, 2).join(" ").replace(/\s+/g, " ").trim() };
-    }
-  }
-  return null;
-}
+export { findLeak };
 
 export const apiErrorsAgent: ApiAgent = {
   ...base,
@@ -568,6 +549,8 @@ export const API_AGENTS: ApiAgent[] = [
   apiAuthAgent,
   apiExposureAgent,
   apiErrorsAgent,
+  // Negative and boundary values, HTTP behaviour and repeat calls, API versions (testing handbook).
+  ...HANDBOOK_API_AGENTS,
   apiTransportAgent,
   apiSpecAgent,
   apiAuditAgent,

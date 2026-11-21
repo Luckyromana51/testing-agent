@@ -6,6 +6,7 @@ import { WEB_PRODUCTS } from "../../products.js";
 import type { Finding, PageResult } from "../../types.js";
 import type { PageAgent, SiteAgent } from "../types.js";
 import { DESCRIBE_JS, readOnly } from "./guard.js";
+import { countCases } from "../../runner/cases.js";
 
 /**
  * Functional checks that use the site: form fields at their limits (without sending anything),
@@ -30,7 +31,147 @@ interface FieldFacts {
   phone: string[];
   pattern: string[];
   required: string[];
+  /** Each field rule's failing cases, by rule. */
+  more: Record<string, string[]>;
+  /** Test cases tried and how many failed. */
+  tried: number;
+  failed: number;
+  fields: number;
 }
+
+/**
+ * The test cases each kind of field gets, from the test design techniques: boundary values (the
+ * limits and one step past them), equivalence classes (one value from each kind of wrong input)
+ * and negative cases (empty, only spaces, the wrong kind of text). Each case sets a value, asks the
+ * browser's own form validation whether the form would accept it, and puts the old value back.
+ * Nothing is typed, sent or submitted.
+ */
+const FIELD_CASES_JS = `(function () {
+  var describe = ${DESCRIBE_JS};
+  var out = { email: [], negative: [], edge: [], phone: [], pattern: [], required: [], more: {}, tried: 0, failed: 0, fields: 0 };
+  var more = function (rule, text) { (out.more[rule] = out.more[rule] || []).push(text); };
+  var labelOf = function (el) {
+    var t = "";
+    if (el.labels && el.labels.length) t = el.labels[0].innerText;
+    else if (el.getAttribute("aria-label")) t = el.getAttribute("aria-label");
+    else if (el.id) { var l = document.querySelector('label[for="' + el.id + '"]'); if (l) t = l.innerText; }
+    return (t || "").replace(/\\s+/g, " ").trim();
+  };
+  var visible = function (el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  var fields = document.querySelectorAll("input, textarea, select");
+  for (var i = 0; i < fields.length && i < 300; i++) {
+    var el = fields[i];
+    var tag = el.tagName.toLowerCase();
+    var type = tag === "select" ? "select" : tag === "textarea" ? "textarea" : (el.getAttribute("type") || "text").toLowerCase();
+    if (["hidden", "submit", "button", "reset", "image", "file", "checkbox", "radio", "color", "range"].indexOf(type) >= 0) continue;
+    if (el.disabled || el.readOnly || !visible(el)) continue;
+    out.fields++;
+    var label = labelOf(el);
+    var words = (el.name + " " + el.id + " " + (el.getAttribute("autocomplete") || "") + " " + (el.placeholder || "") + " " + label).toLowerCase();
+    var name = describe(el) + (label ? " (" + label.slice(0, 40) + ")" : "");
+    var keep = el.value;
+    var accepts = function (v) { el.value = v; return el.validity.valid; };
+    /** One test case: the browser should refuse v (refuse=true) or accept it. A wrong answer fails the case. */
+    var tryCase = function (v, refuse) { out.tried++; var ok = accepts(v); var bad = refuse ? ok : !ok; if (bad) out.failed++; return bad; };
+    var required = el.required || el.getAttribute("aria-required") === "true";
+
+    if (type === "select") {
+      // A required list whose first choice ("Select...") has a value can never be left empty.
+      if (el.required && el.options.length > 1) {
+        var first = el.options[0];
+        out.tried++;
+        if (first && first.value !== "" && /select|choose|pick|--|please|चुन/i.test(first.text)) { out.failed++; more("form:select-placeholder-valid", name + ': "' + first.text.trim().slice(0, 30) + '" counts as an answer'); }
+      }
+      el.value = keep;
+      continue;
+    }
+
+    // Required: empty must be refused; only spaces should be too.
+    if (el.required) {
+      if (tryCase("", true)) more("form:required-accepts-empty", name);
+      if (type !== "password" && !el.pattern && tryCase("    ", true)) more("form:required-accepts-spaces", name);
+    }
+    // Lengths: a field whose shortest allowed length is longer than its longest can never be filled.
+    var minL = el.getAttribute("minlength"), maxL = el.getAttribute("maxlength");
+    if (minL !== null && maxL !== null && Number(minL) > Number(maxL)) { out.tried++; out.failed++; more("form:impossible-limits", name + ": minlength " + minL + " > maxlength " + maxL); }
+
+    if ((type === "text" || type === "textarea") && /e-?mail/.test(words) && !el.pattern) {
+      // One value from each kind of wrong address.
+      var badEmails = ["not-an-email", "name@", "@example.com", "name example.com", "name@@example.com", "name@exa mple.com"];
+      var taken = badEmails.filter(function (v) { return tryCase(v, true); });
+      if (taken.length >= 3) out.email.push(name + ": accepted " + taken.length + " of " + badEmails.length + ' wrong addresses ("' + taken.slice(0, 3).join('", "') + '")');
+    }
+    if (type === "email") {
+      // A real address must not be refused by a home-made pattern.
+      var goodEmails = ["first.last@example.co.in", "name+tag@example.com", "o'neil@example.com"];
+      var refused = goodEmails.filter(function (v) { return tryCase(v, false); });
+      if (refused.length) more("form:email-refuses-valid", name + ': refuses "' + refused.join('", "') + '"');
+    }
+    if (type === "number") {
+      var step = el.step && el.step !== "any" ? Number(el.step) : 1;
+      var countish = /qty|quantity|age|count|people|guests|persons|amount|price|units|adults|children|nights|rooms|seats|items/.test(words);
+      if (el.min === "" && countish) { if (tryCase("-1", true)) out.negative.push(name); }
+      if (el.min !== "") {
+        if (tryCase(el.min, false)) out.edge.push(name + ": its own lowest value " + el.min + " is refused");
+        if (tryCase(String(Number(el.min) - step), true)) more("form:below-min-accepted", name + ": " + (Number(el.min) - step) + " is accepted below min " + el.min);
+      }
+      if (el.max !== "") {
+        if (tryCase(el.max, false)) out.edge.push(name + ": its own highest value " + el.max + " is refused (step " + step + ")");
+        if (tryCase(String(Number(el.max) + step), true)) more("form:above-max-accepted", name + ": " + (Number(el.max) + step) + " is accepted above max " + el.max);
+      }
+      if (el.min !== "" && el.max !== "" && Number(el.min) > Number(el.max)) { out.tried++; out.failed++; more("form:impossible-limits", name + ": min " + el.min + " > max " + el.max); }
+      if (countish && el.max === "") { if (tryCase("99999999", true)) more("form:no-upper-limit", name + ": accepts 99999999"); }
+      if (/qty|quantity|people|guests|persons|adults|children|rooms|seats|units|items/.test(words) && (el.step === "any" || (el.step !== "" && Number(el.step) < 1))) { if (tryCase("1.5", true)) more("form:fraction-quantity", name + ": accepts 1.5"); }
+    }
+    if (type === "date" || type === "datetime-local" || type === "month") {
+      if (el.min && el.max && el.min > el.max) { out.tried++; out.failed++; more("form:impossible-limits", name + ": min " + el.min + " > max " + el.max); }
+      if (type === "date") {
+        if (el.min && tryCase(el.min, false)) out.edge.push(name + ": its own first date " + el.min + " is refused");
+        if (el.max && tryCase(el.max, false)) out.edge.push(name + ": its own last date " + el.max + " is refused");
+        if (/birth|dob|born/.test(words) && !el.max) { var next = new Date(Date.now() + 400 * 864e5).toISOString().slice(0, 10); if (tryCase(next, true)) more("form:future-birth-date", name + ": accepts " + next); }
+      }
+    }
+    if ((type === "tel" || (type === "text" && /phone|mobile|whatsapp|contact.?no/.test(words))) && !el.pattern) {
+      var badPhones = ["abcdefgh", "1", "1234567890123456789012345"];
+      var takenP = badPhones.filter(function (v) { return tryCase(v, true); });
+      if (takenP.indexOf("abcdefgh") >= 0) out.phone.push(name + (takenP.length > 1 ? ": also accepts " + takenP.filter(function (v) { return v !== "abcdefgh"; }).map(function (v) { return v.length + " digit" + (v.length > 1 ? "s" : ""); }).join(" and ") : ""));
+      else if (takenP.length) more("form:phone-length", name + ": accepts " + takenP.map(function (v) { return v.length + " digit" + (v.length > 1 ? "s" : ""); }).join(" and "));
+    }
+    if (type === "text" && /pin.?code|postal|zip/.test(words) && !el.pattern) {
+      if (tryCase("ABCDEF", true)) more("form:pincode-letters", name + ': accepts "ABCDEF"');
+    }
+    if (type === "text" && /website|homepage|\\burl\\b/.test(words) && !el.pattern) {
+      if (tryCase("not a web address", true)) more("form:url-accepts-anything", name);
+    }
+    if (type === "password" && /new-password/.test(el.getAttribute("autocomplete") || "") && !el.pattern && el.getAttribute("minlength") === null) {
+      if (tryCase("1", true)) more("form:short-password", name + ': accepts the one-character password "1"');
+    }
+    if (el.pattern) {
+      try { new RegExp("^(?:" + el.pattern + ")$", "v"); } catch (e) { out.tried++; out.failed++; out.pattern.push(name + ' pattern="' + el.pattern.slice(0, 60) + '"'); }
+    }
+    if (!required && /\\*\\s*:?$|\\(required\\)|\\brequired\\b/i.test(label)) { out.tried++; out.failed++; out.required.push(name); }
+    el.value = keep;
+  }
+  return out;
+})()`;
+
+/** The extra field rules: title, detail, severity and category. */
+const MORE_FIELD_RULES: Record<string, { severity: Finding["severity"]; title: string; detail: string; category?: Finding["category"] }> = {
+  "form:select-placeholder-valid": { severity: "medium", title: "A required list can be left on \"Select...\"", detail: 'The list is required but its first choice ("Select...", "Choose...") has a value, so the form counts it as an answer. Give the first option value="" so the browser stops the form until a real choice is made.' },
+  "form:required-accepts-empty": { severity: "medium", title: "A required field accepts an empty value", detail: "The field is marked required but the browser accepts it empty (a custom validity rule or novalidate overrides it). Check required fields on the server too." },
+  "form:required-accepts-spaces": { severity: "low", title: "Required fields accept only spaces", detail: 'A required field is satisfied by "    " (only spaces), so blank names and messages get through. Trim the value before checking it, on the server and in the form (or add pattern="\\S.*").' },
+  "form:impossible-limits": { severity: "high", title: "A field's limits make it impossible to fill", detail: "Its lowest allowed value or length is higher than its highest, so no value passes and the form can never be sent. Swap or fix the min/max (or minlength/maxlength) values." },
+  "form:email-refuses-valid": { severity: "medium", title: "The email field refuses real addresses", detail: "A home-made pattern refuses addresses that are valid and common (a dot in the name, a + tag, .co.in, an apostrophe), so those customers cannot sign up or order. Use type=\"email\" without a pattern, and send a confirmation email to check the address." },
+  "form:below-min-accepted": { severity: "medium", title: "A number field accepts a value below its minimum", detail: "One step below the field's min is accepted, so the min does not work (often a step that does not line up with min, or a script that resets validity). Check the limit on the server too." },
+  "form:above-max-accepted": { severity: "medium", title: "A number field accepts a value above its maximum", detail: "One step above the field's max is accepted, so the max does not work. Check the limit on the server too." },
+  "form:no-upper-limit": { severity: "low", title: "Quantity or age fields have no upper limit", detail: "The field accepts 99,999,999. A typo (an extra zero) books 10,000 rooms or orders 99 million units. Add a sensible max and check it on the server." },
+  "form:fraction-quantity": { severity: "low", title: "A quantity field accepts fractions", detail: 'The field accepts 1.5 people or items. Use step="1" (the default) on fields that count whole things.' },
+  "form:future-birth-date": { severity: "low", title: "A date of birth can be in the future", detail: "The birth date field has no max, so a date next year is accepted. Set max to today's date (and check age limits on the server)." },
+  "form:phone-length": { severity: "low", title: "Phone field accepts numbers of any length", detail: 'The field accepts a 1-digit and a 25-digit number. Indian mobile numbers have 10 digits (12-13 with +91): add pattern="[0-9+ ]{10,15}" or minlength and maxlength.' },
+  "form:pincode-letters": { severity: "low", title: "PIN code field accepts letters", detail: 'Indian PIN codes are 6 digits. Add pattern="[1-9][0-9]{5}" and inputmode="numeric" (international postcodes need a looser pattern).' },
+  "form:url-accepts-anything": { severity: "low", title: "Website field accepts text that is not an address", detail: 'Use type="url" (the browser then checks it, and phones show a keyboard with / and .com).' },
+  "form:short-password": { severity: "medium", title: "New passwords can be one character long", detail: 'The sign-up or change-password field accepts "1". Set minlength="8" (NIST and CERT-In advise at least 8) and check the length on the server.', category: "security" },
+};
 
 /**
  * Boundary values and wrong kinds of input, checked with the browser's own form validation.
@@ -40,59 +181,22 @@ export const formFieldsAgent: PageAgent = {
   id: "func.form-fields",
   name: "Form field limits",
   description:
-    "Tries boundary and wrong values in every form field (an email without @, -1 as a quantity, letters as a phone number, the lowest and highest allowed numbers) and checks the form stops them. Nothing is typed into the site or sent.",
+    "Tries up to 12 test cases on every form field: boundary values (the lowest and highest allowed, one step past each), one value from each kind of wrong input (six wrong email addresses, letters and wrong lengths in phone and PIN code fields, future birth dates), empty and spaces-only required fields, and limits that make a field impossible to fill. Nothing is typed into the site or sent.",
   category: "functional",
   engine: "web",
   products: WEB_PRODUCTS,
   stage: "page",
   skipErrorPages: true,
   async run({ page, url }) {
-    const f = (await page.evaluate(`(function () {
-      var describe = ${DESCRIBE_JS};
-      var out = { email: [], negative: [], edge: [], phone: [], pattern: [], required: [] };
-      var labelOf = function (el) {
-        var t = "";
-        if (el.labels && el.labels.length) t = el.labels[0].innerText;
-        else if (el.getAttribute("aria-label")) t = el.getAttribute("aria-label");
-        else if (el.id) { var l = document.querySelector('label[for="' + el.id + '"]'); if (l) t = l.innerText; }
-        return (t || "").replace(/\\s+/g, " ").trim();
-      };
-      var fields = document.querySelectorAll("input, textarea");
-      for (var i = 0; i < fields.length && i < 300; i++) {
-        var el = fields[i];
-        var type = (el.getAttribute("type") || "text").toLowerCase();
-        if (["hidden", "submit", "button", "reset", "image", "file", "checkbox", "radio", "color", "range"].indexOf(type) >= 0) continue;
-        if (el.disabled || el.readOnly) continue;
-        var r = el.getBoundingClientRect();
-        if (!r.width || !r.height) continue;
-        var label = labelOf(el);
-        var words = (el.name + " " + el.id + " " + (el.getAttribute("autocomplete") || "") + " " + (el.placeholder || "") + " " + label).toLowerCase();
-        var name = describe(el) + (label ? " (" + label.slice(0, 40) + ")" : "");
-        var keep = el.value;
-        var accepts = function (v) { el.value = v; return el.validity.valid; };
-        if (type === "text" && /e-?mail/.test(words) && !el.pattern && accepts("not-an-email")) out.email.push(name);
-        if (type === "number") {
-          var step = el.step && el.step !== "any" ? Number(el.step) : 1;
-          if (el.min === "" && /qty|quantity|age|count|people|guests|persons|amount|price|units/.test(words) && accepts("-1")) out.negative.push(name);
-          if (el.min !== "" && !accepts(el.min)) out.edge.push(name + ": its own lowest value " + el.min + " is refused");
-          if (el.max !== "" && !accepts(el.max)) out.edge.push(name + ": its own highest value " + el.max + " is refused (step " + step + ")");
-        }
-        if ((type === "tel" || (type === "text" && /phone|mobile|whatsapp|contact.?no/.test(words))) && !el.pattern && accepts("abcdefgh")) out.phone.push(name);
-        if (el.pattern) {
-          try { new RegExp("^(?:" + el.pattern + ")$", "v"); } catch (e) { out.pattern.push(name + ' pattern="' + el.pattern.slice(0, 60) + '"'); }
-        }
-        if (!el.required && el.getAttribute("aria-required") !== "true" && /\\*\\s*:?$|\\(required\\)|\\brequired\\b/i.test(label)) out.required.push(name);
-        el.value = keep;
-      }
-      return out;
-    })()`)) as FieldFacts;
+    const f = (await page.evaluate(FIELD_CASES_JS)) as FieldFacts;
+    countCases(f.tried, f.failed);
 
     const out: Finding[] = [];
     const add = (items: string[], rule: string, severity: Finding["severity"], title: string, detail: string, category: Finding["category"] = "functional") => {
       if (items.length) out.push(finding({ category, rule, severity, title, detail, pageUrl: url, evidence: list(items), count: items.length }));
     };
     add(f.email, "form:email-accepts-anything", "medium", "Email field accepts text that is not an email address",
-      'The field accepts "not-an-email", so wrong addresses reach your inbox or CRM and replies bounce. Use type="email" (the browser then checks it, and phones show the @ keyboard).');
+      'The field accepts wrong addresses such as "not-an-email", so wrong addresses reach your inbox or CRM and replies bounce. Use type="email" (the browser then checks it, and phones show the @ keyboard).');
     add(f.negative, "form:negative-number", "medium", "Number field accepts -1",
       'A quantity, age or amount field accepts a negative number. Add min="0" (or min="1"), and check the value on the server too.');
     add(f.edge, "form:boundary-refused", "medium", "Number field refuses its own lowest or highest value",
@@ -104,6 +208,10 @@ export const formFieldsAgent: PageAgent = {
     add(f.required, "form:required-not-marked", "medium", "Fields marked * are not required for the browser or screen readers",
       "The label shows the field is required, but the field has no required attribute, so the form can be sent empty and screen readers do not say it is required (WCAG 3.3.2). Add required (or aria-required=\"true\").",
       "accessibility");
+    for (const [rule, items] of Object.entries(f.more).sort((a, b) => a[0].localeCompare(b[0]))) {
+      const r = MORE_FIELD_RULES[rule];
+      if (r) add(items, rule, r.severity, r.title, r.detail, r.category);
+    }
     return out;
   },
 };

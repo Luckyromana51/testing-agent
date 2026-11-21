@@ -49,6 +49,8 @@ export interface DeviceReport {
   /** Extra checks: phone sideways, dark mode, large text, tablet, no internet, Back on the first screen. */
   passes: { id: string; label: string; done: boolean; note?: string; issues: ScreenIssue[]; file?: string }[];
   offline?: "ok" | "crash" | "blank";
+  /** Screens that did not come back as they were after an interruption (background, another app, a notification...). */
+  stateLost?: string[];
   perf: { startMs?: number; memoryMb?: number; jankPct?: number; frames?: number };
   traffic: (TrafficEvent & { stage: string })[];
   journeys: JourneyRun[];
@@ -154,6 +156,7 @@ export function deviceFindings(r: DeviceReport): ToolFinding[] {
     } else out.push({ category: def.category, rule: def.rule, severity: def.severity, title: def.title(uniq.length), detail: def.detail, pageUrl: where, evidence: list(uniq) });
   }
   if (r.offline === "crash") out.push({ category: "functional", rule: "device:offline-crash", severity: "high", title: "The app crashes without internet", detail: "With Wi-Fi and mobile data off the app closed. People open apps in lifts, on trains and with no data left: catch network errors and show a message with a Try again button.", pageUrl: where });
+  if (r.stateLost?.length) out.push({ category: "functional", rule: "device:state-lost", severity: "medium", title: "The app forgets where the user was after an interruption", detail: "After going to the background, another app or a notification, the app came back on a different screen, so whatever the user was doing (a form, a cart, a search) is gone. Save the screen's state (onSaveInstanceState / rememberSaveable on Android, state restoration on iOS) and keep work in a ViewModel, not only in the screen.", pageUrl: where, evidence: list(r.stateLost) });
   if (r.offline === "blank") out.push({ category: "functional", rule: "device:offline-blank", severity: "medium", title: "The app shows a blank screen without internet", detail: "With Wi-Fi and mobile data off the first screen has nothing on it. Show what was loaded last time, or a message that says there is no internet and a Try again button.", pageUrl: where });
   const p = r.perf;
   if (p.startMs !== undefined && p.startMs >= 2500) {
@@ -489,6 +492,76 @@ export async function exploreApp(
             await shell("svc", ["data", "enable"]);
           }
         } else p.note = timeUp() ? "skipped: time limit" : "needs adb shell in Appium";
+      }
+      // Interruptions (testing handbook: interruption, background/foreground, battery and permission
+      // testing): the app is sent to the background, covered by another app, sent a notification and
+      // run on a low battery; each time it must come back on the same screen without closing.
+      const key = android ? { appId } : { bundleId: appId };
+      const interrupt = async (id: string, label: string, act: () => Promise<boolean>, back?: () => Promise<unknown>, cleanup?: () => Promise<unknown>) => {
+        const p: DeviceReport["passes"][number] = { id, label, done: false, issues: [] };
+        report.passes.push(p);
+        if (timeUp()) return (p.note = "skipped: time limit");
+        const target = report.screens.find((x) => !x.signIn && x.via.length) ?? report.screens.find((x) => !x.signIn);
+        const before = target?.via.length ? await goTo(target.via) : (await r.relaunch(), await r.settle());
+        if (!before) return (p.note = "the screen could not be opened again");
+        try {
+          if (!(await act().catch(() => false))) return (p.note = android ? "needs adb shell in Appium" : "not available on iOS here");
+          await back?.();
+          await sleep(1500, signal);
+          const now = await r.screen();
+          if (!(await r.inApp(now))) {
+            const c = await r.crashes(label.toLowerCase());
+            report.crashes.push(...(c.length ? c : [{ type: "closed" as const, reason: `The app closed: ${label.toLowerCase()}`, stack: [], during: label.toLowerCase() }]));
+          } else if (now.signature !== before.signature) {
+            (report.stateLost ??= []).push(`${label}: "${target?.name ?? before.name}" came back as "${now.name}"`);
+          }
+          p.done = true;
+        } finally {
+          await cleanup?.().catch(() => {});
+        }
+      };
+      await interrupt("background", "Sent to the background and back", () => driver.mobile("backgroundApp", { seconds: 3 }).then(() => true));
+      if (android) {
+        await interrupt(
+          "other-app",
+          "Another app opened over it",
+          async () => (await shell("am", ["start", "-a", "android.settings.SETTINGS"])) !== null,
+          () => driver.mobile("activateApp", key),
+        );
+        await interrupt("notification", "A notification arrives", async () => (await shell("cmd", ["notification", "post", "-t", "GLV test", "glv-test", "Interruption test"])) !== null);
+        await interrupt(
+          "low-battery",
+          "Low battery (4%)",
+          async () => (await shell("dumpsys", ["battery", "unplug"])) !== null && (await shell("dumpsys", ["battery", "set", "level", "4"])) !== null,
+          undefined,
+          () => shell("dumpsys", ["battery", "reset"]),
+        );
+        // Permissions taken away: the app must ask again or carry on, never crash.
+        const p: DeviceReport["passes"][number] = { id: "permissions-off", label: "Permissions turned off", done: false, issues: [] };
+        report.passes.push(p);
+        const dump = timeUp() ? null : await shell("dumpsys", ["package", appId]);
+        const granted = [...new Set([...(dump ?? "").matchAll(/(android\.permission\.[A-Z_]+): granted=true/g)].map((m) => m[1]))].filter((x) =>
+          /CAMERA|LOCATION|RECORD_AUDIO|CONTACTS|READ_MEDIA|READ_EXTERNAL_STORAGE|POST_NOTIFICATIONS|BLUETOOTH_CONNECT|CALENDAR|PHONE_STATE|CALL_PHONE|SMS/.test(x),
+        );
+        if (dump === null) p.note = timeUp() ? "skipped: time limit" : "needs adb shell in Appium";
+        else if (!granted.length) p.note = "the app had no camera, location, microphone, contacts or photo permission to turn off";
+        else {
+          try {
+            for (const perm of granted) await shell("pm", ["revoke", appId, perm]);
+            for (const sc of few.slice(0, 3)) {
+              const s = sc.via.length ? await goTo(sc.via) : (await r.relaunch(), await r.settle());
+              if (!s) continue;
+              if (!(await r.inApp(s))) {
+                const c = await r.crashes(`opening "${sc.name}" with permissions turned off`);
+                report.crashes.push(...(c.length ? c : [{ type: "closed" as const, reason: "The app closed with permissions turned off", stack: [], during: `opening "${sc.name}" with permissions turned off` }]));
+              }
+            }
+            p.done = true;
+            p.note = `turned off: ${granted.map((x) => x.replace("android.permission.", "")).join(", ")}`;
+          } finally {
+            for (const perm of granted) await shell("pm", ["grant", appId, perm]).catch(() => null);
+          }
+        }
       }
       // Back on the first screen must leave the app, not crash it.
       await r.relaunch();

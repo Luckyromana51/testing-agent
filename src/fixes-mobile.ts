@@ -78,6 +78,11 @@ export const MOBILE_FIXES: Record<string, Fix> = {
   "device:tablet-cut-off": { steps: "Use window size classes so the layout changes on wide screens instead of stretching.", effort: "days" },
   "device:tablet-overlap": { steps: "Use window size classes so the layout changes on wide screens.", effort: "days" },
   "device:offline-crash": { steps: "Catch network errors (IOException, URLError) where the app loads data, and show a message with a Try again button.", code: [{ label: "Kotlin", snippet: "try {\n    items = api.load()\n} catch (e: IOException) {\n    showError(R.string.no_internet)\n}" }], effort: "hours" },
+  "device:state-lost": {
+    steps: "Keep the screen's state when the app goes to the background or Android stops it: save it in onSaveInstanceState (or rememberSaveable in Compose, SavedStateHandle in a ViewModel), use state restoration on iOS (@SceneStorage in SwiftUI), and in Flutter RestorationMixin. Test with Developer options > Don't keep activities.",
+    code: [{ label: "Kotlin (Compose)", snippet: "var query by rememberSaveable { mutableStateOf(\"\") }\n// ViewModel: survives rotation and process death\nclass CartViewModel(private val state: SavedStateHandle) : ViewModel() {\n    val items = state.getStateFlow(\"items\", emptyList<String>())\n}" }],
+    effort: "hours",
+  },
   "device:offline-blank": { steps: "Show the last loaded data (Room, a cache) or a no-internet message with Try again.", effort: "hours" },
   "device:slow-start": { steps: "Do less before the first screen: move SDK start-up and data loading after it shows (App Startup library, lazy init), and add a Baseline Profile.", code: [{ label: "build.gradle.kts", snippet: 'dependencies {\n    implementation("androidx.profileinstaller:profileinstaller:1.4.1")\n}' }], effort: "days" },
   "device:memory": { steps: "Load pictures at the size they are shown (Glide, Coil, Kingfisher), clear caches on onTrimMemory, and check for leaks with LeakCanary.", effort: "days" },
