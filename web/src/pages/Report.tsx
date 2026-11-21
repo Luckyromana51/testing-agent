@@ -129,7 +129,7 @@ export function Report({ id }: { id: string }) {
         )}
         {run.projectId && run.status !== "running" && run.status !== "queued" && (
           <button
-            className="btn"
+            className="btn primary"
             onClick={async () => {
               const next = await api.retest(run.projectId!).catch((e: Error) => (setError(e.message), null));
               if (next) go(`#/run/${next.id}`);
