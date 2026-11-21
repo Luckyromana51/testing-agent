@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ToolChoice } from "../../../src/tools/types.ts";
 import type { Schedule, User } from "../../../src/types.ts";
-import { api, type Meta, type ProjectDetail, type ProjectSummary } from "../api.ts";
+import { api, type Meta, type ProjectDetail, type PermissionView, type ProjectSummary } from "../api.ts";
 import { go, plural, targetHref, targetLabel, timeAgo, usePoll } from "../lib.ts";
 import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
@@ -16,7 +16,7 @@ const PUBLIC_TYPES = ["website", "ecommerce", "webapp", "saas"];
 import { TrendsCard } from "./Trends.tsx";
 import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
-import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
+import { Empty, Icon, MAX_PAGES, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
 import { setView, useSimple } from "../view.ts";
 
 const SCHEDULE_LABEL: Record<Schedule, string> = { off: "Manual", daily: "Daily re-test", weekly: "Weekly re-test" };
@@ -92,7 +92,13 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
-type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "appjourneys" | "tests";
+type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "appjourneys" | "tests" | "permission";
+
+/** "#/project/<id>?tab=permission" opens that tab (links from badges and the hack agent). */
+const tabFromHash = (): ProjectTab | undefined => {
+  const q = window.location.hash.split("?")[1];
+  return (new URLSearchParams(q ?? "").get("tab") as ProjectTab | null) ?? undefined;
+};
 
 /** Tabs left out of simple view (full view shows them). */
 const SIMPLE_HIDDEN: ProjectTab[] = ["growth", "fixes", "watch", "trends", "tests"];
@@ -104,6 +110,8 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
   const [allRuns, setAllRuns] = useState(false);
   const simple = useSimple();
   const [tab, setTabState] = useState<ProjectTab>(() => {
+    const asked = tabFromHash();
+    if (asked) return asked;
     try {
       return (localStorage.getItem("glv.projectTab") as ProjectTab) || "overview";
     } catch {
@@ -118,6 +126,14 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
       // Private window: the tab is just not remembered.
     }
   };
+  useEffect(() => {
+    const on = () => {
+      const t = tabFromHash();
+      if (t) setTabState(t);
+    };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
   if (error) return <div className="page error big">{error}</div>;
   if (!data) return <div className="loading">Loading…</div>;
   const { project: p, runs, trend, agents, trends, flaky, watch } = data;
@@ -126,6 +142,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
 
   const journeysOn = isWeb && meta.modules.some((m) => m.id === "journeys" && m.on);
   const hasPermissionTools = meta.tools.some((t) => t.safety === "permission" && t.products.includes(p.type));
+  const unlocked = ((p.permissions ?? []) as PermissionView[]).some((x) => x.status === "active");
   const isApp = ["webapp", "saas", "crm"].includes(p.type);
   const tabs: [ProjectTab, string, string?][] = [
     ["overview", "Overview"],
@@ -138,6 +155,9 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ...(p.type === "android" || p.type === "ios" ? ([["appjourneys", "App journeys", String(p.appJourneys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ["tests", "What runs"],
+    ...(hasPermissionTools
+      ? ([["permission", "Load and attack", unlocked ? "on" : "off"]] as [ProjectTab, string, string?][])
+      : []),
   ].filter(([t]) => !simple || !SIMPLE_HIDDEN.includes(t as ProjectTab)) as [ProjectTab, string, string?][];
   const current = tabs.some(([t]) => t === tab) ? tab : "overview";
 
@@ -242,7 +262,8 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
                   className="input"
                   type="number"
                   min={1}
-                  max={200}
+                  max={MAX_PAGES}
+                  title="From 1 up to 20,000 pages"
                   defaultValue={p.target.maxPages ?? meta.defaultMaxPages}
                   onBlur={(e) => Number(e.target.value) !== p.target.maxPages && save({ maxPages: Number(e.target.value) })}
                 />
@@ -400,11 +421,21 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         <>
           <ProjectTools key={JSON.stringify(p.tools ?? null)} meta={meta} project={p} agents={agents} onSave={(tools) => save({ tools })} />
           {hasPermissionTools && (
-            <>
-              <h2 className="section-title">Load and attack tests</h2>
-              <PermissionCard project={p} isOwner={user.role === "owner"} onChanged={reload} />
-            </>
+            <p className="muted small">
+              Load and attack tools are off until they are unlocked on the{" "}
+              <button type="button" className="link" onClick={() => setTab("permission")}>
+                Load and attack
+              </button>{" "}
+              tab.
+            </p>
           )}
+        </>
+      )}
+
+      {current === "permission" && hasPermissionTools && (
+        <>
+          <h2 className="section-title">Load and attack tests</h2>
+          <PermissionCard project={p} isOwner={user.role === "owner"} onChanged={reload} />
         </>
       )}
 
@@ -441,7 +472,7 @@ function ProjectTools({
   const changed = JSON.stringify(toolChoices(meta, draft)) !== before;
   return (
     <div className="card form">
-      <ToolTabs meta={meta} type={project.type} agents={agents} draft={draft} onChange={setDraft} permissions={project.permissions ?? []} />
+      <ToolTabs meta={meta} type={project.type} agents={agents} draft={draft} onChange={setDraft} permissions={project.permissions ?? []} projectId={project.id} />
       {changed && (
         <div className="form-actions">
           <button

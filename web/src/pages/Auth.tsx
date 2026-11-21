@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { User } from "../../../src/types.ts";
 import { api } from "../api.ts";
+import { PasswordInput } from "../ui.tsx";
 
 export function AuthScreen({ setupNeeded, onSignedIn }: { setupNeeded: boolean; onSignedIn: (u: User) => void }) {
   const [name, setName] = useState("");
@@ -58,9 +59,8 @@ export function AuthScreen({ setupNeeded, onSignedIn }: { setupNeeded: boolean; 
         </label>
         <label className="form-field">
           <span>Password{setupNeeded ? " (at least 10 characters)" : ""}</span>
-          <input
+          <PasswordInput
             className="input"
-            type="password"
             required
             minLength={setupNeeded ? 10 : undefined}
             value={password}

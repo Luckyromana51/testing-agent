@@ -25,7 +25,7 @@ import { startDemoSite } from "./fixtures/demo-site.js";
 describe("master control settings", () => {
   it("keeps numbers inside their limits and drops unknown settings", () => {
     const c = cleanControl({ maxPages: 99999, parallel: 0, cpuSlowdown: 1, network: "none", nonsense: 5, pageTimeout: "12", retries: -3 });
-    assert.equal(c.maxPages, 1000);
+    assert.equal(c.maxPages, 20_000);
     assert.equal(c.parallel, 1);
     assert.equal(c.cpuSlowdown, undefined, "1× is no slowdown");
     assert.equal(c.network, undefined, "full speed is the normal");

@@ -27,7 +27,7 @@ const dayEdge = (value: string, end: boolean) => {
  */
 export function PermissionCard({ project, isOwner, onChanged }: { project: ProjectSummary; isOwner: boolean; onChanged: () => void }) {
   const list = [...(project.permissions ?? [])].reverse();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<false | "own" | "client">(false);
   const [error, setError] = useState("");
   const [checks, setChecks] = useState<Record<string, ProofCheck[]>>({});
   const [busy, setBusy] = useState("");
@@ -56,18 +56,31 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
 
   return (
     <div className="card permission-card">
+      <div className="permit-ways">
+        <div>
+          <strong>Our own system</strong>
+          <span className="muted small">
+            A GLV site, server or app. The owner confirms it once and puts a small proof file on the server. No client paperwork. Lasts a year.
+          </span>
+        </div>
+        <div>
+          <strong>A client's system</strong>
+          <span className="muted small">
+            Only with the client's written permission: their addresses, dates and limits, and their proof file on each address.
+          </span>
+        </div>
+      </div>
       <p className="muted small permission-intro">
-        Load tests (k6, JMeter) and attack tests (ZAP's active scan, GLV's attack probes) send far more than a visitor would. They run only with the
-        client's written permission: on the addresses it names, between its dates, within its limits, and while the client keeps a proof file on each
-        address. The proof is checked again before every test, and these tests never run on the schedule. Checks that change data (wrong passwords until
-        an account locks, test files uploaded, extra fields sent in saves, forms filled) need the same written permission on a live system; on a test copy,
-        tick "test copy" on the Signed-in app tab instead.
+        Either way, the proof is checked again before every test, these tests start only when someone presses Start (never on the schedule), the attack
+        checks only read, and a site nobody here runs can never be unlocked, because it cannot hold the proof file. Checks that change data need the
+        same permission on a live system; on a test copy, tick "test copy" on the Signed-in app tab instead.
       </p>
-      {list.length === 0 && !adding && <div className="muted">No permission yet: the load and attack tools stay off.</div>}
+      {list.length === 0 && !adding && <div className="muted">Nothing unlocked yet: load and attack tools stay off. Everything else in the test runs as normal.</div>}
       {list.map((p) => (
         <div className={`permission ${p.status}`} key={p.id}>
           <div className="permission-head">
             <span className={`permit-status ${p.status}`}>{STATUS[p.status]}</span>
+            {p.own && <span className="tag own-tag">Own system</span>}
             <strong>{p.kinds.map((k, i) => (i ? KIND[k].toLowerCase() : KIND[k])).join(" and ")}</strong>
             <span className="muted small">
               {day(p.from)} to {day(p.until)}
@@ -96,10 +109,14 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
             )}
           </div>
           <dl className="permission-facts">
-            <dt>Given by</dt>
-            <dd>{p.grantedBy}</dd>
-            <dt>In writing</dt>
-            <dd>{p.reference}</dd>
+            {!p.own && (
+              <>
+                <dt>Given by</dt>
+                <dd>{p.grantedBy}</dd>
+                <dt>In writing</dt>
+                <dd>{p.reference}</dd>
+              </>
+            )}
             <dt>Limits</dt>
             <dd>
               Up to {p.maxUsers} users at once, {p.maxMinutes} minutes a test{p.writes ? "; test data may be created or changed" : "; reading only (GET)"}
@@ -121,7 +138,7 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
           {p.status === "waiting-proof" && (
             <div className="proof-steps">
               <div>
-                <strong>Ask the client to add the proof.</strong> On each address, a file at <code>/.well-known/glv-testing.txt</code> holding this line:
+                <strong>{p.own ? "Put the proof on your server." : "Ask the client to add the proof."}</strong> On each address, a file at <code>/.well-known/glv-testing.txt</code> holding this line:
               </div>
               <div className="proof-token">
                 <code>{p.token}</code>
@@ -151,6 +168,7 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
         <PermissionForm
           projectId={project.id}
           host={host}
+          own={adding === "own"}
           onDone={(saved) => {
             setAdding(false);
             if (saved) {
@@ -161,8 +179,11 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
         />
       ) : isOwner ? (
         <div className="form-actions">
-          <button className="btn" onClick={() => setAdding(true)}>
-            Add the client's permission
+          <button className="btn primary" onClick={() => setAdding("own")}>
+            Unlock as our own system
+          </button>
+          <button className="btn" onClick={() => setAdding("client")}>
+            Add a client's permission
           </button>
         </div>
       ) : (
@@ -172,7 +193,7 @@ export function PermissionCard({ project, isOwner, onChanged }: { project: Proje
   );
 }
 
-function PermissionForm({ projectId, host, onDone }: { projectId: string; host: string; onDone: (saved?: { id: string; checks: ProofCheck[] }) => void }) {
+function PermissionForm({ projectId, host, own, onDone }: { projectId: string; host: string; own: boolean; onDone: (saved?: { id: string; checks: ProofCheck[] }) => void }) {
   const today = new Date();
   const [hosts, setHosts] = useState(host);
   const [kinds, setKinds] = useState<PermissionKind[]>(["load", "attack"]);
@@ -195,7 +216,9 @@ function PermissionForm({ projectId, host, onDone }: { projectId: string; host: 
         e.preventDefault();
         setBusy(true);
         setError("");
-        const draft: PermissionDraft = {
+        const draft: PermissionDraft = own
+          ? { own: true, hosts: hosts.split(/[\s,]+/).filter(Boolean), kinds, writes, confirm }
+          : {
           hosts: hosts.split(/[\s,]+/).filter(Boolean),
           kinds,
           grantedBy,
@@ -217,13 +240,19 @@ function PermissionForm({ projectId, host, onDone }: { projectId: string; host: 
         }
       }}
     >
+      {own && (
+        <div className="own-head">
+          <strong>Unlock our own system</strong>
+          <span className="muted small">For GLV's own sites, servers and apps. Full limits (1,000 users, 120 minutes), for a year.</span>
+        </div>
+      )}
       <label className="form-field">
-        <span>Addresses the client allows</span>
+        <span>{own ? "Our addresses" : "Addresses the client allows"}</span>
         <input className="input" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder="shop.example.com, www.example.com" />
         <span className="muted small">Exact host names, separated by commas. www.example.com and example.com are different addresses.</span>
       </label>
       <div className="form-field">
-        <span>What the client allows</span>
+        <span>{own ? "What to unlock" : "What the client allows"}</span>
         <label className="check dark">
           <input type="checkbox" checked={kinds.includes("load")} onChange={(e) => toggle("load", e.target.checked)} /> Load tests: many users at once (k6, JMeter)
         </label>
@@ -236,6 +265,8 @@ function PermissionForm({ projectId, host, onDone }: { projectId: string; host: 
           lockout, file uploads, mass assignment, forgot password, forms filled by Claude (signed-in apps)
         </label>
       </div>
+      {!own && (
+        <>
       <div className="form-row">
         <label className="form-field">
           <span>Who gave permission</span>
@@ -264,17 +295,21 @@ function PermissionForm({ projectId, host, onDone }: { projectId: string; host: 
           <input className="input" type="number" min={1} max={120} value={maxMinutes} onChange={(e) => setMaxMinutes(Number(e.target.value))} />
         </label>
       </div>
+        </>
+      )}
       <label className="check dark">
-        <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)} /> The client also allows test data to be created or changed (POST, PUT
-        and DELETE in JMeter plans)
+        <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)} />{" "}
+        {own ? "Test data may be created or changed" : "The client also allows test data to be created or changed"} (POST, PUT and DELETE in JMeter plans)
       </label>
       <label className="check dark confirm-line">
-        <input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} /> I have this permission in writing from someone who can give it
-        for these addresses
+        <input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />{" "}
+        {own
+          ? "GLV owns or runs these addresses. They are not a client's or anyone else's site."
+          : "I have this permission in writing from someone who can give it for these addresses"}
       </label>
       <div className="form-actions">
         <button className="btn primary" disabled={busy || !confirm || kinds.length === 0}>
-          {busy ? "Saving…" : "Save permission"}
+          {busy ? "Saving…" : own ? "Unlock and show the proof line" : "Save permission"}
         </button>
         <button type="button" className="btn ghost" onClick={() => onDone()}>
           Cancel

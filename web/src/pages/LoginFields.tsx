@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ApiAuthType, Login, LoginKind, LoginSummary, ProductType } from "../../../src/types.ts";
 import { api } from "../api.ts";
+import { PasswordInput } from "../ui.tsx";
 
 export type LoginDraft = Partial<Login>;
 
@@ -55,14 +56,24 @@ export function LoginFields({
   const field = (key: keyof Login, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <label className="form-field">
       <span>{label}</span>
-      <input
-        className="input"
-        value={(value[key] as string | undefined) ?? ""}
-        onChange={(e) => set({ [key]: e.target.value })}
-        autoComplete="off"
-        spellCheck={false}
-        {...props}
-      />
+      {props.type === "password" ? (
+        <PasswordInput
+          className="input"
+          value={(value[key] as string | undefined) ?? ""}
+          onChange={(e) => set({ [key]: e.target.value })}
+          spellCheck={false}
+          {...Object.fromEntries(Object.entries(props).filter(([k]) => k !== "type"))}
+        />
+      ) : (
+        <input
+          className="input"
+          value={(value[key] as string | undefined) ?? ""}
+          onChange={(e) => set({ [key]: e.target.value })}
+          autoComplete="off"
+          spellCheck={false}
+          {...props}
+        />
+      )}
     </label>
   );
   const secret = (key: "password" | "token" | "totpSecret", label: string, isSaved: boolean | undefined, placeholder = "") =>

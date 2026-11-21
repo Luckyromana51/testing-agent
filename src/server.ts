@@ -37,11 +37,12 @@ import { registerMoreRoutes, rumSnippet } from "./more-routes.js";
 import { registerMobileRoutes } from "./mobile-routes.js";
 import { manualFilesDir, registerManualRoutes } from "./manual-routes.js";
 import { registerControlRoutes } from "./control-routes.js";
-import { describeControl, liveActionsFor } from "./control.js";
+import { registerHackRoutes } from "./hack-routes.js";
+import { cleanControl, describeControl, liveActionsFor } from "./control.js";
 import { cleanAppJourneys } from "./mobile/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
-import { WEB_PRODUCTS } from "./products.js";
+import { MAX_PAGES, WEB_PRODUCTS } from "./products.js";
 import { flakyIssues, trendPoints } from "./trends.js";
 import { cleanWatch, watchUrl, Watcher } from "./watch.js";
 import { reportHtml, reportPdf } from "./report-html.js";
@@ -374,7 +375,7 @@ export async function createApp(opts: AppOptions) {
   app.get("/api/projects", async () => stores.projects.list().map(projectSummary));
 
   app.post("/api/projects", async (req, reply) => {
-    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule; login: Partial<Login> | null; tools: unknown }>(req);
+    const b = body<TargetInput & { name: string; type: ProductType; schedule: Schedule; login: Partial<Login> | null; tools: unknown; agents?: unknown }>(req);
     const type = (b.type ?? "website") as ProductType;
     const info = PRODUCTS.find((p) => p.type === type);
     if (!info) throw new HttpError(400, "Unknown product type.");
@@ -383,7 +384,7 @@ export async function createApp(opts: AppOptions) {
     let login: Login | undefined;
     let tools;
     try {
-      const { login: loginInput, tools: toolsInput, ...targetInput } = b;
+      const { login: loginInput, tools: toolsInput, agents: _agents, ...targetInput } = b;
       target = buildTarget(type, targetInput, queue.uploadsDir(), stores.settings.get().defaultMaxPages);
       if (loginInput) login = buildLogin(type, loginInput);
       // The tester's choice from the tool tabs; without one, every safe tool installed here.
@@ -403,6 +404,10 @@ export async function createApp(opts: AppOptions) {
       issueSeq: 0,
       tools,
     };
+    // Checks the tester switched off on the new-test form: kept as the project's default settings,
+    // so re-tests and scheduled tests leave them off too (master control can turn them on again).
+    const agentChoice = b.agents && typeof b.agents === "object" ? cleanControl({ agents: b.agents }).agents : undefined;
+    if (agentChoice) project.control = { agents: agentChoice };
     stores.projects.save(project);
     if (login) stores.vault.save(project.id, login);
     const run = queue.enqueue(project);
@@ -682,6 +687,7 @@ export async function createApp(opts: AppOptions) {
   await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
   registerManualRoutes(app, { stores, dataDir: opts.dataDir, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
   registerControlRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
+  registerHackRoutes(app, { stores, queue, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
   await app.register(async (scope) => {
@@ -742,7 +748,7 @@ export async function createApp(opts: AppOptions) {
       target: {
         ...project.target,
         url,
-        maxPages: Math.min(Math.max(Number(b.maxPages) || project.target.maxPages || 10, 1), 200),
+        maxPages: Math.min(Math.max(Number(b.maxPages) || project.target.maxPages || 10, 1), MAX_PAGES),
         checkLinks: b.checkLinks !== false,
       },
     };
@@ -1098,7 +1104,7 @@ export async function createApp(opts: AppOptions) {
       patch.agents = { ...stores.settings.get().agents };
       for (const [id, on] of Object.entries(b.agents)) if (known.has(id)) patch.agents[id] = Boolean(on);
     }
-    if (b.defaultMaxPages !== undefined) patch.defaultMaxPages = Math.min(Math.max(Number(b.defaultMaxPages) || 20, 1), 200);
+    if (b.defaultMaxPages !== undefined) patch.defaultMaxPages = Math.min(Math.max(Number(b.defaultMaxPages) || 20, 1), MAX_PAGES);
     if (b.aiSummary !== undefined) patch.aiSummary = Boolean(b.aiSummary);
     if (b.parallelPages !== undefined) patch.parallelPages = parallelPages(Number(b.parallelPages) || 1);
     if (b.parallelProjects !== undefined) patch.parallelProjects = parallelProjects(Number(b.parallelProjects) || 1);

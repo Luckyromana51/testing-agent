@@ -4,6 +4,71 @@ import type { ToolChoice } from "../../../src/tools/types.ts";
 import type { ProductType } from "../../../src/types.ts";
 import { api, type Meta, type MetaTool, type PermissionView } from "../api.ts";
 import { CATEGORY_LABEL } from "../lib.ts";
+import { Toggle } from "../ui.tsx";
+
+/** Checks the tester turned off for this test: agent id → false. Empty means every check runs. */
+export type AgentDraft = Record<string, boolean>;
+
+/**
+ * Every check (test case) of the product with its own on/off switch, grouped by kind, with a
+ * switch for each whole group. Everything starts on.
+ */
+export function AgentToggles({ agents, off, onChange }: { agents: AgentInfo[]; off: AgentDraft; onChange: (d: AgentDraft) => void }) {
+  const [find, setFind] = useState("");
+  const isOn = (id: string) => off[id] !== false;
+  const set = (ids: string[], on: boolean) => {
+    const next = { ...off };
+    for (const id of ids) {
+      if (on) delete next[id];
+      else next[id] = false;
+    }
+    onChange(next);
+  };
+  const shown = agents.filter((a) => !find || `${a.name} ${a.description}`.toLowerCase().includes(find.toLowerCase()));
+  const groups = [...new Set(shown.map((a) => a.category))];
+  const onCount = agents.filter((a) => isOn(a.id)).length;
+  return (
+    <div className="agent-toggles">
+      <div className="agent-toggles-head">
+        <span className="small">
+          <strong>{onCount}</strong> of {agents.length} checks on
+        </span>
+        <input className="input small-input" placeholder="Find a check" aria-label="Find a check" value={find} onChange={(e) => setFind(e.target.value)} />
+        <button type="button" className="btn ghost small" onClick={() => set(agents.map((a) => a.id), true)}>
+          All on
+        </button>
+        <button type="button" className="btn ghost small" onClick={() => set(agents.map((a) => a.id), false)}>
+          All off
+        </button>
+      </div>
+      {groups.map((cat) => {
+        const list = shown.filter((a) => a.category === cat);
+        const allOn = list.every((a) => isOn(a.id));
+        return (
+          <fieldset className="agent-group" key={cat}>
+            <legend>
+              <Toggle on={allOn} onChange={(v) => set(list.map((a) => a.id), v)} label={`All ${CATEGORY_LABEL[cat]} checks`} />
+              <span className={`cat-dot cat-${cat}`} /> {CATEGORY_LABEL[cat]}
+              <span className="muted small"> {list.filter((a) => isOn(a.id)).length}/{list.length}</span>
+            </legend>
+            <div className="agent-rows">
+              {list.map((a) => (
+                <label className={`agent-row ${isOn(a.id) ? "" : "off"}`} key={a.id} title={a.description}>
+                  <Toggle on={isOn(a.id)} onChange={(v) => set([a.id], v)} label={a.name} />
+                  <span className="agent-row-text">
+                    <span className="agent-row-name">{a.name}</span>
+                    <span className="muted small">{a.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        );
+      })}
+      {shown.length === 0 && <div className="muted small">No check matches "{find}".</div>}
+    </div>
+  );
+}
 
 const WEB_PRODUCTS: ProductType[] = ["website", "ecommerce", "webapp", "saas", "crm"];
 
@@ -69,6 +134,9 @@ export function ToolTabs({
   draft,
   onChange,
   permissions,
+  projectId,
+  agentOff,
+  onAgentsChange,
 }: {
   meta: Meta;
   type: ProductType;
@@ -77,6 +145,11 @@ export function ToolTabs({
   onChange: (d: ToolDraft) => void;
   /** The project's permissions for load and attack tests; undefined before the project exists. */
   permissions?: PermissionView[];
+  /** The project, for the link to its Load and attack tab. */
+  projectId?: string;
+  /** With these, each check gets its own on/off switch (new tests). */
+  agentOff?: AgentDraft;
+  onAgentsChange?: (d: AgentDraft) => void;
 }) {
   const tools = toolsForType(meta, type);
   const [active, setActive] = useState("glv");
@@ -111,7 +184,7 @@ export function ToolTabs({
       <div className="tool-tabs" role="tablist" aria-label="Tests to run">
         <button type="button" role="tab" aria-selected={active === "glv"} className={active === "glv" ? "active" : ""} onClick={() => setActive("glv")}>
           <span className="tool-dot on" />
-          GLV checks <span className="tab-count">{agents.length}</span>
+          GLV checks <span className="tab-count">{agentOff ? agents.filter((a) => agentOff[a.id] !== false).length : agents.length}</span>
         </button>
         {tools.map((t) => (
           <button
@@ -123,7 +196,7 @@ export function ToolTabs({
             onClick={() => setActive(t.id)}
             title={draft[t.id]?.on ? `${t.name} is on` : `${t.name} is off`}
           >
-            <span className={`tool-dot ${draft[t.id]?.on ? "on" : t.ready ? "off" : "missing"}`} />
+            <span className={`tool-dot ${draft[t.id]?.on ? "on" : !t.ready ? "missing" : t.safety === "permission" && !usablePermission(permissions, t) ? "optional" : "off"}`} />
             {t.name}
           </button>
         ))}
@@ -135,10 +208,15 @@ export function ToolTabs({
             <div className="tool-head">
               <div className="grow">
                 <div className="tool-name">GLV checks</div>
-                <div className="muted small">The platform's own specialist agents · always on</div>
+                <div className="muted small">
+                  {agentOff ? "The platform's own checks. Each one can be switched off for this project." : "The platform's own specialist agents · always on"}
+                </div>
               </div>
               <span className="safety safe">Safe</span>
             </div>
+            {agentOff && onAgentsChange ? (
+              <AgentToggles agents={agents} off={agentOff} onChange={onAgentsChange} />
+            ) : (
             <div className="agent-chips">
               {agents.map((a) => (
                 <div className="agent-chip" key={a.id} title={a.description}>
@@ -148,6 +226,7 @@ export function ToolTabs({
                 </div>
               ))}
             </div>
+            )}
             {tools.length > 0 && <p className="muted small">The other tabs add outside tools to the same test. Their findings join this report and the Issues board.</p>}
           </>
         ) : (
@@ -161,7 +240,9 @@ export function ToolTabs({
               </div>
               {tool.needsMac && <span className="safety mac">Mac helper</span>}
               {tool.needsDevice && <span className="safety mac">Test phone</span>}
-              <span className={`safety ${tool.safety}`}>{tool.safety === "safe" ? "Safe: no attacks" : "Needs permission"}</span>
+              <span className={`safety ${tool.safety === "safe" ? "safe" : permit ? "allowed" : "optional"}`}>
+                {tool.safety === "safe" ? "Safe: no attacks" : permit ? (permit.own ? "Unlocked: own system" : "Unlocked: client's permission") : "Optional · locked"}
+              </span>
             </div>
             <p className="tool-desc">{tool.description}</p>
             <ul className="tool-checks">
@@ -276,11 +357,19 @@ export function ToolTabs({
                   Runs only when someone starts a test, never on the schedule.
                 </div>
               ) : (
-                <div className="tool-missing">
-                  Needs the client's written permission for {tool.permission === "load" ? "load tests" : "attack tests"}.{" "}
-                  {permissions === undefined
-                    ? "Create the project first; then the owner adds the permission on the project page."
-                    : "The owner adds it under \"Load and attack tests\" on this page."}
+                <div className="tool-optional">
+                  <div>
+                    <strong>Optional, and off.</strong> The rest of the test runs without it. {tool.name} sends{" "}
+                    {tool.permission === "load" ? "many users at once" : "break-in attempts"}, so the owner unlocks it once per system: for our own system, or
+                    with a client's written permission.
+                  </div>
+                  {projectId ? (
+                    <a className="btn small primary" href={`#/project/${projectId}?tab=permission`}>
+                      Unlock on the Load and attack tab
+                    </a>
+                  ) : (
+                    <span className="muted small">Start this test first; then open the project's Load and attack tab.</span>
+                  )}
                 </div>
               ))}
             {!tool.ready && <div className="tool-missing">Not available on this server: {tool.notReady}</div>}

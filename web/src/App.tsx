@@ -10,12 +10,13 @@ import { Projects, ProjectView } from "./pages/Projects.tsx";
 import { LiveBoard } from "./pages/LiveBoard.tsx";
 import { Report } from "./pages/Report.tsx";
 import { MasterControl } from "./pages/MasterControl.tsx";
+import { HackAgent } from "./pages/HackAgent.tsx";
 import { ManualHome, ManualProject, ManualRoundView } from "./pages/Manual.tsx";
 import { setView, useView } from "./view.ts";
 import { Icon, ScoreChip } from "./ui.tsx";
 
 /** Shorter names for the phone's bottom bar. */
-const SHORT: Record<string, string> = { "Manual tests": "Manual", "Owner panel": "Owner" };
+const SHORT: Record<string, string> = { "Manual tests": "Manual", "Owner panel": "Owner", "Hack agent": "Hack" };
 
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
@@ -69,14 +70,16 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
   const [filter, setFilter] = useState("");
   const liveRun = new Map((queue?.running ?? []).map((r) => [r.projectId, r.runId]));
 
-  const nav: [string, string, Parameters<typeof Icon>[0]["name"], boolean][] = [
-    ["#/", "New test", "new", route.name === "home" || route.name === "new"],
-    ["#/live", "Live", "live", route.name === "live"],
-    ["#/projects", "Projects", "projects", route.name === "projects" || route.name === "project" || route.name === "control"],
-    ["#/manual", "Manual tests", "checklist", route.name === "manual" || route.name === "round"],
-    ["#/issues", "Issues", "issues", route.name === "issues"],
+  // [address, name, icon, active, kept in the phone's bottom bar]
+  const nav: [string, string, Parameters<typeof Icon>[0]["name"], boolean, boolean][] = [
+    ["#/", "New test", "new", route.name === "home" || route.name === "new", true],
+    ["#/live", "Live", "live", route.name === "live", true],
+    ["#/projects", "Projects", "projects", route.name === "projects" || route.name === "project" || route.name === "control", true],
+    ["#/hack", "Hack agent", "hack", route.name === "hack", true],
+    ["#/issues", "Issues", "issues", route.name === "issues", true],
+    ["#/manual", "Manual tests", "checklist", route.name === "manual" || route.name === "round", false],
   ];
-  if (user.role === "owner") nav.push(["#/owner", "Owner panel", "owner", route.name === "owner"]);
+  if (user.role === "owner") nav.push(["#/owner", "Owner panel", "owner", route.name === "owner", false]);
 
   let page = <div className="loading">Loading…</div>;
   if (meta) {
@@ -90,6 +93,7 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
     else if (route.name === "manual") page = <ManualHome meta={meta} />;
     else if (route.name === "round" && route.id) page = <ManualRoundView id={route.id} key={route.id} />;
     else if (route.name === "live") page = <LiveBoard isOwner={user.role === "owner"} />;
+    else if (route.name === "hack") page = <HackAgent meta={meta} />;
     else if (route.name === "issues") page = <Issues projectId={route.query.get("project") ?? undefined} openId={route.id} />;
     else if (route.name === "owner") page = <Owner tab={route.id} meta={meta} reloadMeta={reloadMeta} user={user} loginOff={loginOff} />;
   }
@@ -102,22 +106,33 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
             <div className="logo">GLV</div>
             <div>
               <div className="brand-name">Testing Agent</div>
-              <div className="brand-sub">by GLV Infotech Solutions</div>
+              <div className="brand-sub">GLV Infotech Solutions</div>
             </div>
           </a>
+          <ThemeToggle />
           <button className="menu-btn" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
             {menuOpen ? "Close" : "More"}
           </button>
         </div>
-        <nav className="nav">
-          {nav.map(([href, label, icon, active]) => (
-            <a key={href} href={href} className={`nav-item ${active ? "active" : ""}`}>
+        <nav className="nav" aria-label="Main">
+          {nav.map(([href, label, icon, active, inBar]) => (
+            <a key={href} href={href} className={`nav-item ${active ? "active" : ""} ${inBar ? "" : "not-in-bar"}`}>
               <Icon name={icon} size={18} />
               <span className="nav-text">{label}</span>
               <span className="nav-short">{SHORT[label] ?? label}</span>
               {href === "#/live" && queue && queue.running.length > 0 && <span className="nav-live">{queue.running.length}</span>}
             </a>
           ))}
+        </nav>
+        <nav className="more-nav phone-more" aria-label="More">
+          {nav
+            .filter(([, , , , inBar]) => !inBar)
+            .map(([href, label, icon, active]) => (
+              <a key={href} href={href} className={`nav-item ${active ? "active" : ""}`}>
+                <Icon name={icon} size={18} />
+                <span>{label}</span>
+              </a>
+            ))}
         </nav>
         {queue && (
           <a className="queue-strip" href="#/live" title="Tests that run at the same time. The owner sets the limit in Owner panel > Settings.">
@@ -133,20 +148,20 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
           </a>
         )}
         {projects && projects.length > 0 && (
-          <>
-            <div className="section-label phone-more">
-              Projects ({projects.length})
+          <div className="side-projects phone-more">
+            <div className="section-label">
+              Projects <span className="side-count">{projects.length}</span>
             </div>
             {projects.length > 8 && (
               <input
-                className="sidebar-filter phone-more"
+                className="sidebar-filter"
                 placeholder="Find a project"
                 aria-label="Find a project"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
             )}
-            <ul className="run-list phone-more">
+            <ul className="run-list">
               {projects
                 .filter((p) => !filter || `${p.name} ${p.target.url ?? ""}`.toLowerCase().includes(filter.toLowerCase()))
                 .map((p) => (
@@ -173,18 +188,25 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
                 </li>
               ))}
             </ul>
-          </>
+          </div>
         )}
         <div className="sidebar-foot phone-more">
           <ViewSwitch />
-          <ThemeSwitch />
-          <div className={`ai-status ${meta?.ai && meta.aiSummary ? "on" : ""}`}>
-            {meta ? (meta.ai && meta.aiSummary ? "Claude summary is on" : "Claude summary is off") : ""}
-          </div>
           <div className="me">
-            <div>
+            <span className="me-avatar" aria-hidden="true">
+              {(user.name || "?").trim().charAt(0).toUpperCase()}
+            </span>
+            <div className="me-text">
               <div className="me-name">{user.name}</div>
-              <div className="me-role">{user.role === "owner" ? "Owner" : "Team member"}</div>
+              <div className="me-role">
+                {user.role === "owner" ? "Owner" : "Team member"}
+                {meta && (
+                  <span className={`ai-dot ${meta.ai && meta.aiSummary ? "on" : ""}`} title={meta.ai && meta.aiSummary ? "Claude summary is on" : "Claude summary is off"}>
+                    {" "}
+                    · Claude {meta.ai && meta.aiSummary ? "on" : "off"}
+                  </span>
+                )}
+              </div>
             </div>
             {!loginOff && (
               <button
@@ -230,33 +252,38 @@ export function applyTheme(t: Theme = readTheme()) {
   else document.documentElement.dataset.theme = t;
 }
 
-/** Light, dark, or the computer's own setting. Remembered in this browser. */
-function ThemeSwitch() {
-  const [theme, setTheme] = useState<Theme>(readTheme);
-  const pick = (t: Theme) => {
+/** What the page shows now: the saved choice, or the computer's own setting. */
+const effectiveTheme = (t: Theme): "light" | "dark" =>
+  t !== "system" ? t : typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+
+/** A small light/dark switch. It starts with the computer's own setting and remembers a choice in this browser. */
+function ThemeToggle() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => effectiveTheme(readTheme()));
+  const flip = () => {
+    const t = theme === "dark" ? "light" : "dark";
     setTheme(t);
     applyTheme(t);
     try {
-      if (t === "system") localStorage.removeItem("glv.theme");
-      else localStorage.setItem("glv.theme", t);
+      localStorage.setItem("glv.theme", t);
     } catch {
       // Private window: the choice lasts until the tab closes.
     }
   };
+  const dark = theme === "dark";
   return (
-    <div className="theme-switch" role="group" aria-label="Colours">
-      {(
-        [
-          ["system", "Auto"],
-          ["light", "Light"],
-          ["dark", "Dark"],
-        ] as [Theme, string][]
-      ).map(([t, label]) => (
-        <button key={t} className={theme === t ? "active" : ""} aria-pressed={theme === t} onClick={() => pick(t)}>
-          {label}
-        </button>
-      ))}
-    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={dark}
+      className={`theme-toggle ${dark ? "dark" : ""}`}
+      onClick={flip}
+      title={dark ? "Dark colours: switch to light" : "Light colours: switch to dark"}
+      aria-label="Dark colours"
+    >
+      <span className="theme-knob">
+        <Icon name={dark ? "moon" : "sun"} size={12} />
+      </span>
+    </button>
   );
 }
 
@@ -264,7 +291,7 @@ function ThemeSwitch() {
 export function ViewSwitch() {
   const view = useView();
   return (
-    <div className="view-switch">
+    <div className="view-switch" title={view === "simple" ? "Simple view: only what most tests need" : "Full view: every agent, tool and setting"}>
       <div className="theme-switch" role="group" aria-label="How much to show">
         {(
           [
@@ -277,7 +304,7 @@ export function ViewSwitch() {
           </button>
         ))}
       </div>
-      <div className="view-hint">{view === "simple" ? "Simple view: only what most tests need." : "Full view: every agent, tool and setting."}</div>
+
     </div>
   );
 }

@@ -48,6 +48,12 @@ export interface Permission {
   createdAt: string;
   revokedBy?: string;
   revokedAt?: string;
+  /**
+   * The owner's own system (GLV's site, server or app): no client paperwork, the owner confirms it
+   * once. The proof file or DNS record is still needed on each address, so a site GLV does not run
+   * can never be unlocked this way.
+   */
+  own?: boolean;
 }
 
 export type PermissionStatus = "active" | "waiting-proof" | "scheduled" | "expired" | "revoked";
@@ -58,6 +64,8 @@ export const PROOF_PATH = "/.well-known/glv-testing.txt";
 export const PROOF_DNS = "_glv-testing";
 
 export const LIMITS = { maxUsers: 1000, maxMinutes: 120, maxDays: 90, hosts: 10 };
+/** An own-system unlock lasts a year; the owner renews it with one click. */
+export const OWN_DAYS = 365;
 
 export function permissionStatus(p: Permission, now = Date.now()): PermissionStatus {
   if (p.revokedAt) return "revoked";
@@ -94,8 +102,10 @@ export interface PermissionInput {
   maxMinutes?: unknown;
   from?: unknown;
   until?: unknown;
-  /** The owner confirms they hold the client's written permission. */
+  /** The owner confirms they hold the client's written permission (or, with own, that GLV runs the system). */
   confirm?: unknown;
+  /** The owner's own system: no client paperwork, sensible limits filled in. */
+  own?: unknown;
 }
 
 const text = (v: unknown, label: string, min = 3) => {
@@ -112,8 +122,22 @@ const whole = (v: unknown, label: string, max: number) => {
 };
 
 /** Checks what the owner entered and makes a new permission, waiting for its proof. */
-export function buildPermission(b: PermissionInput, by: string, now = Date.now()): Permission {
-  if (b.confirm !== true) throw new Error("Confirm that the client gave this permission in writing.");
+export function buildPermission(input: PermissionInput, by: string, now = Date.now()): Permission {
+  const own = input.own === true;
+  if (input.confirm !== true) throw new Error(own ? "Confirm that GLV owns or runs these addresses." : "Confirm that the client gave this permission in writing.");
+  // Own systems: the paperwork fields are filled in, the limits are the platform's highest.
+  const b: PermissionInput = own
+    ? {
+        ...input,
+        kinds: Array.isArray(input.kinds) && input.kinds.length ? input.kinds : ["load", "attack"],
+        grantedBy: typeof input.grantedBy === "string" && input.grantedBy.trim().length >= 3 ? input.grantedBy : "GLV Infotech (own system)",
+        reference: `Own system, confirmed by ${by}`,
+        maxUsers: input.maxUsers ?? LIMITS.maxUsers,
+        maxMinutes: input.maxMinutes ?? LIMITS.maxMinutes,
+        from: input.from ?? new Date(now).toISOString(),
+        until: input.until ?? new Date(now + OWN_DAYS * 86_400_000).toISOString(),
+      }
+    : input;
   const rawHosts = Array.isArray(b.hosts) ? b.hosts : typeof b.hosts === "string" ? b.hosts.split(/[\s,]+/) : [];
   const hosts = [...new Set(rawHosts.filter((h): h is string => typeof h === "string" && h.trim() !== "").map(hostOf))];
   if (!hosts.length) throw new Error("Add at least one site address.");
@@ -127,7 +151,8 @@ export function buildPermission(b: PermissionInput, by: string, now = Date.now()
   if (Number.isNaN(from) || Number.isNaN(until)) throw new Error("Set the first and last day of the permission.");
   if (until <= from) throw new Error("The last day must come after the first day.");
   if (until < now) throw new Error("That period is already over.");
-  if (until - from > LIMITS.maxDays * 86_400_000) throw new Error(`A permission can last at most ${LIMITS.maxDays} days. Add a new one after that.`);
+  const maxDays = own ? OWN_DAYS : LIMITS.maxDays;
+  if (until - from > maxDays * 86_400_000) throw new Error(`A permission can last at most ${maxDays} days. Add a new one after that.`);
   return {
     id: randomUUID(),
     hosts,
@@ -143,6 +168,7 @@ export function buildPermission(b: PermissionInput, by: string, now = Date.now()
     proofs: {},
     createdBy: by,
     createdAt: new Date(now).toISOString(),
+    ...(own ? { own: true } : {}),
   };
 }
 

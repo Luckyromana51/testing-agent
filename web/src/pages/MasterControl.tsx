@@ -184,7 +184,7 @@ export function MasterControl({ projectId, meta }: { projectId: string; meta: Me
           })}
           <button type="button" className={open === ("safety" as SectionId) ? "active" : ""} onClick={() => setOpen("safety" as SectionId)}>
             <span>Safety gates</span>
-            <span className="mc-lock">locked</span>
+            <span className="tag" title="Set on the project page by the owner">owner</span>
           </button>
         </nav>
 
@@ -249,7 +249,7 @@ export function MasterControl({ projectId, meta }: { projectId: string; meta: Me
             <div className="muted small">Everything runs the way the owner and the project set it.</div>
           )}
           <div className="mc-safe small">
-            <Icon name="owner" size={14} /> Checks that change data, and load and attack tools, still need a test copy or the client's written permission.
+            <Icon name="owner" size={14} /> Load and attack tools, and checks that change data, run once the owner unlocks them on the project page.
           </div>
           <button type="button" className="btn primary mc-go" disabled={busy || Boolean(checkError) || p.busy} onClick={start}>
             {p.busy ? "A test is running" : busy ? "Starting…" : "Start test with these settings"}
@@ -391,7 +391,14 @@ function Scope({ meta, detail, draft, onChange }: { meta: Meta; detail: ProjectD
                   <div className="grow">
                     <div className="strong small">
                       {t.name} <span className="muted">· {t.maker}</span>
-                      {t.safety === "permission" && <span className="mc-lock">{permit ? `permission until ${new Date(permit.until).toLocaleDateString()}` : "needs the client's permission"}</span>}
+                      {t.safety === "permission" &&
+                        (permit ? (
+                          <span className="mc-ok">{permit.own ? "own system" : "allowed"} until {new Date(permit.until).toLocaleDateString()}</span>
+                        ) : (
+                          <a className="mc-unlock" href={`#/project/${p.id}?tab=permission`} title="Optional. The rest of the test runs without it.">
+                            Optional · unlock
+                          </a>
+                        ))}
                       {!t.ready && <span className="tag">not installed</span>}
                     </div>
                     <div className="muted small">{t.description}</div>
@@ -572,21 +579,33 @@ function Safety({ detail }: { detail: ProjectDetail }) {
       <div className="mc-section-head">
         <div>
           <h2>Safety gates</h2>
-          <div className="muted small">Master control cannot open these. They are set on the project page, by the owner, with proof.</div>
+          <div className="muted small">The owner opens these once on the project page (for our own systems, or with a client's permission). Master control can then use them.</div>
         </div>
       </div>
       <div className="mc-gates">
         <div className="mc-gate">
           <div className="strong">Checks that change data</div>
           <div className={p.writes.allowed ? "ok small" : "muted small"}>{p.writes.allowed ? `Allowed: ${p.writes.why}` : `Off: ${p.writes.why}`}</div>
-          <div className="muted small">Account lockout, file uploads, mass assignment, forgot password, the Salesforce guest check, filling forms. Only on a test copy or with the client's written permission.</div>
+          <div className="muted small">Account lockout, file uploads, mass assignment, forgot password, the Salesforce guest check, filling forms. Only on a test copy, on our own system, or with the client's written permission.</div>
+          {!p.writes.allowed && (
+            <a className="btn small ghost gate-btn" href={`#/project/${p.id}?tab=permission`}>
+              Unlock on the project page
+            </a>
+          )}
         </div>
         <div className="mc-gate">
           <div className="strong">Load and attack tools</div>
           <div className={active.length ? "ok small" : "muted small"}>
-            {active.length ? `${plural(active.length, "permission")} on file, up to ${Math.max(...active.map((x) => x.maxUsers))} users for ${Math.max(...active.map((x) => x.maxMinutes))} minutes` : "No permission on file: these tools stay off."}
+            {active.length
+              ? `Unlocked: ${plural(active.length, "permission")} on file, up to ${Math.max(...active.map((x) => x.maxUsers))} users for ${Math.max(...active.map((x) => x.maxMinutes))} minutes`
+              : "Not unlocked yet. These optional tools stay off; every other check still runs."}
           </div>
-          <div className="muted small">k6, JMeter, ZAP's attack scan and GLV's probes. Checked again just before each one runs, and never on a schedule.</div>
+          <div className="muted small">k6, JMeter, ZAP's attack scan, GLV's probes and the hack agent. Checked again just before each one runs, and never on a schedule.</div>
+          {!active.length && (
+            <a className="btn small primary gate-btn" href={`#/project/${p.id}?tab=permission`}>
+              Unlock load and attack tools
+            </a>
+          )}
         </div>
         <div className="mc-gate">
           <div className="strong">Saved logins</div>

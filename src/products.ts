@@ -1,5 +1,13 @@
 import { CATEGORIES, type Category, type ProductType } from "./types.js";
 
+/**
+ * The most pages one website test may visit. Big crawls are allowed (a shop with thousands of
+ * products); the form warns about the time and disk they take, and the runner keeps memory flat.
+ */
+export const MAX_PAGES = 20_000;
+/** From here on a crawl counts as big: the form shows how long it may take. */
+export const BIG_CRAWL = 1_000;
+
 export interface ProductInfo {
   type: ProductType;
   name: string;
