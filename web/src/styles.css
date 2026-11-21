@@ -2052,6 +2052,18 @@ a.brand {
 .tool-options {
   max-width: 520px;
 }
+.tool-toggles {
+  max-width: 100%;
+}
+.tool-toggles .toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 16px;
+  margin-top: 4px;
+}
+.tool-toggles .toggle-grid .check {
+  font-size: 13px;
+}
 .tool-missing {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border-radius: 8px;

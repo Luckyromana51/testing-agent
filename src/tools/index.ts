@@ -25,6 +25,7 @@ import { vnuTool } from "./vnu.js";
 import { iosSimulatorTool, safariTool, voiceOverTool } from "./mac.js";
 import { appiumTool } from "./appium.js";
 import { zapActiveTool, zapTool } from "./zap.js";
+import { attackTool } from "./attack/index.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -39,8 +40,9 @@ export const TOOLS: Tool[] = [
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
-  // copies of the same holes fold into them).
+  // copies of the same holes fold into them). The attack agent runs the deeper, orchestrated pen test.
   probesTool,
+  attackTool,
   zapActiveTool,
   k6Tool,
   jmeterTool,
@@ -127,6 +129,13 @@ export function cleanChoices(product: ProductType, input: unknown, permissions?:
         continue;
       }
       if (v === undefined) continue;
+      if (opt.kind === "toggles") {
+        // A set of switched-on values, joined by commas; each must be one of the option's choices.
+        const picked = v.split(",").map((s) => s.trim()).filter(Boolean);
+        for (const p of picked) if (!opt.choices.some((ch) => ch.value === p)) throw new Error(`${tool.name}: "${p}" is not a choice for ${opt.label}.`);
+        options[opt.id] = [...new Set(picked)].join(",");
+        continue;
+      }
       if (!opt.choices.some((ch) => ch.value === v)) throw new Error(`${tool.name}: "${v}" is not a choice for ${opt.label}.`);
       options[opt.id] = v;
     }
