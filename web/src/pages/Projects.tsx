@@ -17,6 +17,7 @@ import { TrendsCard } from "./Trends.tsx";
 import { WatchCard } from "./Watch.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 import { Empty, Icon, OpenCounts, ScoreChip, Trend } from "../ui.tsx";
+import { setView, useSimple } from "../view.ts";
 
 const SCHEDULE_LABEL: Record<Schedule, string> = { off: "Manual", daily: "Daily re-test", weekly: "Weekly re-test" };
 
@@ -93,11 +94,15 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
 
 type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "appjourneys" | "tests";
 
+/** Tabs left out of simple view (full view shows them). */
+const SIMPLE_HIDDEN: ProjectTab[] = ["growth", "fixes", "watch", "trends", "tests"];
+
 export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: User }) {
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
   const [actionError, setActionError] = useState("");
   const [saved, setSaved] = useState(false);
   const [allRuns, setAllRuns] = useState(false);
+  const simple = useSimple();
   const [tab, setTabState] = useState<ProjectTab>(() => {
     try {
       return (localStorage.getItem("glv.projectTab") as ProjectTab) || "overview";
@@ -133,7 +138,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ...(p.type === "android" || p.type === "ios" ? ([["appjourneys", "App journeys", String(p.appJourneys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ["tests", "What runs"],
-  ];
+  ].filter(([t]) => !simple || !SIMPLE_HIDDEN.includes(t as ProjectTab)) as [ProjectTab, string, string?][];
   const current = tabs.some(([t]) => t === tab) ? tab : "overview";
 
   const save = async (patch: Parameters<typeof api.updateProject>[1]) => {
@@ -189,9 +194,14 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         >
           {p.busy ? (p.waiting ? "Waiting to start…" : "Testing now…") : "Re-test now"}
         </button>
-        <a className="btn" href={`#/control/${p.id}`} title="Every setting for the next test: agents, tools, pages, screens, network, timing, pass or fail">
-          Master control{p.control ? " ●" : ""}
+        <a className="btn" href={`#/manual/${p.id}`} title="Checklists to test by hand: pass, fail or skip each case">
+          Test by hand
         </a>
+        {!simple && (
+          <a className="btn" href={`#/control/${p.id}`} title="Every setting for the next test: agents, tools, pages, screens, network, timing, pass or fail">
+            Master control{p.control ? " ●" : ""}
+          </a>
+        )}
       </div>
       {actionError && <div className="error">{actionError}</div>}
 
@@ -225,7 +235,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             </select>
           </label>
           {isWeb ? (
-            <>
+            !simple && <>
               <label className="inline-field">
                 <span>Pages</span>
                 <input
@@ -267,6 +277,11 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
             {count && <span className={`tab-count ${count === "down" ? "bad" : ""}`}>{count}</span>}
           </button>
         ))}
+        {simple && (
+          <button className="more-tabs" onClick={() => setView("full")} title="Trends, uptime, visitors and SEO, Claude fixes, what runs, master control">
+            More…
+          </button>
+        )}
       </div>
 
       {current === "trends" && <TrendsCard points={trends} flaky={flaky} />}

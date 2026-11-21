@@ -3,7 +3,8 @@ import type { Fix } from "../../src/fixes.ts";
 import type { IssueStatus, ProductType, Severity } from "../../src/types.ts";
 import { scoreTone, STATUS_LABEL } from "./lib.ts";
 
-const ICON_PATHS: Record<ProductType | "issues" | "owner" | "control" | "projects" | "new" | "logout" | "upload" | "live", string> = {
+const ICON_PATHS: Record<ProductType | "issues" | "owner" | "control" | "projects" | "new" | "logout" | "upload" | "live" | "checklist", string> = {
+  checklist: "M9 6h11M9 12h11M9 18h11M4 5.5l1.2 1.2L7.5 4.5M4 11.5l1.2 1.2 2.3-2.2M4.5 18h2",
   live: "M4.5 6.5h15A1.5 1.5 0 0 1 21 8v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17V8a1.5 1.5 0 0 1 1.5-1.5ZM10 10v5l4.5-2.5L10 10ZM8 3.5l4 3 4-3",
   website:
     "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9m0-18c-2.5 2.6-3.8 5.6-3.8 9s1.3 6.4 3.8 9M3.5 9h17M3.5 15h17",

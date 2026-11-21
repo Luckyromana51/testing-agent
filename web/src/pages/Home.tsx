@@ -3,20 +3,37 @@ import type { ProductType, Schedule } from "../../../src/types.ts";
 import { api, type Meta, type TargetFields, type Upload } from "../api.ts";
 import { go } from "../lib.ts";
 import { Icon } from "../ui.tsx";
+import { setView, useSimple } from "../view.ts";
 import { LOGIN_QUESTION, LoginFields, loginKind, type LoginDraft } from "./LoginFields.tsx";
 import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
 
 /** First screen: what kind of product do you want to test? */
 export function Home({ meta }: { meta: Meta }) {
+  const simple = useSimple();
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <div className="eyebrow">New test</div>
           <h1>What do you want to test?</h1>
-          <p className="muted">Pick the kind of product. Each one gets its own team of specialist agents.</p>
+          <p className="muted">Pick the kind of product. The test runs by itself and gives you a list of what to fix first.</p>
         </div>
       </div>
+      {simple && (
+        <ol className="how-steps" aria-label="How a test works">
+          <li>
+            <b>Pick the kind of product</b>
+            <span>Website, shop, web app, API, code or phone app.</span>
+          </li>
+          <li>
+            <b>Give its address or file</b>
+            <span>Nothing on it is changed. Sign-in details are kept encrypted.</span>
+          </li>
+          <li>
+            <b>Read what to fix first</b>
+            <span>Each problem comes with where it is and how to fix it.</span>
+          </li>
+        </ol>
+      )}
       <div className="product-grid">
         {meta.products.map((p) => (
           <button
@@ -34,13 +51,25 @@ export function Home({ meta }: { meta: Meta }) {
             <div className="product-name">{p.name}</div>
             <div className="product-desc">{p.description}</div>
             <ul className="product-tests">
-              {p.tests.slice(0, 4).map((t) => (
+              {p.tests.slice(0, simple ? 2 : 4).map((t) => (
                 <li key={t}>{t}</li>
               ))}
             </ul>
           </button>
         ))}
       </div>
+      <a className="card by-hand" href="#/manual">
+        <span className="product-icon">
+          <Icon name="checklist" size={22} />
+        </span>
+        <span className="grow">
+          <span className="product-name">Test by hand with a checklist</span>
+          <span className="product-desc">
+            Ready-made test cases for every project, all switched on: tick Pass, Fail or Skip, add notes and screenshots, and send failures to the issue board.
+          </span>
+        </span>
+        <span className="btn">Open manual tests</span>
+      </a>
     </div>
   );
 }
@@ -135,6 +164,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
   const [busy, setBusy] = useState(false);
   const [tools, setTools] = useState<ToolDraft>(() => toolDraft(meta, type));
   const isWeb = WEB_TYPES.includes(type);
+  const simple = useSimple();
   const agents = useMemo(
     () => meta.agents.filter((a) => a.products.includes(type) && a.enabled && (checkLinks || a.id !== "web.links")),
     [meta, type, checkLinks],
@@ -207,8 +237,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
           <Icon name={type} size={26} />
         </span>
         <div className="grow">
-          <div className="eyebrow">New {product.name.toLowerCase()} test</div>
-          <h1>{product.name}</h1>
+          <h1>Test a {product.name.toLowerCase()}</h1>
           <p className="muted">{product.description}</p>
         </div>
       </div>
@@ -311,13 +340,13 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
                 <input className="input" placeholder="https://api.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />
               </label>
             )}
-            <FilePicker
+            {!simple && <FilePicker
               accept=".json"
               label="Pact contract (optional)"
               hint="the pacts/*.json file your website's or app's tests write; its requests are sent to the base address"
               value={pact}
               onChange={setPact}
-            />
+            />}
             <label className="check">
               <input type="checkbox" checked={testServer} onChange={(e) => setTestServer(e.target.checked)} />
               <span>
@@ -389,6 +418,8 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
           <span>Project name (optional)</span>
           <input className="input" placeholder="Client or product name" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
+        {!simple && (
+          <>
         <div className="form-row">
           {isWeb && (
             <label className="form-field">
@@ -418,6 +449,8 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
             link, including links to other websites
           </label>
         )}
+          </>
+        )}
         {loginKind(type) && (
           <div className="login-section">
             <label className="check dark">
@@ -427,13 +460,27 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
             {withLogin && <LoginFields kind={loginKind(type)!} value={login} onChange={setLogin} />}
           </div>
         )}
-        <div className="form-field">
-          <span>What runs in this test</span>
-          <ToolTabs meta={meta} type={type} agents={agents} draft={tools} onChange={setTools} />
-        </div>
+        {simple ? (
+          <div className="simple-runs">
+            <div>
+              <b>What runs:</b> {agents.length} automatic checks{toolChoices(meta, tools).length ? ` and ${toolChoices(meta, tools).length} testing tools` : ""}, picked for a{" "}
+              {product.name.toLowerCase()}.{" "}
+              {type === "api" && testServer ? "On this test server they also create, change and delete their own test records." : "They only look; they never change anything."}
+              {isWeb && ` Up to ${maxPages} pages are tested.`}
+            </div>
+            <button type="button" className="link" onClick={() => setView("full")}>
+              Choose checks, tools, pages and re-tests (full view)
+            </button>
+          </div>
+        ) : (
+          <div className="form-field">
+            <span>What runs in this test</span>
+            <ToolTabs meta={meta} type={type} agents={agents} draft={tools} onChange={setTools} />
+          </div>
+        )}
         <div className="form-actions">
           <button className="btn primary" disabled={busy || !ready}>
-            {busy ? "Starting…" : startLabel(agents.length, toolChoices(meta, tools).length)}
+            {busy ? "Starting…" : simple ? "Start the test" : startLabel(agents.length, toolChoices(meta, tools).length)}
           </button>
           {error && <div className="error">{error}</div>}
         </div>

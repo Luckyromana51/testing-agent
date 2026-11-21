@@ -5088,3 +5088,545 @@ code {
     border: 0;
   }
 }
+
+/* ==========================================================================
+   Simple view and manual tests (v4).
+   Simple view keeps each screen short; manual tests are a checklist bench:
+   one row per case, three large result buttons, a proportional progress bar.
+   ========================================================================== */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.view-switch {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.view-hint {
+  color: var(--sidebar-muted);
+  font-size: 12px;
+}
+.more-tabs {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 10px 14px;
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Home: three steps, then the product cards, then testing by hand. */
+.how-steps {
+  list-style: none;
+  counter-reset: how;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 0;
+}
+.how-steps li {
+  counter-increment: how;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.how-steps li::before {
+  content: counter(how);
+  grid-row: span 2;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.how-steps span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.by-hand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  color: inherit;
+  text-decoration: none;
+  border-style: dashed;
+}
+.by-hand:hover {
+  border-color: var(--accent);
+}
+.by-hand .product-name,
+.by-hand .product-desc {
+  display: block;
+}
+.simple-runs {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+.simple-runs .link {
+  justify-self: start;
+  font-size: 13px;
+}
+
+/* Progress bar: passed, failed, skipped, not tested, in proportion. */
+.mt-bar-track {
+  display: flex;
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--border);
+  gap: 2px;
+}
+.mt-bar.big .mt-bar-track {
+  height: 14px;
+}
+.mt-seg.pass {
+  background: var(--good);
+}
+.mt-seg.fail {
+  background: var(--bad);
+}
+.mt-seg.skip {
+  background: var(--border-strong);
+}
+.mt-seg.todo {
+  background: transparent;
+}
+.mt-bar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+.mt-bar-legend .mono {
+  font-weight: 600;
+}
+.mt-key::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: 0;
+}
+.mt-key.pass::before {
+  background: var(--good);
+}
+.mt-key.fail::before {
+  background: var(--bad);
+}
+.mt-key.skip::before {
+  background: var(--border-strong);
+}
+
+/* Manual tests home. */
+.mt-projects {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.mt-project {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  color: inherit;
+  text-decoration: none;
+}
+.mt-project:hover {
+  border-color: var(--accent);
+}
+.mt-project-top {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* A project's checklist page. */
+.mt-start {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+}
+.mt-start-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.mt-start-head .sub-title {
+  margin: 0;
+}
+.mt-rounds-result {
+  min-width: 200px;
+}
+.mt-rounds-result .mt-bar {
+  margin-bottom: 4px;
+}
+.mt-cases {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.mt-group {
+  padding: 0;
+}
+.mt-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.mt-group > summary::-webkit-details-marker {
+  display: none;
+}
+.mt-group > summary::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+  flex: none;
+}
+.mt-group[open] > summary::before {
+  transform: rotate(45deg);
+}
+.mt-switch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 8px;
+}
+.mt-switch-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.mt-switch-list li .check {
+  flex: 1;
+  min-width: 0;
+}
+.mt-switch-list li.off .check span {
+  color: var(--muted);
+}
+.mt-source {
+  flex: none;
+  min-width: 110px;
+  text-align: right;
+}
+.mt-dots {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+}
+.mt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.mt-dot.pass {
+  background: var(--good);
+}
+.mt-dot.fail {
+  background: var(--bad);
+}
+.mt-dot.skip {
+  background: var(--border-strong);
+}
+.mt-own {
+  max-width: 640px;
+}
+
+/* A round: the checklist bench. */
+.mt-progress {
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.mt-filters {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg);
+  padding: 8px 0;
+  flex-wrap: wrap;
+}
+.mt-filters .pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mt-section {
+  margin-top: 18px;
+}
+.mt-section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.mt-case-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.mt-case + .mt-case {
+  border-top: 1px solid var(--border);
+}
+.mt-case {
+  border-left: 3px solid transparent;
+}
+.mt-case.pass {
+  border-left-color: var(--good);
+}
+.mt-case.fail {
+  border-left-color: var(--bad);
+  background: color-mix(in srgb, var(--bad-soft) 45%, var(--panel));
+}
+.mt-case.skip {
+  border-left-color: var(--border-strong);
+}
+.mt-case.open {
+  background: var(--panel-2);
+}
+.mt-case-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 8px 10px;
+}
+.mt-case-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.mt-case-title .tag {
+  margin-left: 8px;
+}
+.mt-mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 5px;
+  border: 2px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+}
+.mt-mark.pass {
+  background: var(--good);
+  border-color: var(--good);
+}
+.mt-mark.pass::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid var(--on-solid);
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+.mt-mark.fail {
+  background: var(--bad);
+  border-color: var(--bad);
+}
+.mt-mark.fail::after {
+  content: "!";
+  color: var(--on-solid);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+}
+.mt-mark.skip {
+  border-style: dashed;
+}
+.mt-choice {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mt-btn {
+  min-width: 64px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 0;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+}
+.mt-btn + .mt-btn {
+  border-left: 1px solid var(--border-strong);
+}
+.mt-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.mt-btn.pass.active {
+  background: var(--good);
+  color: var(--on-solid);
+}
+.mt-btn.fail.active {
+  background: var(--bad);
+  color: var(--on-solid);
+}
+.mt-btn.skip.active {
+  background: var(--border-strong);
+  color: var(--text);
+}
+.mt-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.mt-case-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 4px 16px 16px 41px;
+}
+.mt-steps ol {
+  margin: 4px 0 12px;
+  padding-left: 20px;
+}
+.mt-steps li {
+  margin-bottom: 4px;
+}
+.mt-steps p {
+  margin: 4px 0 10px;
+}
+.mt-evidence {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.mt-evidence textarea {
+  min-height: 72px;
+}
+.mt-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.mt-shot {
+  position: relative;
+  margin: 0;
+}
+.mt-shot img {
+  display: block;
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.mt-shot .icon-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  font-size: 14px;
+  line-height: 1;
+}
+.mt-add-shot {
+  cursor: pointer;
+}
+.mt-issue {
+  gap: 8px;
+}
+@media (max-width: 860px) {
+  .how-steps {
+    grid-template-columns: 1fr;
+  }
+  .by-hand {
+    flex-wrap: wrap;
+  }
+  .mt-case-head {
+    flex-wrap: wrap;
+  }
+  .mt-choice {
+    width: 100%;
+  }
+  .mt-btn {
+    flex: 1;
+    min-height: 44px;
+  }
+  .mt-case-body {
+    grid-template-columns: 1fr;
+    padding-left: 16px;
+  }
+  .mt-source {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mt-group > summary::before {
+    transition: none;
+  }
+}
+.mt-filters .check {
+  white-space: nowrap;
+}
+.nav-short {
+  display: none;
+}
+@media (max-width: 860px) {
+  .sidebar .nav-item .nav-text {
+    display: none;
+  }
+  .sidebar .nav-item .nav-short {
+    display: inline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

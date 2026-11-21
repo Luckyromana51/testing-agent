@@ -190,6 +190,8 @@ export function syncIssues(
   for (const prev of existing) {
     const key = keyOf.get(prev.id);
     if (!key || seen.has(key)) continue;
+    // Found by a person in a manual test: only a person closes it.
+    if (prev.agent === "manual") continue;
     // Only call it fixed when this run actually looked again: the agent ran and the pages were re-tested.
     const agentRan = !prev.agent || ((!ranAgents || ranAgents.has(prev.agent)) && !notRun.has(prev.agent));
     const lookedAgain =
