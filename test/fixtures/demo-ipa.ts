@@ -198,6 +198,8 @@ export function plantedIpa(): Buffer {
   const info = {
     CFBundleIdentifier: "in.glvshop.app",
     CFBundleExecutable: "GLVShop",
+    CFBundleIconName: "AppIcon",
+    UILaunchStoryboardName: "LaunchScreen",
     CFBundleDisplayName: "GLV Shop",
     CFBundleShortVersionString: "2.3.0",
     CFBundleVersion: "41",
@@ -217,6 +219,7 @@ export function plantedIpa(): Buffer {
   };
   const program = machO({
     symbols: [
+      "___stack_chk_guard",
       cls("UIViewController"),
       cls("UIWebView"),
       cls("WKWebView"),
@@ -258,6 +261,8 @@ export function cleanIpa(): Buffer {
   const info = {
     CFBundleIdentifier: "in.glvshop.app",
     CFBundleExecutable: "GLVShop",
+    CFBundleIconName: "AppIcon",
+    UILaunchStoryboardName: "LaunchScreen",
     CFBundleName: "GLV Shop",
     CFBundleShortVersionString: "2.3.0",
     CFBundleVersion: "42",
@@ -272,6 +277,7 @@ export function cleanIpa(): Buffer {
   };
   const program = machO({
     symbols: [
+      "___stack_chk_guard",
       cls("UIViewController"),
       cls("WKWebView"),
       cls("NSUserDefaults"),
@@ -318,6 +324,10 @@ export function appStoreIpa(): Buffer {
     [`${app}Info.plist`]: binaryPlist({
       CFBundleIdentifier: "in.glvshop.app",
       CFBundleExecutable: "GLVShop",
+      CFBundleIconName: "AppIcon",
+      UILaunchStoryboardName: "LaunchScreen",
+    CFBundleIconName: "AppIcon",
+    UILaunchStoryboardName: "LaunchScreen",
       CFBundleShortVersionString: "2.3.0",
       CFBundleVersion: "41",
       ITSAppUsesNonExemptEncryption: false,

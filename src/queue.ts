@@ -238,6 +238,11 @@ export class ScanQueue {
           writes: writeConsent(project.target, (projects.get(project.id) ?? project).permissions, run.trigger),
           seo: project.seo,
           rum: project.rumToken ? this.stores.rum.summary(project.id) : undefined,
+          previousApp: (() => {
+            if (project.type !== "android" && project.type !== "ios") return undefined;
+            const prev = runs.list(20, project.id).find((r) => r.id !== run.id && r.status === "done" && r.result?.app);
+            return prev?.result?.app ? { app: prev.result.app, at: prev.finishedAt ?? prev.createdAt } : undefined;
+          })(),
         });
         const engine = screenless ? liveFeed.run(live, start) : start();
         // The engine stops its browser or clone on the signal; the run ends at once either way.
@@ -276,6 +281,7 @@ export class ScanQueue {
             // The newest copy: a permission withdrawn while this test waited no longer counts.
             permissions: (projects.get(project.id) ?? project).permissions,
             modules: settings.get().modules,
+            appJourneys: (projects.get(project.id) ?? project).appJourneys?.filter((j) => !j.off),
           });
         }
       } finally {

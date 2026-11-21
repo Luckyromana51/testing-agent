@@ -3,7 +3,7 @@ import path from "node:path";
 import { scanSite } from "../runner/scan.js";
 import type { LiveSink } from "../live.js";
 import { stat } from "node:fs/promises";
-import type { ApiScenario, HookInbox, Journey, Login, ProductType, ProjectTarget, RoleLogin, RumSummary, ScanResult, SeoInput, WriteConsent } from "../types.js";
+import type { ApiScenario, AppSummary, HookInbox, Journey, Login, ProductType, ProjectTarget, RoleLogin, RumSummary, ScanResult, SeoInput, WriteConsent } from "../types.js";
 import { redact, secretsOf } from "../vault.js";
 import { scanApi } from "./api.js";
 
@@ -55,6 +55,8 @@ export interface EngineInput {
   seo?: SeoInput;
   /** Websites: real visitors' speed from the in-house snippet. */
   rum?: RumSummary;
+  /** Mobile apps: the project's previous test of the app, to list what changed. */
+  previousApp?: { app: AppSummary; at: string };
 }
 
 /** The approved API file, when there is one. */
@@ -155,12 +157,12 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
     case "android": {
       if (!target.file) throw new Error("Upload the APK file to test.");
       const { scanApk } = await import("./apk.js");
-      return scanApk({ apkFile: uploadedPath(input.uploadsDir, target.file), fileName: target.fileName, agents, onProgress });
+      return scanApk({ apkFile: uploadedPath(input.uploadsDir, target.file), fileName: target.fileName, agents, onProgress, artifactsDir: input.artifactsDir, previous: input.previousApp });
     }
     case "ios": {
       if (!target.file) throw new Error("Upload the iOS app (.ipa, or a zip of the .app) to test.");
       const { scanIpa } = await import("./ipa.js");
-      return scanIpa({ ipaFile: uploadedPath(input.uploadsDir, target.file), fileName: target.fileName, agents, onProgress });
+      return scanIpa({ ipaFile: uploadedPath(input.uploadsDir, target.file), fileName: target.fileName, agents, onProgress, artifactsDir: input.artifactsDir, previous: input.previousApp });
     }
     default:
       return scanSite({

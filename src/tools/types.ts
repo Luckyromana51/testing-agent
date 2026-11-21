@@ -1,6 +1,6 @@
 import type { ModuleId } from "../modules.js";
 import type { PermissionKind } from "../permission.js";
-import type { Category, Finding, Login, ProductType, ProjectTarget } from "../types.js";
+import type { AppJourney, AppSummary, Category, Finding, Login, ProductType, ProjectTarget } from "../types.js";
 
 /** Safe tools behave like a normal visitor. Permission tools load or attack a site, only with the client's written permission. */
 export type ToolSafety = "safe" | "permission";
@@ -50,6 +50,8 @@ export interface ToolInfo {
    * connected, so its status is checked on every request, and it is never switched on by default.
    */
   needsMac?: boolean;
+  /** Runs on a test phone (Owner panel > Devices): checked on every request, never on by default. */
+  needsDevice?: boolean;
   /**
    * Its category is scored even when the engine does not score it (Apple's accessibility audit for an
    * iOS app). When it cannot run, the category shows as not tested rather than as a free 100.
@@ -94,6 +96,10 @@ export interface ToolContext {
   permit?: { hosts: string[]; maxUsers: number; maxMinutes: number; writes: boolean };
   /** The owner's module switches. */
   modules?: Record<string, boolean>;
+  /** Mobile apps: what the engine found the app is made of (its id, SDKs, servers). */
+  app?: AppSummary;
+  /** Mobile apps: the project's journeys for the test phone. */
+  appJourneys?: AppJourney[];
 }
 
 export interface ToolReport {

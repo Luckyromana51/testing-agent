@@ -186,7 +186,7 @@ describe("iOS app tests", () => {
   it("says what it could not check in the App Store's encrypted copy", async () => {
     const r = await scan("from-store.ipa", appStoreIpa());
     assert.deepEqual(r.findings.map((f) => f.rule).sort(), ["ios:secret-aws-key", "ios:vague-purpose"]);
-    assert.equal(r.incomplete?.length, 4);
+    assert.equal(r.incomplete?.length, 5);
     for (const line of r.incomplete!) assert.match(line, /encrypted \(this is the copy the App Store hands out\)/);
     assert.ok(r.notes?.some((n) => /No provisioning profile inside/.test(n)));
   });
