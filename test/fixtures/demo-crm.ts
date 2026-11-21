@@ -190,7 +190,11 @@ export function startDemoCrm(port = 4250): Promise<DemoCrm> {
       if (!waiting) return redirect("/login");
       if (req.method === "POST") {
         return readBody((f) => {
-          if (f.get("otp") === totp(waiting.secret!)) {
+          // Like most real servers (RFC 6238 section 5.2), accept the current code and the one
+          // before it, so a slow test run that crosses a 30-second boundary still sees a reused
+          // code accepted.
+          const otp = f.get("otp");
+          if (otp === totp(waiting.secret!) || otp === totp(waiting.secret!, Date.now() - 30_000)) {
             sessions.set(sid!, waiting.email);
             return redirect("/app");
           }
