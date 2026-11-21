@@ -9,6 +9,7 @@ import { api } from "../api.ts";
 import { CATEGORY_LABEL, go, isMajor, pathOf, plural, scoreTone, SEVERITIES, usePoll } from "../lib.ts";
 import { FixBox, Sev } from "../ui.tsx";
 import { LiveView } from "./LiveView.tsx";
+import { ControlCard, LiveControlBar } from "./MasterControl.tsx";
 import { RunCode } from "./LiveCode.tsx";
 import { Inspect, VisualCompare } from "./Inspect.tsx";
 import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
@@ -156,6 +157,7 @@ export function Report({ id }: { id: string }) {
     return (
       <div className="page run wide">
         {header}
+        <LiveControlBar run={run} onChange={reload} screens={run.control?.parallel ?? 4} />
         <LiveView runId={run.id} progress={run.progress} />
       </div>
     );
@@ -165,6 +167,7 @@ export function Report({ id }: { id: string }) {
     return (
       <div className="page run">
         {header}
+        <LiveControlBar run={run} onChange={reload} screens={1} />
         <div className="progress-card">
           <div className="spinner" />
           <div>
@@ -216,6 +219,7 @@ export function Report({ id }: { id: string }) {
   return (
     <div className="page run">
       {header}
+      <ControlCard run={run} />
 
       {run.diff && (
         <div className="diff-banner">

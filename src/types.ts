@@ -2,6 +2,8 @@ import type { LiveSink } from "./live.js";
 import type { ToolChoice, ToolStat } from "./tools/types.js";
 import type { Permission } from "./permission.js";
 
+import type { GateState, RunControl, RunGate, Verdict } from "./control.js";
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export type Category = "functional" | "accessibility" | "seo" | "security" | "performance" | "mobile";
@@ -48,6 +50,8 @@ export interface PageResult {
   status: number | null;
   title: string;
   loadMs: number | null;
+  /** The tester skipped this page from master control before every check ran. */
+  skipped?: string;
   /** Speed numbers from the browser's timing data (lab measurement). */
   metrics?: {
     ttfbMs: number;
@@ -193,6 +197,10 @@ export interface ScanOptions {
   rum?: RumSummary;
   /** Where uploaded files are kept (the Search Console export). */
   uploadsDir?: string;
+  /** Master control: the tester's settings for this test (sizes, network, crawl limits...). */
+  control?: RunControl;
+  /** Master control's live switches: pause, skip a page, finish now. */
+  gate?: RunGate;
 }
 
 /** Whether a test may change data, and why. */
@@ -575,6 +583,14 @@ export interface Run {
   /** Outside tools this run uses, with their options. */
   tools?: ToolChoice[];
   diff?: RunDiff;
+  /** Master control settings this test ran with (only what was changed from normal). */
+  control?: RunControl;
+  /** Who started it with master control, and which preset. */
+  controlBy?: { name?: string; preset?: string };
+  /** Pass or fail under master control's rules. */
+  verdict?: Verdict;
+  /** Paused, finishing early, pages skipped: while it runs and after. */
+  gateState?: GateState;
   status: RunStatus;
   createdAt: string;
   startedAt?: string;
@@ -793,6 +809,8 @@ export interface Project {
   seo?: SeoInput;
   /** Pull requests Claude opened with fixes. */
   fixPrs?: FixPr[];
+  /** Master control settings every test of this project starts with (scheduled ones too). */
+  control?: RunControl;
 }
 
 /** A fix Claude wrote and opened as a pull request on the project's repository. */

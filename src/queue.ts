@@ -12,6 +12,7 @@ import { writeConsent } from "./permission.js";
 import type { Stores } from "./store.js";
 import { moduleOn } from "./modules.js";
 import type { Project, Run } from "./types.js";
+import { controlAgents, controlScope, describeControl, extraOn, mergeControl, RunGate, verdictOf, type LiveAction, type RunControl } from "./control.js";
 
 /**
  * In-process job queue with a concurrency limit.
@@ -32,6 +33,8 @@ export class ScanQueue {
   private active = new Map<string, string | undefined>();
   /** Running run id -> how to stop it, and the promise that settles once it has stopped. */
   private running = new Map<string, { stop: AbortController; done: Promise<void> }>();
+  /** Master control's live switches of each running test. */
+  private gates = new Map<string, RunGate>();
   private stopping = false;
   /** What running tests show live in the dashboard. */
   readonly live = new LiveHub();
@@ -124,6 +127,7 @@ export class ScanQueue {
     const job = this.running.get(runId);
     if (!job) return false;
     job.stop.abort(new Cancelled(why));
+    this.gates.get(runId)?.resume();
     await job.done;
     return true;
   }
@@ -142,18 +146,45 @@ export class ScanQueue {
     await Promise.all(ids.map((id) => this.cancel(id, "The server was stopped")));
   }
 
-  /** Queues a test run of a project with the agents the owner has turned on. */
-  enqueue(project: Project, trigger: Run["trigger"] = "manual"): Run {
+  /**
+   * Master control while a test runs: pause, resume, skip the open pages (or one screen's), or
+   * finish now (stop opening pages, then score what was tested). Returns false when it is not running.
+   */
+  control(runId: string, action: LiveAction, opts: { slot?: number; by?: string } = {}): boolean {
+    const gate = this.gates.get(runId);
+    if (!gate) return false;
+    const who = opts.by ? ` by ${opts.by}` : "";
+    const live = this.live.get(runId);
+    if (action === "pause") gate.pause(opts.by);
+    else if (action === "resume") gate.resume();
+    else if (action === "skip") gate.skip(opts.slot);
+    else gate.finish(`Finished early${who} from master control`);
+    const msg = { pause: `Paused${who}: open pages finish their current step, then wait`, resume: `Resumed${who}`, skip: `Skipping ${opts.slot === undefined ? "the open pages" : `the page on screen ${opts.slot + 1}`}${who}`, finish: `Finishing now${who}: no new pages, then the site checks and the score` }[action];
+    live?.log(msg);
+    const run = this.stores.runs.get(runId);
+    if (run) this.stores.runs.save({ ...run, progress: [...run.progress, msg].slice(-200), gateState: gate.state() });
+    return true;
+  }
+
+  /** Queues a test run of a project with the agents the owner has turned on, and master control's settings. */
+  enqueue(project: Project, trigger: Run["trigger"] = "manual", tester?: { control?: RunControl; by?: string; preset?: string }): Run {
     const settings = this.stores.settings.get();
+    // The project's defaults, then this test's own choices.
+    const control = mergeControl(project.control, tester?.control);
+    const used = Object.keys(control).length ? control : undefined;
     const run: Run = {
       id: randomUUID(),
       url: project.target.url ?? project.target.specUrl ?? project.target.repoUrl ?? project.target.fileName ?? "",
       projectId: project.id,
       product: project.type,
       trigger,
-      agents: agentsFor(project.type, settings.agents)
-        .filter((a) => project.target.checkLinks !== false || a.id !== "web.links")
-        .map((a) => a.id),
+      agents: used
+        ? controlAgents(project.type, settings.agents, { ...control, checkLinks: control.checkLinks ?? project.target.checkLinks })
+        : agentsFor(project.type, settings.agents)
+            .filter((a) => project.target.checkLinks !== false || a.id !== "web.links")
+            .map((a) => a.id),
+      ...(used ? { control: used } : {}),
+      ...(tester?.by || tester?.preset ? { controlBy: { name: tester.by, preset: tester.preset } } : {}),
       status: "queued",
       createdAt: new Date().toISOString(),
       progress: ["Queued"],
@@ -194,6 +225,12 @@ export class ScanQueue {
 
     update({ status: "running", startedAt: new Date().toISOString() });
     const project = run.projectId ? projects.get(run.projectId) : undefined;
+    const control: RunControl = run.control ?? {};
+    const gate = new RunGate({ maxMinutes: control.maxMinutes, onChange: (s) => update({ gateState: s }) });
+    this.gates.set(run.id, gate);
+    if (run.control) for (const line of describeControl(run.control)) log(`Master control: ${line}`);
+    const mods = settings.get().modules;
+    const on = (module: Parameters<typeof moduleOn>[1], extra: Parameters<typeof extraOn>[1]) => extraOn(control, extra, moduleOn(mods, module));
     try {
       if (!project) throw new Error("The project for this run was deleted.");
       const workDir = path.join(this.dataDir, "work", run.id);
@@ -203,7 +240,7 @@ export class ScanQueue {
         // Decrypted only for this run, kept in memory, and hidden from the report and the log.
         const login = this.stores.vault.get(project.id);
         if (login) log("Using the saved login (kept encrypted on this server)");
-        const roles = login?.kind === "web" || login?.kind === "api" ? this.stores.vault.roles(project.id) : [];
+        const roles = (login?.kind === "web" || login?.kind === "api") && extraOn(control, "roles") ? this.stores.vault.roles(project.id) : [];
         if (roles.length) log(`Also testing as ${roles.length} other account${roles.length === 1 ? "" : "s"}: ${roles.map((r) => r.name).join(", ")}`);
         let cookie: string | undefined;
         // Tests without screens (API, code, apps) send their calls and problems to the code panel through liveFeed.
@@ -213,7 +250,7 @@ export class ScanQueue {
           target: project.target,
           login,
           agents: run.agents,
-          maxPages: project.target.maxPages ?? settings.get().defaultMaxPages,
+          maxPages: control.maxPages ?? project.target.maxPages ?? settings.get().defaultMaxPages,
           artifactsDir: this.artifactsDir(run.id),
           uploadsDir: this.uploadsDir(),
           workDir,
@@ -222,17 +259,17 @@ export class ScanQueue {
             if (!signal.aborted) log(m);
           },
           onSession: (c) => (cookie = c),
-          parallel: settings.get().parallelPages,
+          parallel: control.parallel ?? settings.get().parallelPages,
           live,
-          inspect: moduleOn(settings.get().modules, "inspect"),
-          baselineDir: moduleOn(settings.get().modules, "visual") ? this.baselineDir(project.id) : undefined,
-          journeys: moduleOn(settings.get().modules, "journeys") ? project.journeys : undefined,
-          mailUrl: moduleOn(settings.get().modules, "mail") ? process.env.MAILPIT_URL : undefined,
+          inspect: on("inspect", "inspect"),
+          baselineDir: on("visual", "visual") ? this.baselineDir(project.id) : undefined,
+          journeys: on("journeys", "journeys") ? project.journeys : undefined,
+          mailUrl: on("mail", "mail") ? process.env.MAILPIT_URL : undefined,
           roles,
-          explore: moduleOn(settings.get().modules, "explorer"),
+          explore: on("explorer", "explorer"),
           system: project.target.system,
-          hookInbox: moduleOn(settings.get().modules, "webhooks") ? this.stores.hooks.inboxFor(project.id) : undefined,
-          apiScenarios: project.type === "api" ? project.apiScenarios : undefined,
+          hookInbox: on("webhooks", "webhooks") ? this.stores.hooks.inboxFor(project.id) : undefined,
+          apiScenarios: project.type === "api" && extraOn(control, "scenarios") ? project.apiScenarios : undefined,
           apiBaselineFile: project.type === "api" ? this.apiBaselineFile(project.id) : undefined,
           // Checks that change data: a test copy, or the client's written permission (newest copy).
           writes: writeConsent(project.target, (projects.get(project.id) ?? project).permissions, run.trigger),
@@ -244,7 +281,8 @@ export class ScanQueue {
             return prev?.result?.app ? { app: prev.result.app, at: prev.finishedAt ?? prev.createdAt } : undefined;
           })(),
         });
-        const engine = screenless ? liveFeed.run(live, start) : start();
+        const scoped = () => controlScope.run({ control, gate }, start);
+        const engine = screenless ? liveFeed.run(live, scoped) : scoped();
         // The engine stops its browser or clone on the signal; the run ends at once either way.
         engine.catch(() => {});
         result = await Promise.race([
@@ -255,7 +293,8 @@ export class ScanQueue {
           }),
         ]);
         // Then the outside tools the project uses (Lighthouse, ZAP...), merged into the same report.
-        let choices = (project.tools ?? (await defaultChoices(project.type))).filter((c) => toolById(c.id)?.products.includes(project.type));
+        // Master control may choose other tools for this test; permissions are checked again before each one runs.
+        let choices = (control.tools ?? project.tools ?? (await defaultChoices(project.type))).filter((c) => toolById(c.id)?.products.includes(project.type));
         // Load and attack tests run only when someone starts the test, never on the schedule.
         if (run.trigger === "schedule" && choices.some((c) => toolById(c.id)?.safety === "permission")) {
           choices = choices.filter((c) => toolById(c.id)?.safety !== "permission");
@@ -281,7 +320,7 @@ export class ScanQueue {
             // The newest copy: a permission withdrawn while this test waited no longer counts.
             permissions: (projects.get(project.id) ?? project).permissions,
             modules: settings.get().modules,
-            appJourneys: (projects.get(project.id) ?? project).appJourneys?.filter((j) => !j.off),
+            appJourneys: extraOn(control, "appJourneys") ? (projects.get(project.id) ?? project).appJourneys?.filter((j) => !j.off) : undefined,
           });
         }
       } finally {
@@ -304,11 +343,24 @@ export class ScanQueue {
         lastScore: result.overallScore,
       });
       update({ diff: synced.diff });
+      // Master control's pass-or-fail rules.
+      const verdict = verdictOf(control.gate, {
+        score: result.overallScore,
+        critical: result.findings.filter((f) => f.severity === "critical").length,
+        high: result.findings.filter((f) => f.severity === "high").length,
+        newIssues: synced.diff.new,
+      });
+      if (verdict) {
+        update({ verdict });
+        log(verdict.passed ? "Pass: every pass-or-fail rule in master control was met" : `Fail: ${verdict.reasons.join("; ")}`);
+      }
       log(
         `Issues: ${synced.diff.new} new${synced.diff.firstChecked ? ` (${synced.diff.firstChecked} by a check that did not finish last time)` : ""}, ${synced.diff.fixed} fixed, ${synced.diff.reopened} came back, ${synced.diff.open} open`,
       );
 
-      if (aiEnabled() && settings.get().aiSummary) {
+      if (!extraOn(control, "ai")) {
+        update({ aiError: "Claude summary was turned off in master control for this test." });
+      } else if (aiEnabled() && settings.get().aiSummary) {
         // Same issues as the last summarised test: its summary still fits, and costs no credits.
         const earlier = runs.list(20, project.id).filter((r) => r.id !== run.id);
         const same = reusableSummary(earlier, summaryKey(result));
@@ -346,6 +398,9 @@ export class ScanQueue {
         return;
       }
       update({ status: "failed", error: shortError(err), finishedAt: new Date().toISOString() });
+    } finally {
+      gate.resume();
+      this.gates.delete(run.id);
     }
   }
 }

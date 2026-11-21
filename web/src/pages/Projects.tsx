@@ -189,6 +189,9 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         >
           {p.busy ? (p.waiting ? "Waiting to start…" : "Testing now…") : "Re-test now"}
         </button>
+        <a className="btn" href={`#/control/${p.id}`} title="Every setting for the next test: agents, tools, pages, screens, network, timing, pass or fail">
+          Master control{p.control ? " ●" : ""}
+        </a>
       </div>
       {actionError && <div className="error">{actionError}</div>}
 

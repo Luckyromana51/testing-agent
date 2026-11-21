@@ -1,3 +1,4 @@
+import { controlScope } from "../control.js";
 import { request as playwrightRequest, type APIRequestContext } from "playwright";
 import type { ApiCall, ApiContext } from "../agents/api/context.js";
 import { API_AGENTS } from "../agents/api/index.js";
@@ -56,6 +57,8 @@ export { authParts };
 
 /** Calls timed per endpoint (median and 95% time). API_SAMPLES changes it (1 to 10). */
 export function samplesWanted(): number {
+  const chosen = controlScope.get()?.control.apiSamples;
+  if (chosen) return chosen;
   const n = Number(process.env.API_SAMPLES);
   return Number.isInteger(n) && n >= 1 && n <= 10 ? n : 5;
 }
@@ -111,13 +114,17 @@ async function callOnce(request: APIRequestContext, r: Sent): Promise<Omit<ApiCa
 }
 
 async function callOnceQuiet(request: APIRequestContext, r: Sent): Promise<Omit<ApiCall, "op">> {
+  // Master control: wait while the tester has paused the test, and keep the pause between calls.
+  const ctl = controlScope.get();
+  await ctl?.gate?.wait();
+  if (ctl?.control.apiDelayMs) await sleep(ctl.control.apiDelayMs);
   const started = Date.now();
   try {
     const res = await request.fetch(withQuery(r.url, r.query), {
       method: r.method,
       headers: r.headers,
       ...(r.body !== undefined ? (typeof r.body === "string" ? { data: r.body } : { data: r.body as object }) : {}),
-      timeout: 20_000,
+      timeout: (ctl?.control.apiTimeout ?? 20) * 1000,
       maxRedirects: r.method === "GET" || r.method === "HEAD" ? 3 : 0,
       failOnStatusCode: false,
     });

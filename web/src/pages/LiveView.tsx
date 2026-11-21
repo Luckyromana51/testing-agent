@@ -292,7 +292,7 @@ async function liveInput(runId: string, slot: number, body: Record<string, unkno
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
 }
 
-const VIEW_LABEL = { desktop: "Desktop 1366 px", tablet: "Tablet 820 px", phone: "Phone 390 px" } as const;
+const VIEW_LABEL = { desktop: "Desktop", tablet: "Tablet", phone: "Phone" } as const;
 
 function ShapeIcon({ shape, n }: { shape: Shape; n: number }) {
   // A small drawing of the shape: one rectangle per screen.

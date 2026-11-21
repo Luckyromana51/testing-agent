@@ -35,6 +35,8 @@ import { cleanScenario, MAX_SCENARIOS } from "./agents/api/scenarios.js";
 import { mockAddress, registerApiRoutes } from "./api-routes.js";
 import { registerMoreRoutes, rumSnippet } from "./more-routes.js";
 import { registerMobileRoutes } from "./mobile-routes.js";
+import { registerControlRoutes } from "./control-routes.js";
+import { describeControl, liveActionsFor } from "./control.js";
 import { cleanAppJourneys } from "./mobile/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
@@ -675,6 +677,7 @@ export async function createApp(opts: AppOptions) {
   registerApiRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message) });
   registerMobileRoutes(app, { stores, ownerOnly, fail: (status, message) => new HttpError(status, message) });
   await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
+  registerControlRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
   await app.register(async (scope) => {
@@ -745,7 +748,9 @@ export async function createApp(opts: AppOptions) {
 
   app.get<{ Params: { id: string } }>("/api/runs/:id", async (req, reply) => {
     const run = stores.runs.get(req.params.id);
-    return run ?? reply.code(404).send({ error: "Run not found" });
+    if (!run) return reply.code(404).send({ error: "Run not found" });
+    // Master control: what this test changed, in words, and which live switches it answers to.
+    return { ...run, controlSummary: describeControl(run.control), liveActions: liveActionsFor(run.product ?? "website") };
   });
 
   /**
