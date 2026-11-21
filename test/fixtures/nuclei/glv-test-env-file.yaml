@@ -1,0 +1,16 @@
+id: glv-test-env-file
+info:
+  name: Exposed .env file (GLV test template)
+  author: glv
+  severity: high
+  description: A .env file with passwords can be downloaded.
+  remediation: Block access to .env files on the web server.
+  tags: exposure,config,glv-test
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+    matchers:
+      - type: word
+        words:
+          - "DB_PASSWORD="

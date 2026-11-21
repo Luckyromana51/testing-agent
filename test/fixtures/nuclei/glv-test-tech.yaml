@@ -1,0 +1,15 @@
+id: glv-test-tech
+info:
+  name: Express detected (GLV test template)
+  author: glv
+  severity: info
+  tags: tech,glv-test
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "X-Powered-By: Express"

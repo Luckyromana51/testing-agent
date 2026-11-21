@@ -1,0 +1,197 @@
+# GLV rules for Python. Written by GLV Infotech for the testing platform.
+rules:
+  - id: glv.py.sql-injection
+    languages: [python]
+    severity: ERROR
+    message: >-
+      SQL query built by joining text (SQL injection). Pass the values as parameters:
+      cursor.execute("... WHERE id = %s", (user_id,)).
+    metadata:
+      glv-same-as: "code:sql-injection"
+      glv-title: "SQL query built by joining text (SQL injection)"
+      cwe: "CWE-89"
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute("..." % $X, ...)
+          - pattern: $CUR.execute("..." + $X, ...)
+          - pattern: $CUR.execute(f"...", ...)
+          - pattern: $CUR.execute("...".format(...), ...)
+          - pattern: $CUR.executemany("..." % $X, ...)
+          - pattern: $DB.raw("..." % $X, ...)
+          - pattern: $DB.raw(f"...", ...)
+          - pattern: $DB.extra(where=[f"...", ...])
+          - pattern: text(f"...")
+      - pattern-not: $CUR.execute(f"{$CONST}", ...)
+
+  - id: glv.py.command-injection
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A command runs through the shell with text that is not fixed (command injection).
+      Pass a list of arguments without shell=True.
+    metadata:
+      glv-same-as: "code:command-injection"
+      glv-title: "Shell command built from text that is not fixed (command injection)"
+      cwe: "CWE-78"
+    pattern-either:
+      - patterns:
+          - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+          - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+          - pattern-not: os.system("...")
+          - pattern-not: os.popen("...", ...)
+
+  - id: glv.py.unsafe-yaml
+    languages: [python]
+    severity: ERROR
+    message: >-
+      yaml.load without a safe loader can run code hidden in the file. Use yaml.safe_load.
+    metadata:
+      glv-same-as: "code:unsafe-deserialize"
+      glv-title: "YAML loaded in a way that can run code"
+      cwe: "CWE-502"
+    patterns:
+      - pattern-either:
+          - pattern: yaml.load($X)
+          - pattern: yaml.load($X, Loader=yaml.Loader)
+          - pattern: yaml.load($X, Loader=yaml.UnsafeLoader)
+          - pattern: yaml.load($X, Loader=yaml.FullLoader)
+          - pattern: yaml.unsafe_load(...)
+
+  - id: glv.py.pickle
+    languages: [python]
+    severity: WARNING
+    message: >-
+      pickle can run code hidden in the data. Never unpickle data from users or the network;
+      use JSON.
+    metadata:
+      glv-same-as: "code:unsafe-deserialize"
+      glv-title: "Data read with pickle, which can run code"
+      cwe: "CWE-502"
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: cPickle.loads(...)
+      - pattern: dill.loads(...)
+
+  - id: glv.py.tls-verify-off
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Certificate checks are turned off (verify=False), so anyone on the network can read and
+      change the traffic. Remove verify=False.
+    metadata:
+      glv-same-as: "code:tls-verify-off"
+      glv-title: "Certificate checks turned off"
+      cwe: "CWE-295"
+    pattern-either:
+      - pattern: requests.$M(..., verify=False, ...)
+      - pattern: httpx.$M(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+
+  - id: glv.py.debug-on
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Debug mode is on. In production it shows code and settings to anyone who causes an
+      error, and Flask's debugger can run commands. Turn it off.
+    metadata:
+      glv-same-as: "code:debug-on"
+      glv-title: "Debug mode turned on"
+      cwe: "CWE-489"
+    pattern-either:
+      - pattern: $APP.run(..., debug=True, ...)
+      - patterns:
+          - pattern: DEBUG = True
+          - pattern-inside: |
+              ...
+              SECRET_KEY = ...
+              ...
+
+  - id: glv.py.eval
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Text that is not fixed is run as code with eval or exec. Parse data with json.loads
+      or ast.literal_eval.
+    metadata:
+      glv-same-as: "code:eval"
+      glv-title: "Text run as code with eval or exec"
+      cwe: "CWE-95"
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: exec($X)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+
+  - id: glv.py.ssrf
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: >-
+      The server fetches an address that comes from the request (server-side request forgery).
+      Allow only known hosts.
+    metadata:
+      glv-same-as: "code:ssrf"
+      glv-title: "Server fetches an address from the request (SSRF)"
+      cwe: "CWE-918"
+    pattern-sources: &py-request
+      - pattern: request.args
+      - pattern: request.form
+      - pattern: request.values
+      - pattern: request.json
+      - pattern: request.GET
+      - pattern: request.POST
+      - pattern: request.query_params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M($URL, ...)
+              - pattern: httpx.$M($URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+          - focus-metavariable: $URL
+
+  - id: glv.py.path-traversal
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A file path comes from the request (path traversal): "../" can read any file on the
+      server. Use werkzeug's secure_filename or os.path.basename.
+    metadata:
+      glv-title: "File path from the request (path traversal)"
+      cwe: "CWE-22"
+    pattern-sources: *py-request
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: open($P, ...)
+              - pattern: send_file($P, ...)
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern: secure_filename(...)
+      - pattern: os.path.basename(...)
+
+  - id: glv.py.weak-password-hash
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Passwords are hashed with MD5 or SHA-1, which can be cracked in seconds. Use bcrypt,
+      argon2 or Django's make_password.
+    metadata:
+      glv-same-as: "code:weak-password-hash"
+      glv-title: "Passwords hashed with MD5 or SHA-1"
+      cwe: "CWE-916"
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5($PW, ...)
+          - pattern: hashlib.sha1($PW, ...)
+          - pattern: hashlib.md5($PW.encode(...))
+          - pattern: hashlib.sha1($PW.encode(...))
+      - metavariable-regex:
+          metavariable: $PW
+          regex: "(?i).*pass.*"
