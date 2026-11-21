@@ -255,6 +255,10 @@ export interface AgentStat {
   untested?: string;
   /** Why the agent was left out on purpose (for example search checks on signed-in pages). */
   skipped?: string;
+  /** Test cases the agent counted while it ran (each value, call or scenario it tried). */
+  cases?: number;
+  /** How many of those test cases failed. */
+  casesFailed?: number;
 }
 
 export interface ScanResult {

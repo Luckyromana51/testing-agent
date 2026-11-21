@@ -19,6 +19,9 @@ const MAX_FILES = 20_000;
 const MAX_FILE_BYTES = 1_000_000;
 const MAX_TOTAL_BYTES = 150_000_000;
 
+/** Coverage reports inside a skipped coverage folder that the test-suite check reads (line and branch coverage). */
+const COVERAGE_REPORT = /^(coverage-summary\.json|lcov\.info|cobertura[\w-]*\.xml|clover\.xml|coverage\.xml)$/;
+
 /** Folders that hold installed or generated code, not the project's own. */
 export const SKIP_DIRS = new Set([
   ".git",
@@ -152,19 +155,26 @@ async function readTree(root: string) {
   const allPaths: string[] = [];
   const skippedDirs: string[] = [];
   let total = 0;
-  const walk = async (dir: string, rel: string) => {
+  const walk = async (dir: string, rel: string, coverageOnly = 0) => {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const e of entries) {
       if (allPaths.length >= MAX_FILES) return;
       const relPath = rel ? `${rel}/${e.name}` : e.name;
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
+        if (coverageOnly) {
+          if (coverageOnly < 3) await walk(path.join(dir, e.name), relPath, coverageOnly + 1);
+          continue;
+        }
         if (SKIP_DIRS.has(e.name)) {
           if (e.name !== ".git") skippedDirs.push(relPath);
+          // The coverage report's totals are read by the test-suite check; nothing else in there is.
+          if (e.name === "coverage") await walk(path.join(dir, e.name), relPath, 1);
           continue;
         }
         await walk(path.join(dir, e.name), relPath);
       } else if (e.isFile()) {
+        if (coverageOnly && !COVERAGE_REPORT.test(e.name)) continue;
         allPaths.push(relPath);
         const full = path.join(dir, e.name);
         const { size } = await stat(full);
@@ -192,7 +202,11 @@ export function readZip(data: Uint8Array) {
       const skipAt = parts.slice(0, -1).findIndex((p) => SKIP_DIRS.has(p));
       if (skipAt >= 0) {
         if (parts[skipAt] !== ".git") skipped.add(parts.slice(0, skipAt + 1).join("/"));
-        return false;
+        const report = parts[skipAt] === "coverage" && COVERAGE_REPORT.test(parts.at(-1)!) && !parts.slice(0, skipAt).some((p) => SKIP_DIRS.has(p));
+        if (!report || f.originalSize > MAX_FILE_BYTES) return false;
+        allPaths.push(f.name);
+        total += f.originalSize;
+        return true;
       }
       if (f.name.endsWith("/") || parts.includes("..") || f.name.startsWith("/")) return false;
       if (allPaths.length >= MAX_FILES) return false;

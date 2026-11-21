@@ -11,6 +11,7 @@ import { feedCode, stepCode } from "./live-code.js";
 import { runJourneys } from "./journeys.js";
 import { compareVisuals } from "./visual.js";
 import { keepFirstSightings } from "../agents/web/once.js";
+import { withCases } from "./cases.js";
 import { CouldNotTestError, explainLoadError, NotTestedError, refusedStatus } from "./coverage.js";
 import { finding } from "./finding.js";
 import { LoginError, signIn, type SignedIn } from "./login.js";
@@ -127,8 +128,9 @@ class AgentRunner {
     const stat = this.stats.get(agent.id)!;
     const started = Date.now();
     stat.runs = (stat.runs ?? 0) + 1;
+    const cases = { tried: 0, failed: 0 };
     try {
-      const out = await fn();
+      const out = await withCases(cases, fn);
       for (const f of out) f.agent ??= agent.id;
       stat.findings += out.length;
       return out;
@@ -155,6 +157,10 @@ class AgentRunner {
       ];
     } finally {
       stat.ms += Date.now() - started;
+      if (cases.tried) {
+        stat.cases = (stat.cases ?? 0) + cases.tried;
+        stat.casesFailed = (stat.casesFailed ?? 0) + cases.failed;
+      }
     }
   }
 }

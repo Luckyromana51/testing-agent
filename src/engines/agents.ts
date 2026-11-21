@@ -1,4 +1,5 @@
 import type { EngineAgent } from "../agents/types.js";
+import { withCases } from "../runner/cases.js";
 import { NotTestedError } from "../runner/coverage.js";
 import { finding } from "../runner/finding.js";
 import type { AgentStat, Finding } from "../types.js";
@@ -21,8 +22,9 @@ export async function runEngineAgents<Ctx>(
     stats.push(stat);
     log(`Agent: ${agent.name}`);
     const started = Date.now();
+    const cases = { tried: 0, failed: 0 };
     try {
-      const out = await agent.run(ctx);
+      const out = await withCases(cases, () => agent.run(ctx));
       for (const f of out) f.agent ??= agent.id;
       stat.findings = out.length;
       findings.push(...out);
@@ -53,6 +55,10 @@ export async function runEngineAgents<Ctx>(
       );
     } finally {
       stat.ms = Date.now() - started;
+      if (cases.tried) {
+        stat.cases = cases.tried;
+        stat.casesFailed = cases.failed;
+      }
     }
   }
   return { findings, stats };

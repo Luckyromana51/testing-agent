@@ -89,6 +89,7 @@ describe("test phone: Android run on the stand-in phone", () => {
       "device:plain-http",
       "device:tracking-before-consent",
       "device:journey-failed",
+      "device:state-lost",
     ]) {
       assert.ok(got.has(r), `${r} missing; got ${[...got].join(", ")}`);
     }
@@ -102,6 +103,16 @@ describe("test phone: Android run on the stand-in phone", () => {
     const crashes = first.findings.filter((f) => f.rule === "device:crash");
     assert.ok(crashes.some((f) => /sideways|landscape|rotat/i.test(`${f.title} ${f.detail}`)), crashes.map((f) => f.title).join(" | "));
     assert.ok(crashes.some((f) => /NullPointerException/.test(`${f.title}\n${f.evidence ?? ""}`)));
+  });
+
+  it("interrupts the app: background, another app, a notification, low battery and permissions turned off", () => {
+    const lost = first.findings.find((f) => f.rule === "device:state-lost");
+    assert.match(lost?.evidence ?? "", /background/i);
+    assert.doesNotMatch(lost?.evidence ?? "", /Another app/, "the app kept its screen under another app");
+    const crashes = first.findings.filter((f) => f.rule === "device:crash");
+    assert.ok(crashes.some((f) => /permissions turned off/i.test(`${f.title} ${f.detail}`) && /SecurityException/.test(`${f.title}\n${f.evidence ?? ""}`)), crashes.map((f) => f.detail).join(" | "));
+    assert.ok(phone.shell.includes("dumpsys battery reset"), "the battery is put back");
+    assert.ok(phone.shell.includes("pm grant in.glv.demoshop android.permission.CAMERA"), "the permission is given back");
   });
 
   it("never taps Buy, Delete account or Log out", () => {

@@ -6,6 +6,7 @@ import type { AgentInfo, WebAgent } from "./types.js";
 import { keyboardAgent, motionAgent, screenReaderAgent, textSpacingAgent, zoomAgent } from "./web/a11y.js";
 import { corsAgent, cspAgent, orphanPagesAgent, redirectChainAgent, renderedHtmlAgent } from "./web/audit.js";
 import { browserLabAgent } from "./web/browsers.js";
+import { HANDBOOK_WEB_AGENTS } from "./web/handbook-web.js";
 import { anchorsAgent, devicesAgent, formFieldsAgent, monkeyAgent, notFoundPageAgent, searchAgent } from "./web/interact.js";
 import { authFormsAgent, infoLeakAgent, jsLibrariesAgent, sriAgent } from "./web/leaks.js";
 import { linksAgent } from "./web/links.js";
@@ -112,6 +113,8 @@ export const WEB_AGENTS: WebAgent[] = [
   orphanPagesAgent,
   corsAgent,
   cspAgent,
+  // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
+  ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
   ...PRODUCT_AGENTS,
   // Signed-in apps (CRM, ERP, SaaS...): app calls, lists and tables, ID numbers, CSRF, tokens, and

@@ -10,6 +10,8 @@
  * - Sign in: a password field with no label; test@glv.in / s3cret signs in
  * - No internet: a blank screen. Traffic: a plain-HTTP call with a token, and Firebase Analytics at launch
  * - Speed: 3.2 s cold start, 350 MB memory, 25% slow frames
+ * - Interruptions: back from the background it starts again on Home (the screen is lost); with the
+ *   camera permission turned off, opening Products crashes it
  */
 import http from "node:http";
 import net from "node:net";
@@ -73,6 +75,8 @@ export async function startFakeAppium(opts: { platform?: "android" | "ios"; shel
     offline: false,
     proxy: "",
     tablet: false,
+    cameraOff: false,
+    foreground: "",
     log: [] as string[],
   };
   const win = () => (state.tablet ? { width: 800, height: 1280 } : state.landscape ? { width: H, height: W } : { width: W, height: H });
@@ -218,6 +222,12 @@ export async function startFakeAppium(opts: { platform?: "android" | "ios"; shel
     };
     switch (hit.tap) {
       case "products":
+        if (state.cameraOff) {
+          crash("java.lang.SecurityException: Permission Denial: opening camera requires android.permission.CAMERA", "ProductsActivity.onCreate");
+          break;
+        }
+        go(hit.tap);
+        break;
       case "settings":
       case "about":
       case "signin":
@@ -253,6 +263,13 @@ export async function startFakeAppium(opts: { platform?: "android" | "ios"; shel
     if (line.startsWith("dumpsys meminfo")) return "** MEMINFO in pid 4242 [in.glv.demoshop] **\n TOTAL PSS:   358400            TOTAL RSS:   400000\n";
     if (line.startsWith("cmd package resolve-activity")) return `priority=0 preferredOrder=0\n${appId}/.MainActivity\n`;
     if (line.startsWith("am force-stop")) state.running = false;
+    if (line === "am start -a android.settings.SETTINGS") state.foreground = "com.android.settings";
+    if (line.startsWith("dumpsys package ")) return `Packages:\n  Package [${appId}]\n    runtime permissions:\n      android.permission.CAMERA: granted=true, flags=[ USER_SET ]\n      android.permission.INTERNET: granted=true\n`;
+    if (line === `pm revoke ${appId} android.permission.CAMERA`) {
+      state.cameraOff = true;
+      state.running = false; // Android stops the app when a permission is taken away
+    }
+    if (line === `pm grant ${appId} android.permission.CAMERA`) state.cameraOff = false;
     if (line.startsWith("am start -W")) {
       launch();
       return "Starting: Intent { cmp=in.glv.demoshop/.MainActivity }\nStatus: ok\nLaunchState: COLD\nTotalTime: 3200\nWaitTime: 3210\nComplete\n";
@@ -265,13 +282,22 @@ export async function startFakeAppium(opts: { platform?: "android" | "ios"; shel
       case "deviceInfo":
         return { displayDensity: 240, platformVersion: "14" };
       case "getCurrentPackage":
-        return state.running ? appId : "com.android.launcher3";
+        return state.foreground || (state.running ? appId : "com.android.launcher3");
+      case "backgroundApp":
+        // The demo app does not save its screen: it comes back on Home.
+        state.screen = "home";
+        state.stack = [];
+        return null;
       case "queryAppState":
         return state.running ? 4 : 1;
       case "terminateApp":
         state.running = false;
         return true;
       case "activateApp":
+        if (state.foreground) {
+          state.foreground = "";
+          if (state.running) return null;
+        }
         launch();
         return null;
       case "shell":

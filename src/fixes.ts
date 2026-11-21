@@ -1,4 +1,5 @@
 import { MOBILE_FIXES } from "./fixes-mobile.js";
+import { HANDBOOK_FIXES } from "./fixes-handbook.js";
 import { WEB_AGENT_FIXES } from "./fixes-web.js";
 import type { Finding } from "./types.js";
 
@@ -852,7 +853,7 @@ function toolFix(rule: string, detail: string): Fix | undefined {
 /** The fix for a finding, or a general one built from the finding's own text. */
 export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
   if (f.rule === "ios:missing-purpose") return missingPurposeFix(f.detail);
-  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule] ?? WEB_AGENT_FIXES[f.rule] ?? MOBILE_FIXES[f.rule];
+  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule] ?? WEB_AGENT_FIXES[f.rule] ?? MOBILE_FIXES[f.rule] ?? HANDBOOK_FIXES[f.rule];
   if (known) return known;
   if (/^(android|ios):secret-/.test(f.rule)) return MOBILE_SECRET;
   if (/^code:secret-/.test(f.rule)) return ROTATE_SECRET;
@@ -869,4 +870,4 @@ export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
 }
 
 /** Rules that have a written fix (used by tests to keep the list complete). */
-export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES), ...Object.keys(WEB_AGENT_FIXES), ...Object.keys(MOBILE_FIXES)];
+export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES), ...Object.keys(WEB_AGENT_FIXES), ...Object.keys(MOBILE_FIXES), ...Object.keys(HANDBOOK_FIXES)];
