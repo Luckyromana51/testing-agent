@@ -31,6 +31,12 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN:-}
       K6_INFLUX_URL: ${K6_INFLUX_URL:-}
       GRAFANA_URL: ${GRAFANA_URL:-}
+      # Test phones. With the android profile: ANDROID_DEVICE=android:5555 and
+      # APP_SERVER_ADDRESS=http://testing-agent:4000 in .env (Appium then starts inside this container).
+      ANDROID_DEVICE: ${ANDROID_DEVICE:-}
+      APPIUM_URL: ${APPIUM_URL:-}
+      APP_SERVER_ADDRESS: ${APP_SERVER_ADDRESS:-}
+      APP_PROXY_PORT: ${APP_PROXY_PORT:-8899}
     depends_on:
       zap:
         condition: service_healthy
@@ -98,6 +104,27 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
 
+  # Optional: "Test phones", the built-in Android emulator (Android 14). Start with:
+  #   docker compose --profile android up -d
+  # then add ANDROID_DEVICE=android:5555 and APP_SERVER_ADDRESS=http://testing-agent:4000 to .env and
+  # run docker compose up -d again. It needs hardware virtualisation (/dev/kvm): a Linux server, or
+  # Windows with WSL 2. The phone's screen can be watched in a browser on port 6080.
+  android:
+    image: budtmo/docker-android:emulator_14.0_v3.9.0-p2
+    profiles: ["android"]
+    platform: linux/amd64
+    restart: unless-stopped
+    devices:
+      - /dev/kvm
+    environment:
+      EMULATOR_DEVICE: "Samsung Galaxy S10"
+      WEB_VNC: "true"
+    ports:
+      - "6080:6080"
+    volumes:
+      - android-data:/home/androidusr
+
 volumes:
   agent-data:
+  android-data:
   influx-data:

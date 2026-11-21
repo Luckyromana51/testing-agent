@@ -229,7 +229,7 @@ export function defaultName(type: ProductType, t: ProjectTarget): string {
   } catch {
     /* fall through */
   }
-  if (t.fileName) return t.fileName.replace(/\.(apk|ipa|zip|json|ya?ml)$/i, "");
+  if (t.fileName) return t.fileName.replace(/\.(apk|aab|apks|xapk|ipa|zip|json|ya?ml)$/i, "");
   return type;
 }
 

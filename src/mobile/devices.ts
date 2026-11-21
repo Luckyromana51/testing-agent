@@ -138,6 +138,6 @@ const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/;
 export function appLocation(d: AppDevice, file: string, name: string): { app: string; shared: boolean } {
   if (LOCAL.test(new URL(d.appiumUrl).hostname)) return { app: path.resolve(file), shared: false };
   const server = d.serverAddress || process.env.APP_SERVER_ADDRESS || process.env.PUBLIC_URL;
-  if (!server) throw new Error(`Appium on ${d.name} runs on another machine, so it downloads the app from this server: set "This server's address" for the device in Owner panel > Devices.`);
+  if (!server) throw new Error(`Appium on ${d.name} runs on another machine, so it downloads the app from this server: set "This server's address" for the device in Owner panel > Test phones.`);
   return { app: shareApp(file, name, server), shared: true };
 }

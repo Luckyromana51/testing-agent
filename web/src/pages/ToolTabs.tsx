@@ -25,7 +25,7 @@ export function toolDraft(meta: Meta, type: ProductType, saved?: ToolChoice[]): 
     const needsFile = (t.options ?? []).some((o) => o.required);
     draft[t.id] = {
       // Tools on the Mac helper take over a Mac's screen (VoiceOver speaks): only when chosen.
-      on: saved ? Boolean(s) : t.ready && t.safety === "safe" && !needsFile && !t.needsMac,
+      on: saved ? Boolean(s) : t.ready && t.safety === "safe" && !needsFile && !t.needsMac && !t.needsDevice,
       options: Object.fromEntries(
         (t.options ?? []).flatMap((o) => [
           [o.id, s?.options?.[o.id] ?? o.default],
@@ -90,7 +90,9 @@ export function ToolTabs({
   const overLimit = (o: { id: string }, value: string) =>
     Boolean(permit && tool && ((tool.limits?.users === o.id && Number(value) > permit.maxUsers) || (tool.limits?.minutes === o.id && Number(value) > permit.maxMinutes)));
   const loginNote = (t: MetaTool) =>
-    t.needsMac
+    t.needsDevice
+      ? "Runs on a test phone from Owner panel > Test phones. With a saved app login, it signs in and tests the screens behind it too."
+      : t.needsMac
       ? `Runs on GLV's Mac helper: the Mac opens ${type === "ios" ? "the app" : "the pages"} and sends back what it saw.${WEB_PRODUCTS.includes(type) ? " It tests what anyone can reach, without the saved login." : ""}`
       : WEB_PRODUCTS.includes(type)
       ? t.signedIn === "uses-login"
@@ -158,6 +160,7 @@ export function ToolTabs({
                 </div>
               </div>
               {tool.needsMac && <span className="safety mac">Mac helper</span>}
+              {tool.needsDevice && <span className="safety mac">Test phone</span>}
               <span className={`safety ${tool.safety}`}>{tool.safety === "safe" ? "Safe: no attacks" : "Needs permission"}</span>
             </div>
             <p className="tool-desc">{tool.description}</p>

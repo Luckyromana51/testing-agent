@@ -50,7 +50,7 @@ export interface ToolInfo {
    * connected, so its status is checked on every request, and it is never switched on by default.
    */
   needsMac?: boolean;
-  /** Runs on a test phone (Owner panel > Devices): checked on every request, never on by default. */
+  /** Runs on a test phone (Owner panel > Test phones): checked on every request, never on by default. */
   needsDevice?: boolean;
   /**
    * Its category is scored even when the engine does not score it (Apple's accessibility audit for an

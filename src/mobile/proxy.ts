@@ -23,6 +23,17 @@ export interface TrafficEvent {
 
 const SENSITIVE = /\b(pass(word)?|pwd|token|access_token|auth|otp|pin|secret|session|card|cvv|aadhaar|pan|email|phone|mobile)\b/gi;
 
+/** Loopback, private (10/8, 172.16/12, 192.168/16), link-local, CGNAT (100.64/10) and IPv6 local addresses. */
+export function localAddress(addr?: string): boolean {
+  if (!addr) return false;
+  const a = addr.replace(/^::ffff:/i, "");
+  if (a === "::1" || /^f[cd]/i.test(a) || /^fe80:/i.test(a)) return true;
+  const m = a.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (!m) return false;
+  const [x, y] = [Number(m[1]), Number(m[2])];
+  return x === 127 || x === 10 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 169 && y === 254) || (x === 100 && y >= 64 && y <= 127);
+}
+
 export class TrafficRecorder {
   readonly events: TrafficEvent[] = [];
   /** The port it listens on, once started. */
@@ -38,6 +49,8 @@ export class TrafficRecorder {
     this.server = http.createServer((req, res) => this.forward(req, res));
     this.server.on("connect", (req, client: net.Socket, head) => this.tunnel(req, client, head));
     this.server.on("connection", (s) => {
+      // Only phones on this machine's own networks may use it, so it is never an open proxy for the internet.
+      if (!localAddress(s.remoteAddress)) return s.destroy();
       this.sockets.add(s);
       s.on("close", () => this.sockets.delete(s));
     });

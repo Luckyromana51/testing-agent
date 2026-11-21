@@ -7,6 +7,8 @@
  * text, a tablet screen and no internet, measures start time, memory and smoothness, records which
  * servers the app talks to, and runs the project's app journeys.
  */
+import { execFile } from "node:child_process";
+import { lookup } from "node:dns/promises";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sdkForHost } from "../agents/mobile/sdks.js";
@@ -243,7 +245,7 @@ export async function exploreApp(
   if (env.recorder && env.proxyHost && device.platform === "android") {
     if ((await shell("settings", ["put", "global", "http_proxy", `${env.proxyHost}:${env.recorder.port}`])) === null) env.recorder = undefined;
   } else if (opts.traffic && device.platform === "ios") report.notes.push("Traffic is recorded on Android test phones only (an iOS Simulator uses the Mac's own network settings).");
-  else if (opts.traffic && !env.proxyHost) report.notes.push("Traffic was not recorded: set \"This server's address\" for the device in Owner panel > Devices, so the phone can reach the recorder.");
+  else if (opts.traffic && !env.proxyHost) report.notes.push("Traffic was not recorded: set \"This server's address\" for the device in Owner panel > Test phones, so the phone can reach the recorder.");
   if (device.platform === "android") await shell("dumpsys", ["gfxinfo", appId, "reset"]);
 
   try {
@@ -546,7 +548,7 @@ function deviceOptions(): ToolOption {
   return {
     id: "device",
     label: "Test phone",
-    hint: devices.length ? "Add phones in Owner panel > Devices." : "No test phone yet: add one in Owner panel > Devices.",
+    hint: devices.length ? "Add phones in Owner panel > Test phones." : "No test phone yet: add one in Owner panel > Test phones.",
     choices: [{ value: "auto", label: "The first ready phone for this app" }, ...devices.map((d) => ({ value: d.id, label: `${d.name} (${d.platform === "android" ? "Android" : "iOS"})` }))],
     default: "auto",
   };
@@ -562,7 +564,7 @@ async function pickDevice(platform: "android" | "ios", choice: string, signal?: 
     return d;
   }
   const mine = listDevices().filter((d) => d.platform === platform);
-  if (!mine.length) throw new Error(`No ${platform === "android" ? "Android" : "iOS"} test phone is set up: add one in Owner panel > Devices${platform === "android" ? ", or start the built-in emulator (docker compose --profile android up -d)" : " (Appium on the Mac with the XCUITest driver)"}.`);
+  if (!mine.length) throw new Error(`No ${platform === "android" ? "Android" : "iOS"} test phone is set up: add one in Owner panel > Test phones${platform === "android" ? ", or start the built-in emulator (docker compose --profile android up -d)" : " (Appium on the Mac with the XCUITest driver)"}.`);
   const reasons: string[] = [];
   for (const d of mine) {
     const why = await deviceStatus(d, signal);
@@ -581,7 +583,7 @@ export function capabilitiesFor(d: AppDevice, app: string): Record<string, unkno
     ...(d.platformVersion ? { "appium:platformVersion": d.platformVersion } : {}),
   };
   if (d.platform === "android") {
-    return { platformName: "Android", "appium:automationName": "UiAutomator2", "appium:deviceName": d.deviceName ?? d.name, "appium:autoGrantPermissions": true, "appium:enforceAppInstall": true, "appium:uiautomator2ServerInstallTimeout": 120_000, "appium:adbExecTimeout": 60_000, ...common };
+    return { platformName: "Android", "appium:automationName": "UiAutomator2", "appium:deviceName": d.deviceName ?? d.name, "appium:autoGrantPermissions": true, "appium:noSign": true, "appium:enforceAppInstall": true, "appium:uiautomator2ServerInstallTimeout": 120_000, "appium:adbExecTimeout": 60_000, ...common };
   }
   return { platformName: "iOS", "appium:automationName": "XCUITest", "appium:deviceName": d.deviceName ?? "iPhone 16", "appium:autoAcceptAlerts": true, "appium:wdaLaunchTimeout": 240_000, ...common };
 }
@@ -621,7 +623,7 @@ export const appiumTool: Tool = {
   },
   async ready() {
     const devices = listDevices();
-    if (!devices.length) return "No test phone is set up: add one in Owner panel > Devices, or start the built-in Android emulator.";
+    if (!devices.length) return "No test phone is set up: add one in Owner panel > Test phones, or start the built-in Android emulator.";
     for (const d of devices) if (!(await deviceStatus(d))) return null;
     return `No test phone is answering (${devices.map((d) => d.name).join(", ")}).`;
   },
@@ -641,8 +643,14 @@ export const appiumTool: Tool = {
       if (server) {
         recorder = new TrafficRecorder();
         await recorder.listen(Number(process.env.APP_PROXY_PORT || 8899)).catch(() => recorder!.listen(0));
-        proxyHost = new URL(server).hostname;
+        // The phone may not know this network's names (the emulator's "testing-agent"): give it the address.
+        const name = new URL(server).hostname.replace(/^\[|\]$/g, "");
+        proxyHost = await lookup(name).then((r) => r.address, () => name);
       }
+    }
+    // The built-in emulator: adb may have tried before the emulator finished starting.
+    if (device.builtIn && process.env.APPIUM_LOCAL === "1" && device.udid?.includes(":")) {
+      await new Promise<void>((resolve) => execFile("adb", ["connect", device.udid!], { timeout: 20_000 }, () => resolve()));
     }
     ctx.log(`Installing the app on ${device.name}`);
     let driver: WebDriver | undefined;
@@ -681,7 +689,7 @@ export function deviceOutput(report: DeviceReport, images: ToolImage[]): ToolOut
   const skipped = report.passes.filter((x) => !x.done).map((x) => `${x.label} (${x.note})`);
   const summary = [
     `${report.screens.length} screen${report.screens.length === 1 ? "" : "s"} visited with ${report.taps} taps on ${report.device}`,
-    report.crashes.length ? `${report.crashes.length} crash${report.crashes.length === 1 ? "" : "es"} or freezes` : "No crashes",
+    report.crashes.length ? (report.crashes.length === 1 ? "1 crash or freeze" : `${report.crashes.length} crashes or freezes`) : "No crashes",
     ...(p.startMs !== undefined ? [`Opens in ${(p.startMs / 1000).toFixed(1)} s (cold start)`] : []),
     ...(p.memoryMb !== undefined ? [`Memory ${Math.round(p.memoryMb)} MB`] : []),
     ...(p.jankPct !== undefined ? [`${p.jankPct}% slow frames of ${p.frames}`] : []),

@@ -93,7 +93,9 @@ describe("login vault", () => {
     assert.throws(() => buildLogin("crm", { username: "x", password: "y" }), /sign-in page/);
     assert.throws(() => buildLogin("api", { authType: "header", token: "t" }), /header name/);
     assert.throws(() => buildLogin("api", { authType: "bearer", token: "a\r\nX-Evil: 1" }), /not allowed/);
-    assert.throws(() => buildLogin("android", { token: "t" }), /does not use a login/);
+    assert.throws(() => buildLogin("android", { token: "t" }), /user name, email or phone/);
+    assert.throws(() => buildLogin("ios", { username: "a@b.in" }), /password/);
+    assert.deepEqual(buildLogin("android", { username: "a@b.in", password: "p" }), { kind: "app", username: "a@b.in", password: "p" });
     assert.equal(buildLogin("code", { token: "ghp_x" }).kind, "git");
     assert.deepEqual(buildLogin("api", { authType: "query", paramName: "api_key", token: "k" }), {
       kind: "api",

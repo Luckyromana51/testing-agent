@@ -7,6 +7,7 @@ import { FilePicker } from "./Home.tsx";
 import { loginKind, ProjectLogin } from "./LoginFields.tsx";
 import { PermissionCard } from "./Permission.tsx";
 import { JourneysEditor } from "./Journeys.tsx";
+import { AppJourneysEditor } from "./AppJourneys.tsx";
 import { AppSetup } from "./AppSetup.tsx";
 import { ApiSetup } from "./ApiSetup.tsx";
 import { FixRepoCard, GrowthTab } from "./WebExtras.tsx";
@@ -90,7 +91,7 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
-type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "tests";
+type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "appjourneys" | "tests";
 
 export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: User }) {
   const { data, error, reload } = usePoll(() => api.project(id), [id], 3000, (d) => d.project.busy);
@@ -130,6 +131,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
     ["trends", "Trends", flaky.length ? `${flaky.length} flaky` : undefined],
     ...(watch && (p.target.url || p.type === "api") ? ([["watch", p.type === "api" ? "API watch" : "Uptime and SSL", watch.down ? "down" : p.watch?.on ? "on" : undefined]] as [ProjectTab, string, string?][]) : []),
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
+    ...(p.type === "android" || p.type === "ios" ? ([["appjourneys", "App journeys", String(p.appJourneys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ["tests", "What runs"],
   ];
   const current = tabs.some(([t]) => t === tab) ? tab : "overview";
@@ -244,7 +246,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
           ) : (
             p.target.file && (
               <FilePicker
-                accept={p.type === "android" ? ".apk" : p.type === "ios" ? ".ipa,.zip" : p.type === "code" ? ".zip" : ".json,.yaml,.yml"}
+                accept={p.type === "android" ? ".apk,.aab,.apks,.xapk" : p.type === "ios" ? ".ipa,.zip" : p.type === "code" ? ".zip" : ".json,.yaml,.yml"}
                 label={p.type === "android" || p.type === "ios" ? "New build to test" : "Replace the file"}
                 hint="then press Re-test"
                 value={{ file: p.target.file, fileName: p.target.fileName ?? p.target.file, size: 0 }}
@@ -388,6 +390,14 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         </>
       )}
 
+      {current === "appjourneys" && (p.type === "android" || p.type === "ios") && (
+        <AppJourneysEditor
+          key={JSON.stringify(p.appJourneys ?? [])}
+          journeys={p.appJourneys ?? []}
+          hasDevice={meta.tools.some((t) => t.id === "appium" && t.ready)}
+          onSave={(appJourneys) => save({ appJourneys })}
+        />
+      )}
       {current === "journeys" && journeysOn && (
         <JourneysEditor key={JSON.stringify(p.journeys ?? [])} journeys={p.journeys ?? []} roles={p.roles ?? []} signedIn={Boolean(p.login)} onSave={(journeys) => save({ journeys })} />
       )}
