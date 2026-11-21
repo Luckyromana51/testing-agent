@@ -70,7 +70,7 @@ export const pathOf = (url: string) => {
 };
 
 export interface Route {
-  name: "home" | "new" | "projects" | "project" | "run" | "issues" | "owner" | "live" | "control";
+  name: "home" | "new" | "projects" | "project" | "run" | "issues" | "owner" | "live" | "control" | "manual" | "round";
   id?: string;
   query: URLSearchParams;
 }
@@ -79,7 +79,7 @@ function parse(): Route {
   const [pathPart, queryPart] = window.location.hash.replace(/^#\/?/, "").split("?");
   const [name, id] = pathPart.split("/");
   const query = new URLSearchParams(queryPart ?? "");
-  const known: Route["name"][] = ["new", "projects", "project", "run", "issues", "owner", "live", "control"];
+  const known: Route["name"][] = ["new", "projects", "project", "run", "issues", "owner", "live", "control", "manual", "round"];
   return { name: known.includes(name as Route["name"]) ? (name as Route["name"]) : "home", id, query };
 }
 
