@@ -1,4 +1,5 @@
 import { RumStore } from "./rum.js";
+import type { AppDevice } from "./mobile/devices.js";
 import { HookStore } from "./app/hooks.js";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -167,6 +168,8 @@ export interface Settings {
   parallelProjects?: number;
   /** Optional modules on/off (see src/modules.ts). Unset: each module's default. */
   modules?: Record<string, boolean>;
+  /** Test phones the owner added (Owner panel > Test phones); the built-in emulator comes from .env. */
+  devices?: AppDevice[];
 }
 
 const DEFAULT_SETTINGS: Settings = { agents: {}, defaultMaxPages: 20, aiSummary: true };

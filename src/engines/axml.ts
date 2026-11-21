@@ -14,6 +14,8 @@ export interface XmlNode {
  * but the ids stay, so these are trusted first.
  */
 const ATTR_IDS: Record<number, string> = {
+  0x01010001: "label",
+  0x01010002: "icon",
   0x01010003: "name",
   0x01010006: "permission",
   0x01010007: "readPermission",
@@ -31,6 +33,10 @@ const ATTR_IDS: Record<number, string> = {
   0x01010280: "allowBackup",
   0x010104ec: "usesCleartextTraffic",
   0x01010527: "networkSecurityConfig",
+  0x010104ee: "autoVerify",
+  0x0101002a: "path",
+  0x0101002b: "pathPrefix",
+  0x0101002c: "pathPattern",
 };
 
 function readStringPool(buf: Buffer, off: number): string[] {

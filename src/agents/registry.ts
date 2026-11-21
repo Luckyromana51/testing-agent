@@ -1,8 +1,7 @@
 import type { ProductType } from "../types.js";
 import { API_AGENTS } from "./api/index.js";
 import { CODE_AGENTS } from "./code/index.js";
-import { ANDROID_AGENTS } from "./mobile/android.js";
-import { IOS_AGENTS } from "./mobile/ios.js";
+import { ALL_ANDROID_AGENTS as ANDROID_AGENTS, ALL_IOS_AGENTS as IOS_AGENTS } from "./mobile/index.js";
 import type { AgentInfo, WebAgent } from "./types.js";
 import { keyboardAgent, motionAgent, screenReaderAgent, textSpacingAgent, zoomAgent } from "./web/a11y.js";
 import { corsAgent, cspAgent, orphanPagesAgent, redirectChainAgent, renderedHtmlAgent } from "./web/audit.js";

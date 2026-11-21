@@ -175,7 +175,8 @@ describe("choosing tools", () => {
     assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "byo-playwright", "glv-probes", "zap-active", "k6", "jmeter", "mac-safari", "mac-voiceover"]);
     assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "glv-probes", "zap-active", "k6", "jmeter", "schemathesis", "newman"]);
     assert.deepEqual(ids("code"), ["gitleaks", "opengrep", "osv-scanner", "trivy"]);
-    assert.deepEqual(ids("ios"), ["mac-ios-sim"], "the Mac helper runs the app; the iOS engine itself reads the IPA");
+    assert.deepEqual(ids("ios"), ["mac-ios-sim", "appium"], "the Mac helper and the test phone run the app; the iOS engine itself reads the IPA");
+    assert.deepEqual(ids("android"), ["appium"]);
     // Load and attack tools need the client's permission, each of its own kind.
     const needs = TOOLS.filter((t) => t.safety !== "safe").map((t) => `${t.id}:${t.permission}`);
     assert.deepEqual(needs, ["glv-probes:attack", "zap-active:attack", "k6:load", "jmeter:load"]);

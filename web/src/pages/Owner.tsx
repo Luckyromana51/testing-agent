@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Category, User } from "../../../src/types.ts";
-import { api, type HelperView, type Meta } from "../api.ts";
+import { api, type DeviceView, type HelperView, type Meta } from "../api.ts";
 import { CATEGORY_LABEL, go, plural, timeAgo, usePoll } from "../lib.ts";
 import { OpenCounts, Toggle } from "../ui.tsx";
 
-type Tab = "overview" | "agents" | "modules" | "team" | "macs" | "settings";
+type Tab = "overview" | "agents" | "modules" | "team" | "macs" | "devices" | "settings";
 const TABS: [Tab, string][] = [
   ["overview", "Overview"],
   ["agents", "Agents"],
   ["modules", "Modules"],
   ["team", "Team"],
   ["macs", "Mac helpers"],
+  ["devices", "Test phones"],
   ["settings", "Settings"],
 ];
 
@@ -56,6 +57,7 @@ export function Owner({
       {current === "modules" && <ModulesTab meta={meta} reloadMeta={reloadMeta} />}
       {current === "team" && <TeamTab me={user} />}
       {current === "macs" && <MacsTab />}
+      {current === "devices" && <DevicesTab />}
       {current === "settings" && <SettingsTab meta={meta} reloadMeta={reloadMeta} loginOff={loginOff} />}
     </div>
   );
@@ -715,5 +717,205 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
         )}
       </div>
     </div>
+  );
+}
+
+const EMPTY_DEVICE = { name: "", platform: "android", kind: "phone", appiumUrl: "http://", udid: "", deviceName: "", platformVersion: "", serverAddress: "" };
+type DeviceForm = typeof EMPTY_DEVICE;
+
+function DevicesTab() {
+  const [devices, setDevices] = useState<DeviceView[] | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [err, setErr] = useState("");
+  const [form, setForm] = useState<DeviceForm>(EMPTY_DEVICE);
+  const [editing, setEditing] = useState<string | null>(null);
+  const load = async (check: boolean) => {
+    if (check) setChecking(true);
+    try {
+      setDevices((await api.devices(check)).devices);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  };
+  useEffect(() => {
+    load(true);
+  }, []);
+  const set = (k: keyof DeviceForm) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+
+  return (
+    <>
+      <p className="muted">
+        A test phone is an Appium server with a phone, emulator or Simulator behind it. A test of an Android or iOS app then
+        installs the app there, opens every screen it can reach, taps buttons (never ones like Buy, Delete or Log out), and
+        looks for crashes, screens a screen reader cannot use, slow starts, and what the app sends over the network. Turn it on
+        per project, in its What runs tab: "Run on a test phone (Appium)".
+      </p>
+      {err && <div className="error">{err}</div>}
+      <div className="two-col">
+        <div className="card">
+          <div className="stat-label">
+            Test phones{" "}
+            <button className="btn small ghost" disabled={checking} onClick={() => load(true)}>
+              {checking ? "Checking…" : "Check again"}
+            </button>
+          </div>
+          {devices && !devices.length && (
+            <p className="muted small">
+              No test phone yet. Start the built-in Android emulator with <code>docker compose --profile android up -d</code>, or
+              add an Appium server with the form.
+            </p>
+          )}
+          <ul className="user-list helper-list">
+            {devices?.map((d) => (
+              <li key={d.id}>
+                <div className="grow">
+                  <div className="strong">
+                    <span className={`helper-dot ${d.checked && !d.status ? "on" : ""}`} aria-hidden /> {d.name}{" "}
+                    <span className="muted small">
+                      · {d.platform === "ios" ? "iOS" : "Android"} {d.kind}
+                      {d.builtIn ? " · from .env" : ""}
+                    </span>
+                  </div>
+                  <div className="muted small">
+                    {d.appiumUrl}
+                    {d.udid ? ` · ${d.udid}` : ""}
+                    {d.deviceName ? ` · ${d.deviceName}` : ""}
+                    {d.platformVersion ? ` · ${d.platformVersion}` : ""}
+                  </div>
+                  {d.checked && <div className={`small ${d.status ? "error-text" : ""}`}>{d.status ? `Not ready: ${d.status}` : "Ready"}</div>}
+                </div>
+                {!d.builtIn && (
+                  <>
+                    <button
+                      className="btn small ghost"
+                      onClick={() => {
+                        setEditing(d.id);
+                        setForm({ ...EMPTY_DEVICE, ...Object.fromEntries(Object.entries(d).filter(([, v]) => typeof v === "string")) } as DeviceForm);
+                      }}
+                    >
+                      Change
+                    </button>
+                    <button
+                      className="btn small ghost"
+                      onClick={async () => {
+                        if (!window.confirm(`Remove ${d.name}?`)) return;
+                        await api.removeDevice(d.id).catch((e: Error) => setErr(e.message));
+                        load(false);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <form
+          className="card form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setErr("");
+            try {
+              const input = { ...form, platform: form.platform as "android" | "ios", kind: form.kind as DeviceView["kind"] };
+              if (editing) await api.updateDevice(editing, input);
+              else await api.addDevice(input);
+              setForm(EMPTY_DEVICE);
+              setEditing(null);
+              load(true);
+            } catch (e2) {
+              setErr((e2 as Error).message);
+            }
+          }}
+        >
+          <div className="stat-label">{editing ? "Change test phone" : "Add a test phone"}</div>
+          <label className="form-field">
+            <span>Name</span>
+            <input className="input" required maxLength={60} placeholder="Pixel 8 on Lucky's laptop" value={form.name} onChange={set("name")} />
+          </label>
+          <div className="form-row">
+            <label className="form-field">
+              <span>Platform</span>
+              <select className="input" value={form.platform} onChange={set("platform")}>
+                <option value="android">Android</option>
+                <option value="ios">iOS</option>
+              </select>
+            </label>
+            <label className="form-field">
+              <span>Kind</span>
+              <select className="input" value={form.kind} onChange={set("kind")}>
+                <option value="phone">Real phone</option>
+                <option value="emulator">Android emulator</option>
+                <option value="simulator">iOS Simulator</option>
+              </select>
+            </label>
+          </div>
+          <label className="form-field">
+            <span>Appium address</span>
+            <input className="input" required placeholder="http://192.168.1.20:4723" value={form.appiumUrl} onChange={set("appiumUrl")} />
+          </label>
+          <label className="form-field">
+            <span>{form.platform === "ios" ? "Device UDID (real iPhone only)" : "adb serial (optional)"}</span>
+            <input className="input" placeholder={form.platform === "ios" ? "00008110-…" : "emulator-5554"} value={form.udid} onChange={set("udid")} />
+          </label>
+          {form.platform === "ios" && (
+            <label className="form-field">
+              <span>Simulator name</span>
+              <input className="input" placeholder="iPhone 16" value={form.deviceName} onChange={set("deviceName")} />
+            </label>
+          )}
+          <label className="form-field">
+            <span>OS version (optional)</span>
+            <input className="input" placeholder={form.platform === "ios" ? "18.1" : "14"} value={form.platformVersion} onChange={set("platformVersion")} />
+          </label>
+          <label className="form-field">
+            <span>This server's address, as that machine sees it</span>
+            <input className="input" placeholder="http://192.168.1.10:4000" value={form.serverAddress} onChange={set("serverAddress")} />
+            <span className="muted small">Appium downloads the app from here, and the phone's traffic goes through this host.</span>
+          </label>
+          <div className="form-row">
+            <button className="btn primary">{editing ? "Save" : "Add test phone"}</button>
+            {editing && (
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setEditing(null);
+                  setForm(EMPTY_DEVICE);
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+      <div className="card helper-setup">
+        <div className="stat-label">Set up Appium (once per machine)</div>
+        <ol>
+          <li>
+            <strong>Built-in Android emulator:</strong> on the server, run <code>docker compose --profile android up -d</code>, add{" "}
+            <code>ANDROID_DEVICE=android:5555</code> and <code>APP_SERVER_ADDRESS=http://testing-agent:4000</code> to .env, then run{" "}
+            <code>docker compose up -d</code> again. It needs hardware virtualisation (<code>/dev/kvm</code>); on Windows, that is WSL 2
+            with virtualisation on. It appears here as "Android emulator (built in)".
+          </li>
+          <li>
+            <strong>Real Android phone:</strong> on a laptop with the phone plugged in and USB debugging on, run{" "}
+            <code>npx appium@3.9.1 driver install uiautomator2</code> once, then{" "}
+            <code>npx appium@3.9.1 --address 0.0.0.0 --allow-insecure=*:adb_shell</code>.
+          </li>
+          <li>
+            <strong>iPhone Simulator or iPhone:</strong> on the Mac with Xcode, run <code>npx appium@3.9.1 driver install xcuitest</code>{" "}
+            once, then <code>npx appium@3.9.1 --address 0.0.0.0</code>. A real iPhone needs a Development build signed for it.
+          </li>
+          <li>
+            Without <code>--allow-insecure=*:adb_shell</code>, crash, screen-reader and touch checks still run; speed, dark mode,
+            large text, tablet, offline and network checks are skipped.
+          </li>
+        </ol>
+      </div>
+    </>
   );
 }

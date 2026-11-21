@@ -2,12 +2,14 @@ import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
 import type { HelperInfo } from "../../src/helpers.ts";
+import type { AppDevice } from "../../src/mobile/devices.ts";
 import type { ModuleInfo } from "../../src/modules.ts";
 import type { FlakyIssue, TrendPoint } from "../../src/trends.ts";
 import type { Alert, Incident, WatchSummary } from "../../src/watch.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   ApiScenario,
+  AppJourney,
   FixPr,
   RumSummary,
   SeoInput,
@@ -221,6 +223,8 @@ export interface Overview {
 }
 
 /** A Mac paired with this server, as the owner panel shows it. */
+export type DeviceView = AppDevice & { status: string | null; checked: boolean };
+
 export interface HelperView {
   id: string;
   name: string;
@@ -277,7 +281,7 @@ export const api = {
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
   updateProject: (
     id: string,
-    b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[]; journeys: Journey[]; watch: WatchConfig; apiScenarios: ApiScenario[]; mock: boolean | "new" | null } & TargetFields>,
+    b: Partial<{ name: string; schedule: Schedule; tools: ToolChoice[]; journeys: Journey[]; watch: WatchConfig; apiScenarios: ApiScenario[]; appJourneys: AppJourney[]; mock: boolean | "new" | null } & TargetFields>,
   ) =>
     call<ProjectSummary>("PATCH", `/api/projects/${id}`, b),
   /** Sends a file as the raw request body; returns the stored name to put in the project. */
@@ -331,6 +335,10 @@ export const api = {
   addHelper: (name: string) => call<{ helper: HelperView; token: string }>("POST", "/api/owner/helpers", { name }),
   removeHelper: (id: string) => call("DELETE", `/api/owner/helpers/${id}`),
   helperDownload: "/api/owner/helpers/download",
+  devices: (check = false) => call<{ devices: DeviceView[] }>("GET", `/api/owner/devices${check ? "?check=1" : ""}`),
+  addDevice: (d: Partial<AppDevice>) => call<{ device: AppDevice }>("POST", "/api/owner/devices", d),
+  updateDevice: (id: string, d: Partial<AppDevice>) => call<{ device: AppDevice }>("PUT", `/api/owner/devices/${id}`, d),
+  removeDevice: (id: string) => call("DELETE", `/api/owner/devices/${id}`),
 
   /** API projects: approve a test's API file as the new version, the Postman file, and the mock server. */
   approveApiFile: (runId: string) => call<{ ok: true }>("POST", `/api/runs/${runId}/api-baseline`, {}),

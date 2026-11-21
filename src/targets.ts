@@ -68,7 +68,7 @@ export function wsAddress(raw: string): string {
 export const UPLOAD_TYPES: Record<string, RegExp> = {
   api: /\.(json|ya?ml|har|txt|sh|curl)$/i,
   code: /\.zip$/i,
-  android: /\.apk$/i,
+  android: /\.(apk|aab|apks|xapk)$/i,
   ios: /\.(ipa|zip)$/i,
 };
 
@@ -229,7 +229,7 @@ export function defaultName(type: ProductType, t: ProjectTarget): string {
   } catch {
     /* fall through */
   }
-  if (t.fileName) return t.fileName.replace(/\.(apk|ipa|zip|json|ya?ml)$/i, "");
+  if (t.fileName) return t.fileName.replace(/\.(apk|aab|apks|xapk|ipa|zip|json|ya?ml)$/i, "");
   return type;
 }
 
@@ -238,6 +238,8 @@ export function loginKindFor(type: ProductType): LoginKind | undefined {
   if (WEB_PRODUCTS.includes(type)) return "web";
   if (type === "api") return "api";
   if (type === "code") return "git";
+  // Mobile apps: the account the test phone signs in with on the app's own sign-in screen.
+  if (type === "android" || type === "ios") return "app";
   return undefined;
 }
 
@@ -271,6 +273,13 @@ export function buildLogin(type: ProductType, input: Partial<Login>, prev?: Logi
   const password = text(input, "password", "The password", 500);
   const token = text(input, "token", "The token", 5000);
 
+  if (kind === "app") {
+    login.username = pick("username", "The user name", 200);
+    if (!login.username) throw new Error("Enter the user name, email or phone number to sign in to the app with.");
+    if (!password && !keep?.hasPassword) throw new Error("Enter the password to sign in with.");
+    login.password = password;
+    return login;
+  }
   if (kind === "web") {
     const loginUrl = pick("loginUrl", "The sign-in page address", 2000);
     if (!loginUrl) throw new Error("Enter the address of the sign-in page.");

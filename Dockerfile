@@ -62,11 +62,17 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 FROM mcr.microsoft.com/playwright:v1.63.0-noble
-ARG SCHEMATHESIS_VERSION=4.32.7 NEWMAN_VERSION=6.2.3
+ARG SCHEMATHESIS_VERSION=4.32.7 NEWMAN_VERSION=6.2.3 APPIUM_VERSION=3.9.1 UIAUTOMATOR2_VERSION=8.7.3
 # git clones repositories for the source code engine. Java runs the W3C HTML checker, and
 # testssl.sh (from Ubuntu's own packages) checks HTTPS setups. Lighthouse comes with npm.
+# adb, aapt, apksigner and zipalign (Ubuntu's own packages) let Appium install and drive apps on
+# the Android emulator (docker compose --profile android).
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates default-jre-headless testssl.sh python3-venv \
- && rm -rf /var/lib/apt/lists/*
+      adb aapt apksigner zipalign \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /opt/android-sdk/platform-tools /opt/android-sdk/build-tools/34.0.0 \
+ && ln -s /usr/bin/adb /opt/android-sdk/platform-tools/adb \
+ && for b in aapt apksigner zipalign; do ln -s "/usr/bin/$b" "/opt/android-sdk/build-tools/34.0.0/$b"; done
 COPY --from=gotools /tools/ /usr/local/bin/
 COPY --from=jmeter /opt/jmeter /opt/jmeter
 RUN ln -s /opt/jmeter/bin/jmeter /usr/local/bin/jmeter
@@ -77,6 +83,13 @@ RUN python3 -m venv /opt/schemathesis \
  && ln -s /opt/schemathesis/bin/st /usr/local/bin/st \
  && npm install -g --prefix /opt/newman --ignore-scripts --no-audit --no-fund "newman@${NEWMAN_VERSION}" \
  && ln -s /opt/newman/bin/newman /usr/local/bin/newman
+# Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
+# when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
+ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home
+RUN npm install -g --prefix /opt/appium --no-audit --no-fund "appium@${APPIUM_VERSION}" \
+ && ln -s /opt/appium/bin/appium /usr/local/bin/appium \
+ && appium driver install --source=npm "appium-uiautomator2-driver@${UIAUTOMATOR2_VERSION}" \
+ && npm cache clean --force
 WORKDIR /app
 ENV NODE_ENV=production PORT=4000 DATA_DIR=/data
 COPY --from=build /app/package.json ./
@@ -87,11 +100,12 @@ COPY --from=build /app/web/dist ./web/dist
 COPY --from=build /app/rules ./rules
 # The Mac helper, which the owner downloads from Owner panel > Mac helpers (it runs on a Mac, not here).
 COPY --from=build /app/helper ./helper
-RUN mkdir -p /data && chown pwuser /data
+COPY --from=build /app/docker/start.sh ./start.sh
+RUN mkdir -p /data && chown pwuser /data && chown -R pwuser /opt/appium-home
 USER pwuser
 # Nuclei's community checks, downloaded once when the image is built (signed by ProjectDiscovery).
 # Rebuild the image to update them. If the download fails, Nuclei shows as "not tested" in reports.
 RUN nuclei -update-templates -duc -silent || echo "Nuclei checks were not downloaded"
 VOLUME ["/data"]
 EXPOSE 4000
-CMD ["node", "dist/server.js"]
+CMD ["./start.sh"]

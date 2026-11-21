@@ -133,6 +133,15 @@ Other steps: `header Name: value`, `body {...}`, `as Role name` (or `as nobody`)
 
 **API watch** (project page): checks an endpoint every few minutes with the saved login (uptime, answer time, SSL, words the answer must hold), and can also run the read-only scenarios every 15 to 60 minutes.
 
+### SOAP, gRPC, WebSocket and contract tests
+
+Pick the kind on the new API test form.
+
+- **SOAP**: reads the WSDL, builds a request for each operation from its schema and calls the operations whose names say they only read (GetOrder, ListCustomers...). Operations that change data are listed but called only on a test server. Reports plain http, faults with stack traces, faults sent with HTTP 200, slow operations and leaks.
+- **gRPC**: the methods come from an uploaded `.proto` file or the server's reflection service. Methods whose names say they only read are called with example values; methods that change data are never called on a live server. Reports no TLS, reflection open to anyone, methods that answer without the login, errors that show the server's insides, the health service and slow methods.
+- **WebSocket**: our own small client connects with the saved login, sends the messages the project lists and checks the answers, then tries without a login, from another website (Origin) and with plain `ws://`.
+- **Contract tests (Pact)**: upload a Pact file (version 2, 3 or 4) that a website or app wrote. Each of its requests is sent to the API and the answer must keep the contract (status, headers, body, with Pact's matching rules). Requests that change data are sent only to a test server.
+
 ### Source code engine (offline)
 
 Give it a Git repository (https; private ones need an access token in the project's login) or upload a zip. The code is read on the server and deleted after the test; installed packages and build output are skipped.
@@ -160,6 +169,22 @@ The APK is unpacked and read on the server; it is never installed or run.
 | Firebase database | A Realtime Database that anyone can read |
 | Native libraries | Missing 64-bit code, libraries not ready for 16 KB memory pages |
 
+App bundles (.aab) and split sets (.apks from bundletool, .xapk from app stores) are read too: a bundle's manifest is in aapt2's protocol-buffer format, and its base module is checked the way Google Play will build it into APKs; for a split set, the base APK is checked with the native libraries of its processor splits added.
+
+| Agent | What it checks |
+| --- | --- |
+| Code | WebViews with JavaScript bridges, file access or ignored certificate errors, trust-all certificates and hostnames, weak ciphers, code loaded at run time, files on shared storage, a FileProvider sharing the whole storage, release builds that were not shrunk |
+| SDKs and trackers | About 50 known SDKs (analytics, ads, crash reporting, payments, push) from their package names, the advertising ID permission missing or unused |
+| Framework | Flutter, React Native, Cordova, Capacitor, .NET MAUI and Unity: debug builds, the development bundle, Capacitor pointed at a dev server, source maps left in |
+| Libraries and SBOM | Library versions (OkHttp, Retrofit, AndroidX and the Maven files in the APK), written to `app-sbom.cdx.json` (CycloneDX) |
+| Size | A large download, big pictures that could be WebP, the same file twice |
+| App links | Links set to open in the app (autoVerify): the site's `/.well-known/assetlinks.json` must name this app and its signing key's SHA-256 |
+| Servers | The app's own test servers, private addresses and servers with a broken certificate |
+| Languages | Translations missing strings (counted from resources.arsc), so screens fall back to English |
+| Play Store | No icon, no app name, components without android:exported for API 31 or newer |
+
+Every app test also keeps a summary (version, SDKs, permissions, servers, libraries), and the next test of the same project lists what changed: new permissions, new trackers, new servers, a bigger download.
+
 ### iOS engine (IPA)
 
 The IPA (or a zip of the .app, such as a Simulator build) is unpacked and read on the server; it is never installed or run, and no Mac is needed. It reads Info.plist in either format (XML or binary), the program's headers (Mach-O, including fat files with several processors), the embedded provisioning profile and the privacy manifests. An IPA downloaded from the App Store has its code encrypted: the settings are still checked, and the report lists the checks that could not read the code, so export the IPA from Xcode's Organizer (Development or Ad Hoc) for a full test.
@@ -173,6 +198,26 @@ The IPA (or a zip of the .app, such as a Simulator build) is unpacked and read o
 | Hard-coded secrets and servers | Keys in the program, its config files, the React Native bundle and Flutter's App.framework; the app's own servers called over plain HTTP |
 | Firebase database | A Realtime Database that anyone can read |
 | Signing and provisioning | Debug builds (get-task-allow), expired or soon-expiring profiles, Enterprise distribution, push notifications set to the sandbox server |
+
+The iOS engine has the same SDK, framework, library, size, server and language checks, plus code checks (keychain items readable while the phone is locked, trust-all certificates, WebViews with file access, no stack canary or ARC), universal links (the site's `apple-app-site-association` must name this app's Team ID and bundle ID) and App Store checks (icon, launch screen, build number, 32-bit code).
+
+### Test phones (Appium)
+
+The "Run on a test phone (Appium)" tool tab installs the app on a phone, emulator or Simulator and uses it the way a person would. Appium (open source, Apache-2.0) is in the Docker image; GLV's own explorer drives it. It is never on by default: turn it on in a project's What runs tab.
+
+- It opens every screen it can reach (up to 10, 20 or 40) and taps buttons, but never ones like Buy, Pay, Delete, Send or Log out. With a saved app login (Login tab), it signs in first.
+- It reports crashes and "not responding" with the stack trace and the step that caused it, and checks each screen for TalkBack and VoiceOver labels, tap targets under 48 dp (44 pt on iOS), fields without a label, cut-off text, overlaps and low text contrast measured on the screenshot.
+- Then it tries the phone sideways, dark mode, the largest text, a tablet screen, no internet and the Back button, measures cold start time, memory and slow frames, and taps at random for a while (the same taps each test, so results repeat).
+- On Android, the phone's traffic goes through GLV's own recorder: plain-HTTP calls (and any password or token in them) and trackers that start before the user agrees are reported. HTTPS is not decrypted. The recorder accepts only phones on the server's own networks.
+- App journeys (project page > App journeys) are steps in plain words, like `tap "Cart"` and `see "Total"`, run on every test.
+
+Where the phone comes from (Owner panel > Test phones):
+
+- **Built-in Android emulator:** `docker compose --profile android up -d`, then add `ANDROID_DEVICE=android:5555` and `APP_SERVER_ADDRESS=http://testing-agent:4000` to `.env` and run `docker compose up -d` again. It needs hardware virtualisation (`/dev/kvm`): a Linux server, or WSL 2 on Windows with virtualisation on in the BIOS. Watch its screen at http://localhost:6080.
+- **A real Android phone:** on a laptop with the phone plugged in (USB debugging on), run `npx appium@3.9.1 driver install uiautomator2` once, then `npx appium@3.9.1 --address 0.0.0.0 --allow-insecure=*:adb_shell`, and add it with the laptop's address.
+- **iPhone Simulator or a real iPhone:** on the Mac with Xcode, `npx appium@3.9.1 driver install xcuitest` once, then `npx appium@3.9.1 --address 0.0.0.0`. A real iPhone needs a Development build signed for it. Appium on another machine downloads the app from this server, so set "This server's address" for the device.
+
+Without `--allow-insecure=*:adb_shell`, crashes, screens, labels and touch checks still run; speed, dark mode, large text, tablet, offline and traffic checks are skipped and the report says so.
 
 Symbols are matched as whole names in the program's symbol and selector tables, so `_status` is not read as the file-date function `_stat`. App extensions (widgets, share extensions) are listed in the report but their own settings are not tested yet.
 
@@ -313,6 +358,14 @@ For a web app, SaaS or CRM project, the test signs in with the saved login and t
 The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data (except the saves of a journey allowed to send forms).
 
 Checks that change data (account lockout on a spare account you mark, file upload safety with harmless marker files, mass assignment on a save a journey made, forgot-password, the Salesforce guest data check and Claude filling forms) run only on a project marked as a test copy, or with the client's written "Checks that change data" permission, never on scheduled re-tests. Each report lists what ran, what was put back and anything left to delete by hand. The Salesforce guest check is proven against a demo Aura endpoint; its first run on a real Experience Cloud site is still to come.
+
+## Website extras
+
+- **Tablet.** Every page is also checked at tablet width (820 px), with tablet screenshots next to the desktop and phone ones.
+- **Real-visitor speed** (project page > Visitors and SEO). A small script for the site's pages sends each visitor's real LCP, INP, CLS, TTFB and FCP to this server (`/rum/<token>`), with no cookies, names or IP addresses. The project shows the 75th percentile of the last 28 days, and reports flag slow pages once 20 visits have come in.
+- **SEO audit** (same tab). Target keywords per page, the backlinks you list and a Search Console CSV export. It cannot find backlinks nobody listed or see rankings without that export: that needs a web-wide crawl or Google's own data.
+- **Ask Claude to fix.** Save the site's repository (GitHub or GitLab, https) and a token in the project's vault. On an issue, **Ask Claude to fix** writes the smallest change and opens a pull request on a new `glv-fix/...` branch. Nothing is merged. Needs `ANTHROPIC_API_KEY`.
+- **Watch the sign-in live.** For a signed-in test, the live view shows the sign-in from **Start test**. When the sign-in gets stuck (a CAPTCHA, a code, a button that does nothing) and someone is watching, the screen is handed over: click and type on the picture, then press **Done**, and the test carries on.
 
 ## What the categories cover
 
@@ -557,8 +610,8 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - GraphQL mutations on a test server
 - Jira export
 - Client connections: MCP server, Hostinger API, SSH
-- Mobile app testing on devices with Appium
+- iOS traffic recording on the test phone (Android only for now), and Espresso or XCUITest suites the client wrote
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
-- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps, screenshot compare and PDF reports
+- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps
 - A local copy of the OSV database kept up to date on the server
 - SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export

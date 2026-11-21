@@ -2,6 +2,7 @@ import type { APIRequestContext } from "playwright";
 import type { MachOInfo } from "../../engines/macho.js";
 import type { PlistDict } from "../../engines/plist.js";
 import type { ZipEntry } from "../../engines/zip.js";
+import type { AppSummary } from "../../types.js";
 
 export interface IosFacts {
   bundleId: string;
@@ -54,4 +55,8 @@ export interface IosContext {
   request: APIRequestContext;
   log: (m: string) => void;
   note: (m: string) => void;
+  /** The entitlements signed into the main program (associated domains, team), when they could be read. */
+  entitlements?: PlistDict;
+  /** What the app is made of; agents fill it in for the report and the next upload's compare. */
+  summary: AppSummary;
 }

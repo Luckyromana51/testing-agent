@@ -83,10 +83,10 @@ export const PRODUCTS: ProductInfo[] = [
   {
     type: "android",
     name: "Android app",
-    description: "Upload an APK file",
+    description: "Upload an APK or app bundle (.aab)",
     input: "apk",
     available: true,
-    tests: ["Debug builds and signing", "Permissions Play restricts", "Plain HTTP and certificates", "Hard-coded keys", "Exposed components", "64-bit and 16 KB pages"],
+    tests: ["Debug builds and signing", "Permissions Play restricts", "Plain HTTP and certificates", "Hard-coded keys", "Exposed components", "64-bit and 16 KB pages", "SDKs, trackers and library versions", "App links, languages and size", "Crashes and screens on a test phone"],
   },
   {
     type: "ios",
@@ -94,7 +94,7 @@ export const PRODUCTS: ProductInfo[] = [
     description: "Upload an IPA, or a zip of the .app",
     input: "ipa",
     available: true,
-    tests: ["App Transport Security and plain HTTP", "Permissions and their purpose texts", "Privacy manifest (App Store rule)", "UIWebView, 64-bit and signing", "Hard-coded keys and open Firebase", "Debug and expired builds"],
+    tests: ["App Transport Security and plain HTTP", "Permissions and their purpose texts", "Privacy manifest (App Store rule)", "UIWebView, 64-bit and signing", "Hard-coded keys and open Firebase", "Debug and expired builds", "SDKs, trackers and library versions", "Universal links, languages and size", "Crashes and screens on a test phone"],
   },
 ];
 

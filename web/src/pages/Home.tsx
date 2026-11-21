@@ -367,7 +367,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
 
         {type === "android" && (
           <>
-            <FilePicker accept=".apk" label="The app's APK file" hint="the release build you would upload to Play" value={upload} onChange={setUpload} />
+            <FilePicker accept=".apk,.aab,.apks,.xapk" label="The app's APK or app bundle" hint="the release build you would upload to Play: .apk, .aab, or a split set (.apks, .xapk)" value={upload} onChange={setUpload} />
             <div className="note">
               The app is unpacked and read on GLV's server; it is never installed or run. For an app bundle (.aab),
               upload a universal APK made with bundletool.

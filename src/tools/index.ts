@@ -4,7 +4,7 @@ import { checkProof, hasPermission, permitFor, PERMISSION_KINDS, type Permission
 import { moduleOn, MODULES } from "../modules.js";
 import { finding } from "../runner/finding.js";
 import { scoreFindings } from "../runner/score.js";
-import type { AgentStat, Category, Finding, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
+import type { AgentStat, AppJourney, Category, Finding, Login, ProductType, ProjectTarget, ScanResult } from "../types.js";
 import { redact } from "../vault.js";
 import { byoTool } from "./byo.js";
 import { gitleaksTool } from "./gitleaks.js";
@@ -23,6 +23,7 @@ import { testsslTool } from "./testssl.js";
 import type { Tool, ToolChoice, ToolContext, ToolFinding, ToolInfo, ToolOutput, ToolStat } from "./types.js";
 import { vnuTool } from "./vnu.js";
 import { iosSimulatorTool, safariTool, voiceOverTool } from "./mac.js";
+import { appiumTool } from "./appium.js";
 import { zapActiveTool, zapTool } from "./zap.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
@@ -55,6 +56,8 @@ export const TOOLS: Tool[] = [
   safariTool,
   voiceOverTool,
   iosSimulatorTool,
+  // Mobile apps on a test phone (Appium).
+  appiumTool,
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);
@@ -66,7 +69,8 @@ export function toolsFor(product: ProductType): Tool[] {
 /** What the dashboard shows of a tool (no functions). */
 export function describeTool(t: Tool): ToolInfo {
   const { ready: _r, run: _run, ...info } = t;
-  return info;
+  // Options can be worked out when asked (the test phones on this server), so read them now.
+  return { ...info, ...(t.options ? { options: t.options } : {}) };
 }
 
 let cache: { at: number; status: Record<string, string | null> } | undefined;
@@ -78,10 +82,10 @@ let cache: { at: number; status: Record<string, string | null> } | undefined;
 export async function toolStatus(fresh = false): Promise<Record<string, string | null>> {
   const check = async (t: Tool) => [t.id, await t.ready().catch((e: Error) => e.message)] as const;
   if (fresh || !cache || Date.now() - cache.at >= 60_000) {
-    const entries = await Promise.all(TOOLS.filter((t) => !t.needsMac).map(check));
+    const entries = await Promise.all(TOOLS.filter((t) => !t.needsMac && !t.needsDevice).map(check));
     cache = { at: Date.now(), status: Object.fromEntries(entries) };
   }
-  return { ...cache.status, ...Object.fromEntries(await Promise.all(TOOLS.filter((t) => t.needsMac).map(check))) };
+  return { ...cache.status, ...Object.fromEntries(await Promise.all(TOOLS.filter((t) => t.needsMac || t.needsDevice).map(check))) };
 }
 
 /**
@@ -144,7 +148,7 @@ export async function defaultChoices(product: ProductType): Promise<ToolChoice[]
   if (process.env.DEFAULT_TOOLS === "none") return [];
   const status = await toolStatus();
   return toolsFor(product)
-    .filter((t) => t.safety === "safe" && !t.needsMac && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
+    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
     .map((t) => ({ id: t.id }));
 }
 
@@ -170,6 +174,8 @@ export interface ToolRunInput {
   permissions?: Permission[];
   /** The owner's module switches (Owner panel > Modules). */
   modules?: Record<string, boolean>;
+  /** Mobile apps: the project's journeys for the test phone. */
+  appJourneys?: AppJourney[];
 }
 
 /** Load and attack tests run one at a time on this server, so two never compete for it (or for the client's site). */
@@ -335,6 +341,8 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
             ...(permit && typeof permit !== "string" ? { permit: permit.ctx } : {}),
             uploadsDir: input.uploadsDir,
             ...(input.modules ? { modules: input.modules } : {}),
+            ...(result.app ? { app: result.app } : {}),
+            ...(input.appJourneys ? { appJourneys: input.appJourneys } : {}),
             options,
             outDir: input.artifactsDir,
             workDir: input.workDir,

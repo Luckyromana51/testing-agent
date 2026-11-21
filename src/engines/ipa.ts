@@ -1,15 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { request as playwrightRequest } from "playwright";
-import { IOS_AGENTS } from "../agents/mobile/ios.js";
+import { ALL_IOS_AGENTS as IOS_AGENTS } from "../agents/mobile/index.js";
+import { finishSummary } from "./apk.js";
 import type { IosContext, IosFacts, IosFramework } from "../agents/mobile/ios-context.js";
 import { scoreFindings } from "../runner/score.js";
-import type { Category, PageResult, ScanResult } from "../types.js";
+import type { AppSummary, Category, PageResult, ScanResult } from "../types.js";
 import { runEngineAgents } from "./agents.js";
 import { isMachO, parseMachO, type MachOInfo } from "./macho.js";
 import { parsePlist, parsePlistDict, isDict, str, type PlistDict } from "./plist.js";
 import { listZip, readEntry, sizeText, type ZipEntry } from "./zip.js";
 
-export const IPA_CATEGORIES: Category[] = ["security", "functional"];
+export const IPA_CATEGORIES: Category[] = ["security", "functional", "performance"];
 const MAX_CODE_BYTES = 250_000_000;
 const HEADER_BYTES = 256 * 1024;
 
@@ -19,6 +20,10 @@ export interface IpaScanOptions {
   fileName?: string;
   agents?: string[];
   onProgress?: (message: string) => void;
+  /** Where the app's library list (app-sbom.cdx.json) is saved. */
+  artifactsDir?: string;
+  /** The project's previous test of this app, to list what changed. */
+  previous?: { app: AppSummary; at: string };
 }
 
 /** The app folder in an IPA (Payload/Shop.app/) or in a zipped .app (Shop.app/). */
@@ -203,9 +208,28 @@ export async function scanIpa(opts: IpaScanOptions): Promise<ScanResult> {
     userAgent: "GLVTestingAgent/0.3 (app test)",
   });
   try {
-    const ctx: IosContext = { ipa, entries, facts, info, profile, privacy, binary, programs, frameworks, strings, request, log, note: (m) => notes.push(m) };
+    const summary: AppSummary = {
+      platform: "ios",
+      id: facts.bundleId,
+      name: facts.name,
+      version: facts.version,
+      build: facts.build,
+      packaging: facts.packaging,
+      minOs: facts.minOS,
+      size: ipa.length,
+      framework: "Native",
+      permissions: Object.keys(info).filter((k) => /^NS\w+UsageDescription$/.test(k)).sort(),
+      sdks: [],
+      libraries: [],
+      servers: [],
+      languages: [],
+      links: [],
+    };
+    const entitlements = binaryBuf && exeEntry && exeEntry.size <= MAX_CODE_BYTES ? signedEntitlements(binaryBuf) : undefined;
+    const ctx: IosContext = { ipa, entries, facts, info, profile, privacy, binary, programs, frameworks, strings, request, log, note: (m) => notes.push(m), summary, entitlements };
     const selected = opts.agents ? IOS_AGENTS.filter((a) => opts.agents!.includes(a.id)) : IOS_AGENTS.filter((a) => !a.defaultOff);
     const { findings, stats } = await runEngineAgents(selected, ctx, `${found.dir}Info.plist`, log);
+    await finishSummary(summary, findings, opts);
     const files = [...new Set(findings.map((f) => f.pageUrl))];
     const pages: PageResult[] = files.map((f) => ({ url: f, status: null, title: f, loadMs: null }));
     const score = scoreFindings(findings, 1, IPA_CATEGORIES, stats);
@@ -221,8 +245,29 @@ export async function scanIpa(opts: IpaScanOptions): Promise<ScanResult> {
       notes,
       label: { pages: "Files" },
       complete: true,
+      app: summary,
     };
   } finally {
     await request.dispose();
   }
+}
+
+/** The entitlements plist signed into a program (its code signature carries it as XML). */
+export function signedEntitlements(buf: Buffer): PlistDict | undefined {
+  let at = 0;
+  for (let n = 0; n < 8; n++) {
+    const start = buf.indexOf("<?xml", at);
+    if (start < 0) return undefined;
+    const end = buf.indexOf("</plist>", start);
+    if (end < 0) return undefined;
+    const xml = buf.subarray(start, end + 8);
+    at = end + 8;
+    if (!xml.includes("application-identifier") && !xml.includes("com.apple.developer.")) continue;
+    try {
+      return parsePlistDict(xml);
+    } catch {
+      /* not a plist */
+    }
+  }
+  return undefined;
 }

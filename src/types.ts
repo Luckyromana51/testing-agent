@@ -299,6 +299,47 @@ export interface ScanResult {
   seo?: SeoReport;
   /** Websites: real visitors' speed, when the speed snippet is on the site. */
   rum?: RumSummary;
+  /** Mobile apps: what the app is made of (framework, SDKs, libraries, servers), and what changed since the last upload. */
+  app?: AppSummary;
+}
+
+/** A mobile app journey: its steps are lines of text (see src/mobile/journeys.ts). */
+export interface AppJourney {
+  id: string;
+  name: string;
+  steps: string;
+  off?: boolean;
+}
+
+/** A mobile app's make-up, kept with each test so the next upload can be compared with it. */
+export interface AppSummary {
+  platform: "android" | "ios";
+  id: string;
+  name?: string;
+  version?: string;
+  build?: string;
+  /** apk, aab, apks (split set), ipa or app (a zipped .app). */
+  packaging: string;
+  minOs?: string;
+  /** Android: the target API level. */
+  target?: string;
+  /** File size in bytes. */
+  size: number;
+  /** "Flutter", "React Native", "Native (Kotlin/Java)" and so on. */
+  framework: string;
+  permissions: string[];
+  sdks: { id: string; name: string; kind: string; tracker: boolean }[];
+  libraries: { name: string; version: string; purl?: string }[];
+  /** Servers named in the app's code (not those of known SDKs). */
+  servers: string[];
+  /** Languages the app has texts for. */
+  languages: string[];
+  /** Web links the app opens (App Links, Universal Links). */
+  links: string[];
+  /** The biggest files, for the size section. */
+  biggest?: { file: string; size: number }[];
+  /** What changed since the project's previous test of this app. */
+  changes?: { since: string; version?: string; lines: string[] };
 }
 
 /** The checks that change data, for the report. */
@@ -586,7 +627,7 @@ export interface ProjectTarget {
   fileName?: string;
 }
 
-export type LoginKind = "web" | "api" | "git";
+export type LoginKind = "web" | "api" | "git" | "app";
 export type ApiAuthType = "bearer" | "header" | "basic" | "query" | "oauth2" | "login";
 
 /**
@@ -742,6 +783,8 @@ export interface Project {
   watch?: WatchConfig;
   /** API tests written in plain words, run on every test. */
   apiScenarios?: ApiScenario[];
+  /** Mobile apps: steps in plain words run on the test phone (tap "Sign in", see "Welcome"). */
+  appJourneys?: AppJourney[];
   /** The mock server's secret address part, when the mock is on. */
   mockToken?: string;
   /** The real-visitor speed snippet's id, when it is on. */

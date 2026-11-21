@@ -34,6 +34,8 @@ import { cleanJourney, MAX_JOURNEYS } from "./runner/journeys.js";
 import { cleanScenario, MAX_SCENARIOS } from "./agents/api/scenarios.js";
 import { mockAddress, registerApiRoutes } from "./api-routes.js";
 import { registerMoreRoutes, rumSnippet } from "./more-routes.js";
+import { registerMobileRoutes } from "./mobile-routes.js";
+import { cleanAppJourneys } from "./mobile/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
 import { loadOwnChecks, moduleOn, moduleReady, MODULES } from "./modules.js";
 import { WEB_PRODUCTS } from "./products.js";
@@ -408,8 +410,8 @@ export async function createApp(opts: AppOptions) {
   app.addContentTypeParser("application/octet-stream", (_req, payload, done) => done(null, payload));
   app.post("/api/uploads", { bodyLimit: MAX_UPLOAD }, async (req, reply) => {
     const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? "")).replace(/[^\w. ()-]/g, "_").slice(0, 200);
-    const ext = fileName.match(/\.(apk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl|proto|csv)$/i)?.[0]?.toLowerCase();
-    if (!ext) throw new HttpError(400, "Upload an .apk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt), a gRPC .proto file, a Pact contract (.json), a Search Console export (.csv) or a JMeter plan (.jmx).");
+    const ext = fileName.match(/\.(apk|aab|apks|xapk|ipa|zip|json|ya?ml|jmx|har|txt|sh|curl|proto|csv)$/i)?.[0]?.toLowerCase();
+    if (!ext) throw new HttpError(400, "Upload an .apk, .aab, .apks, .xapk, .ipa or .zip file, an API file (OpenAPI .json or .yaml, a Postman collection, a .har file or cURL commands in a .txt), a gRPC .proto file, a Pact contract (.json), a Search Console export (.csv) or a JMeter plan (.jmx).");
     if (!(req.body instanceof Readable)) throw new HttpError(400, "Send the file as application/octet-stream.");
     await mkdir(queue.uploadsDir(), { recursive: true });
     const file = `${randomUUID()}${ext}`;
@@ -435,7 +437,7 @@ export async function createApp(opts: AppOptions) {
     await fd.read(head, 0, 4, 0);
     await fd.close();
     const isZip = head.readUInt32LE(0) === 0x04034b50;
-    if ([".apk", ".ipa", ".zip"].includes(ext) !== isZip || size === 0) {
+    if ([".apk", ".aab", ".apks", ".xapk", ".ipa", ".zip"].includes(ext) !== isZip || size === 0) {
       await rm(full, { force: true });
       throw new HttpError(400, size === 0 ? "The file is empty." : `That does not look like a real ${ext} file.`);
     }
@@ -484,10 +486,10 @@ export async function createApp(opts: AppOptions) {
 
   app.patch<{ Params: { id: string } }>("/api/projects/:id", async (req) => {
     const p = getProject(req.params.id);
-    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown; watch: unknown; apiScenarios: unknown; mock: unknown }>(req);
+    const b = body<TargetInput & { name: string; schedule: Schedule; login: Partial<Login> | null; tools: unknown; journeys: unknown; watch: unknown; apiScenarios: unknown; mock: unknown; appJourneys: unknown }>(req);
     const next: Project = { ...p, target: { ...p.target } };
     if (b.name !== undefined) next.name = String(b.name).trim().slice(0, 80) || p.name;
-    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, watch: watchInput, apiScenarios: scenariosInput, mock: mockInput, ...targetInput } = b;
+    const { name: _n, schedule: _s, login: loginInput, tools: toolsInput, journeys: journeysInput, watch: watchInput, apiScenarios: scenariosInput, mock: mockInput, appJourneys: appJourneysInput, ...targetInput } = b;
     let login: Login | undefined;
     try {
       if (scenariosInput !== undefined) {
@@ -507,6 +509,11 @@ export async function createApp(opts: AppOptions) {
         const w = cleanWatch(watchInput as Record<string, unknown> | null);
         if (w) next.watch = w;
         else delete next.watch;
+      }
+      if (appJourneysInput !== undefined) {
+        if (p.type !== "android" && p.type !== "ios") throw new Error("App journeys are for Android and iOS apps.");
+        next.appJourneys = cleanAppJourneys(appJourneysInput);
+        if (!next.appJourneys.length) delete next.appJourneys;
       }
       if (journeysInput !== undefined) {
         if (!WEB_PRODUCTS.includes(p.type)) throw new Error("User journeys are for websites and web apps.");
@@ -666,6 +673,7 @@ export async function createApp(opts: AppOptions) {
   });
 
   registerApiRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message) });
+  registerMobileRoutes(app, { stores, ownerOnly, fail: (status, message) => new HttpError(status, message) });
   await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.

@@ -431,7 +431,7 @@ export const androidBackendAgent: ApkAgent = {
 const DEBUG_CERT = Buffer.from("Android Debug");
 
 /** The v2/v3 signing block sits just before the zip's central directory. */
-function signingBlock(apk: Buffer): Buffer | null {
+export function signingBlock(apk: Buffer): Buffer | null {
   const magic = Buffer.from("APK Sig Block 42");
   const at = apk.lastIndexOf(magic);
   if (at < 8) return null;
@@ -451,7 +451,12 @@ export const androidSigningAgent: ApkAgent = {
     const out: Finding[] = [];
     const v1 = entries.filter((e) => /^META-INF\/[^/]+\.(RSA|DSA|EC)$/i.test(e.name));
     const block = signingBlock(apk);
+    const bundle = facts.packaging === "aab";
     if (!v1.length && !block) {
+      if (bundle) {
+        add(out, "android:unsigned", "high", "The app bundle is not signed with an upload key", "Google Play only accepts bundles signed with your upload key. Sign it in Android Studio (Build > Generate Signed Bundle) or with jarsigner.", "META-INF", undefined, "functional");
+        return out;
+      }
       add(out, "android:unsigned", "high", "The APK is not signed", "Phones refuse to install unsigned apps. Sign it with your release key (apksigner).", "META-INF", undefined, "functional");
       return out;
     }
@@ -467,7 +472,8 @@ export const androidSigningAgent: ApkAgent = {
         "CN=Android Debug",
       );
     }
-    if (!block && (facts.minSdk ?? 0) < 26) {
+    // A bundle is signed with the upload key only (v1, by jarsigner); Google Play signs the APKs it builds.
+    if (!block && !bundle && (facts.minSdk ?? 0) < 26) {
       add(
         out,
         "android:v1-only",

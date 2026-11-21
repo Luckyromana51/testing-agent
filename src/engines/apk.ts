@@ -1,14 +1,18 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { request as playwrightRequest } from "playwright";
-import { ANDROID_AGENTS } from "../agents/mobile/android.js";
+import { ALL_ANDROID_AGENTS as ANDROID_AGENTS } from "../agents/mobile/index.js";
+import { cycloneDx } from "../agents/mobile/android-extra.js";
+import { compareApps } from "../agents/mobile/shared.js";
 import type { AndroidComponent, ApkContext, ApkFacts } from "../agents/mobile/context.js";
 import { scoreFindings } from "../runner/score.js";
-import type { Category, PageResult, ScanResult } from "../types.js";
+import type { AppSummary, Category, PageResult, ScanResult } from "../types.js";
 import { runEngineAgents } from "./agents.js";
-import { attrBool, attrNumber, parseAxml, type XmlNode } from "./axml.js";
+import { attrBool, attrNumber, type XmlNode } from "./axml.js";
+import { openAndroidPackage, parseAndroidXml } from "./aab.js";
 import { listZip, readEntry, sizeText, type ZipEntry } from "./zip.js";
 
-export const APK_CATEGORIES: Category[] = ["security", "functional"];
+export const APK_CATEGORIES: Category[] = ["security", "functional", "performance"];
 const MAX_CODE_BYTES = 250_000_000;
 
 export interface ApkScanOptions {
@@ -16,6 +20,10 @@ export interface ApkScanOptions {
   fileName?: string;
   agents?: string[];
   onProgress?: (message: string) => void;
+  /** Where the app's library list (app-sbom.cdx.json) is saved. */
+  artifactsDir?: string;
+  /** The project's previous test of this app, to list what changed. */
+  previous?: { app: AppSummary; at: string };
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -54,6 +62,8 @@ export function manifestFacts(manifest: XmlNode): ApkFacts {
       actions: pick("action", "name"),
       categories: pick("category", "name"),
       schemes: pick("data", "scheme"),
+      hosts: pick("data", "host"),
+      autoVerify: filters.some((f) => attrBool(f.attrs.autoVerify) === true),
     });
   }
   return {
@@ -73,6 +83,8 @@ export function manifestFacts(manifest: XmlNode): ApkFacts {
       .filter(Boolean),
     definedPermissions,
     components,
+    hasIcon: Boolean(app?.attrs.icon),
+    hasLabel: Boolean(app?.attrs.label),
   };
 }
 
@@ -82,7 +94,7 @@ function findNetworkConfig(apk: Buffer, entries: ZipEntry[]): ApkFacts["networkC
   const likely = xml.filter((e) => /^res\/xml/.test(e.name));
   for (const e of [...likely, ...xml.filter((x) => !likely.includes(x))].slice(0, 3000)) {
     try {
-      const node = parseAxml(readEntry(apk, e));
+      const node = parseAndroidXml(readEntry(apk, e));
       if (node.tag === "network-security-config") return { node, file: e.name };
     } catch {
       /* not binary XML */
@@ -96,19 +108,15 @@ export async function scanApk(opts: ApkScanOptions): Promise<ScanResult> {
   const startedAt = new Date().toISOString();
   const log = (m: string) => opts.onProgress?.(m);
   const notes: string[] = [];
-  log("Unpacking the APK");
-  const apk = await readFile(opts.apkFile);
-  const entries = listZip(apk);
-  const manifestEntry = entries.find((e) => e.name === "AndroidManifest.xml");
-  if (!manifestEntry) {
-    throw new Error(
-      entries.some((e) => e.name.endsWith(".apk"))
-        ? "This looks like an app bundle or split set. Upload the universal APK (bundletool build-apks --mode=universal)."
-        : "This file has no AndroidManifest.xml, so it is not an APK.",
-    );
-  }
-  const manifest = parseAxml(readEntry(apk, manifestEntry));
+  log("Unpacking the app");
+  const pkg = openAndroidPackage(await readFile(opts.apkFile));
+  const apk = pkg.buf;
+  const entries = pkg.entries;
+  notes.push(...pkg.notes);
+  const manifestEntry = entries.find((e) => e.name === "AndroidManifest.xml")!;
+  const manifest = parseAndroidXml(readEntry(apk, manifestEntry));
   const facts = manifestFacts(manifest);
+  facts.packaging = pkg.packaging;
   if (facts.usesCleartextTraffic !== undefined || manifest.children.some((c) => c.tag === "application" && c.attrs.networkSecurityConfig)) {
     facts.networkConfig = findNetworkConfig(apk, entries);
   } else {
@@ -148,9 +156,27 @@ export async function scanApk(opts: ApkScanOptions): Promise<ScanResult> {
     userAgent: "GLVTestingAgent/0.3 (app test)",
   });
   try {
-    const ctx: ApkContext = { apk, entries, manifest, facts, strings, request, log, note: (m) => notes.push(m) };
+    const summary: AppSummary = {
+      platform: "android",
+      id: facts.packageName,
+      version: facts.versionName,
+      build: facts.versionCode !== undefined ? String(facts.versionCode) : undefined,
+      packaging: pkg.packaging,
+      minOs: facts.minSdk !== undefined ? String(facts.minSdk) : undefined,
+      target: facts.targetSdk !== undefined ? String(facts.targetSdk) : undefined,
+      size: apk.length,
+      framework: "Native",
+      permissions: [...facts.permissions].sort(),
+      sdks: [],
+      libraries: [],
+      servers: [],
+      languages: [],
+      links: [],
+    };
+    const ctx: ApkContext = { apk, entries, manifest, facts, strings, request, log, note: (m) => notes.push(m), summary };
     const selected = opts.agents ? ANDROID_AGENTS.filter((a) => opts.agents!.includes(a.id)) : ANDROID_AGENTS.filter((a) => !a.defaultOff);
     const { findings, stats } = await runEngineAgents(selected, ctx, "AndroidManifest.xml", log);
+    await finishSummary(summary, findings, opts);
     const files = [...new Set(findings.map((f) => f.pageUrl))];
     const pages: PageResult[] = files.map((f) => ({ url: f, status: null, title: f, loadMs: null }));
     const score = scoreFindings(findings, 1, APK_CATEGORIES, stats);
@@ -166,9 +192,25 @@ export async function scanApk(opts: ApkScanOptions): Promise<ScanResult> {
       notes,
       label: { pages: "Files" },
       complete: true,
+      app: summary,
     };
   } finally {
     await request.dispose();
   }
 }
 
+
+/** Compares with the previous upload and saves the library list. Shared with the iOS engine. */
+export async function finishSummary(summary: AppSummary, findings: ScanResult["findings"], opts: { artifactsDir?: string; previous?: { app: AppSummary; at: string } }) {
+  if (opts.previous?.app && opts.previous.app.platform === summary.platform) {
+    const since = new Date(opts.previous.at).toISOString().slice(0, 10);
+    const diff = compareApps(opts.previous.app, summary, `on ${since}`);
+    summary.changes = { since: opts.previous.at, version: opts.previous.app.version, lines: diff.lines };
+    for (const f of diff.findings) f.agent ??= `${summary.platform}.libraries`;
+    findings.push(...diff.findings);
+  }
+  if (opts.artifactsDir && summary.libraries.length) {
+    await mkdir(opts.artifactsDir, { recursive: true });
+    await writeFile(path.join(opts.artifactsDir, "app-sbom.cdx.json"), cycloneDx(summary, summary.libraries));
+  }
+}

@@ -10,6 +10,7 @@ export function loginKind(type: ProductType): LoginKind | undefined {
   if (WEB_TYPES.includes(type)) return "web";
   if (type === "api") return "api";
   if (type === "code") return "git";
+  if (type === "android" || type === "ios") return "app";
   return undefined;
 }
 
@@ -18,11 +19,13 @@ export const LOGIN_QUESTION: Record<LoginKind, string> = {
   web: "Sign in first and test the pages behind the login",
   api: "The API needs a key or token",
   git: "The repository is private (needs an access token)",
+  app: "The app has a sign-in screen: sign in on the test phone",
 };
 
 /** One line on what is saved, for the project page. Never shows a secret. */
 export function describeLogin(l: LoginSummary): string {
   if (l.kind === "web") return `Signs in as ${l.username}${l.roleName ? ` (${l.roleName})` : ""} at ${l.loginUrl}${l.hasTotp || l.codeFrom ? ", with a two-step code" : ""}${l.steps ? ", with sign-in steps" : ""}`;
+  if (l.kind === "app") return `Signs in to the app as ${l.username} on the test phone`;
   if (l.kind === "git") return `Uses an access token${l.username ? ` for ${l.username}` : ""}`;
   if (l.authType === "basic") return `Basic login as ${l.username}`;
   if (l.authType === "header") return `Sends a key in the ${l.paramName} header`;
@@ -69,6 +72,17 @@ export function LoginFields({
       placeholder: isSaved ? "Saved. Leave empty to keep it" : placeholder,
     });
 
+  if (kind === "app") {
+    return (
+      <div className="login-fields">
+        <div className="form-row">
+          <div className="grow">{field("username", "User name, email or phone", { placeholder: "tester@client.com" })}</div>
+          <div className="grow">{secret("password", "Password", keep?.hasPassword)}</div>
+        </div>
+        <div className="muted small">The test phone types these on the app's sign-in screen, then taps Sign in. Journeys can use them as {"{{username}}"} and {"{{password}}"}. {SECRET_NOTE}</div>
+      </div>
+    );
+  }
   if (kind === "web") {
     return (
       <div className="login-fields">
@@ -251,7 +265,9 @@ export function ProjectLogin({
                 ? "No login: the agents test what visitors see without signing in."
                 : kind === "api"
                   ? "No key: the endpoints are called without logging in."
-                  : "No token: only public repositories can be opened."}
+                  : kind === "app"
+                    ? "No login: the test phone checks the screens it can reach before sign-in."
+                    : "No token: only public repositories can be opened."}
             </div>
           )}
         </div>
