@@ -529,6 +529,7 @@ async function scanPage(
     codeFeed.step("Page finished", { ok: true, detail: `${findings.length} finding${findings.length === 1 ? "" : "s"} on this page` });
     codeFeed.stop();
     await stopCast?.();
+    gate?.pageEnded(slot);
     await page.close();
   }
   return { result, findings, links, throttled };

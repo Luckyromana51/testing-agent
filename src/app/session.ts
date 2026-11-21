@@ -512,7 +512,7 @@ export const userEnumAgent: SiteAgent = {
         return [];
       }
       const said = err.message.match(/The page says: "([^"]+)"/)?.[1] ?? "";
-      log(`Sign-in with a made-up account was refused${said ? `: "${said}"` : ""}`);
+      log(`Account-guessing check (on purpose, the real sign-in is kept): a made-up account was refused${said ? `: "${said}"` : ""}`);
       if (!TELLS.test(said)) return [];
       return [
         finding({

@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from "playwright";
 import { readOnly } from "../agents/web/guard.js";
-import { isUnsafeLink, normaliseUrl } from "../runner/urls.js";
+import { HASH_ROUTE, isHashRouted, isUnsafeLink, markHashRouted, normaliseUrl } from "../runner/urls.js";
 import type { AppScreen } from "../types.js";
 import { GENERAL_NAV, type SystemProfile } from "./systems.js";
 
@@ -39,6 +39,29 @@ interface Item {
 }
 
 const sameScreen = (a: string, b: string) => normaliseUrl(a) === normaliseUrl(b);
+
+/**
+ * A click that only changed the word after the # (#home to #work) on an app that draws a new
+ * screen for it: the app routes by hash. A # that points at a place on the page (an element with
+ * that id) is an anchor, not a screen.
+ */
+async function hashRouteClick(page: Page, before: string, now: string): Promise<boolean> {
+  let a: URL, b: URL;
+  try {
+    a = new URL(before);
+    b = new URL(now);
+  } catch {
+    return false;
+  }
+  if (a.origin !== b.origin || a.pathname !== b.pathname || a.search !== b.search || a.hash === b.hash) return false;
+  if (!HASH_ROUTE.test(b.hash)) return false;
+  if (isHashRouted(b.origin)) return true;
+  const id = decodeURIComponent(b.hash.slice(1).split("?")[0]);
+  const anchor = await page
+    .evaluate((x) => Boolean(document.getElementById(x) || document.getElementsByName(x).length), id)
+    .catch(() => true);
+  return !anchor;
+}
 
 /** The menu items now visible on the page, each marked so it can be clicked again. */
 async function menuItems(page: Page, selectors: string[]): Promise<Item[]> {
@@ -156,7 +179,9 @@ export async function exploreApp(context: BrowserContext, startUrl: string, opts
     for (const it of items) {
       if (skip.has(it.label) && !it.tab) continue;
       const via = prefix ? `${prefix} > ${it.label}` : it.label;
-      if (it.href && !it.tab) {
+      // A link to "#work" on this same page may be a screen of a hash-routed app: click it to find out.
+      const hashLink = it.href && !isHashRouted(origin) && HASH_ROUTE.test(new URL(it.href).hash) && sameScreen(it.href, here);
+      if (it.href && !it.tab && !hashLink) {
         // A real link in the menu: no need to click it, but it is a menu screen.
         add(it.href, via, true);
         continue;
@@ -172,6 +197,12 @@ export async function exploreApp(context: BrowserContext, startUrl: string, opts
       if (!clicked) continue;
       await settle(page);
       const now = page.url();
+      if (!isHashRouted(origin) && (await hashRouteClick(page, before, now))) {
+        markHashRouted(origin);
+        log("App explorer: this app changes screens with the address after # (like #work), so each one is tested as its own screen");
+        // The screen this click started from was noted before its # counted: note it again with it.
+        add(before, prefix || "Start screen", true);
+      }
       if (!sameScreen(now, before) && /^https?:/.test(now)) {
         add(now, via, true);
         reached.push(normaliseUrl(now));

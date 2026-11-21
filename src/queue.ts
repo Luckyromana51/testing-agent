@@ -157,9 +157,17 @@ export class ScanQueue {
     const live = this.live.get(runId);
     if (action === "pause") gate.pause(opts.by);
     else if (action === "resume") gate.resume();
-    else if (action === "skip") gate.skip(opts.slot);
-    else gate.finish(`Finished early${who} from master control`);
-    const msg = { pause: `Paused${who}: open pages finish their current step, then wait`, resume: `Resumed${who}`, skip: `Skipping ${opts.slot === undefined ? "the open pages" : `the page on screen ${opts.slot + 1}`}${who}`, finish: `Finishing now${who}: no new pages, then the site checks and the score` }[action];
+    let skipped = true;
+    if (action === "skip") skipped = gate.skip(opts.slot);
+    else if (action === "finish") gate.finish(`Finished early${who} from master control`);
+    const msg = {
+      pause: `Paused${who}: open pages finish their current step, then wait`,
+      resume: `Resumed${who}`,
+      skip: skipped
+        ? `Skipping ${opts.slot === undefined ? "the open pages" : `the page on screen ${opts.slot + 1}`}${who}`
+        : `Nothing to skip${who}: no page is open now. The test is signing in or running its site-wide checks (sign-in, access and tool checks), which end on their own. The picture on the screen is the last page tested.`,
+      finish: `Finishing now${who}: no new pages, then the site checks and the score`,
+    }[action];
     live?.log(msg);
     const run = this.stores.runs.get(runId);
     if (run) this.stores.runs.save({ ...run, progress: [...run.progress, msg].slice(-200), gateState: gate.state() });

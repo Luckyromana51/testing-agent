@@ -161,6 +161,19 @@ export const WEB_AGENT_FIXES: Record<string, Fix> = {
     steps: "On phones, keep bars that stay on screen under about a quarter of the height: shrink the header when scrolling, hide it when scrolling down and show it when scrolling up, or let it scroll away.",
     effort: "hours",
   },
+  "ui:consent-button-covered": {
+    steps: "Give the page room under its last item as tall as the bar that stays on screen, so the accept button can scroll above it. Better still, show the accept button right under the policy's first lines, or in a bar of its own while the policy is open.",
+    code: [{ label: "CSS", snippet: "main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); } /* 64px = the bottom menu's height */" }],
+    effort: "minutes",
+  },
+  "ui:consent-no-button": {
+    steps: "Draw the \"I agree\" button in the same step that shows the policy text, and keep it on screen if loading the policy fails (with the error next to it). Do not show only \"Try again\" on a screen that asks people to accept something.",
+    effort: "minutes",
+  },
+  "ui:consent-gate": {
+    steps: "Nothing to fix in the app. To test the screen behind the policy, sign in once with the test account, accept the policy by hand, then run the test again.",
+    effort: "minutes",
+  },
   "ui:intrusive-popup": {
     steps: "Do not cover the page on arrival on phones. Show the offer after the visitor scrolls or is about to leave, or use a small banner. Cookie and age notices are fine.",
     effort: "minutes",

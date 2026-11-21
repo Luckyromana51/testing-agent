@@ -513,12 +513,17 @@ export class RunGate {
     this.changed?.(this.state());
   }
 
-  /** Skips the page on one screen, or every open page. */
-  skip(slot?: number): void {
+  /**
+   * Skips the page on one screen, or every open page. Returns false when there is nothing to skip:
+   * no page is open (the test is signing in, or running its site-wide checks after the pages).
+   */
+  skip(slot?: number): boolean {
+    if (slot === undefined ? this.open.size === 0 : !this.open.has(slot)) return false;
     // A new "skip all" applies to every page open now, also on screens that skipped before.
     if (slot === undefined) this.allTaken.clear();
     this.skips.add(slot ?? -1);
     this.changed?.(this.state());
+    return true;
   }
 
   /** True once for each skip asked for this screen. */
@@ -541,8 +546,20 @@ export class RunGate {
 
   /** A new page on the screen: a skip-all asked before it does not apply to it. */
   pageStarted(slot: number): void {
+    this.open.add(slot);
     if (this.skips.has(-1)) this.allTaken.add(slot);
   }
+
+  /** The screen's page closed. */
+  pageEnded(slot: number): void {
+    this.open.delete(slot);
+  }
+
+  /** Screens with a page open now. Skip has nothing to act on when there are none. */
+  openPages(): number {
+    return this.open.size;
+  }
+  private open = new Set<number>();
 
   /** Every screen moved on: the skip of all open pages is done. */
   clearSkipAll(): void {

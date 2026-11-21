@@ -8,12 +8,27 @@ export const UNSAFE_LINK =
   /\/(log-?out|sign-?out|logoff|delete|remove|destroy|unsubscribe)(\/|\?|$)|[?&](action|do)=(delete|remove|logout)/i;
 
 /**
+ * Apps that switch screens with a plain word after the # (#home, #work, #connect?view=calls): the
+ * app explorer marks a site this way when a menu click only changes that word and the page shows
+ * another screen. On those sites such a hash is a screen, so it is kept like #/contacts.
+ */
+const HASH_ROUTED = new Set<string>();
+/** A word route after the #: #work, #people?view=documents. Not #top-of-page anchors with dots or spaces. */
+export const HASH_ROUTE = /^#[A-Za-z][\w-]{0,60}(\?[^#\s]*)?$/;
+export function markHashRouted(origin: string): void {
+  HASH_ROUTED.add(origin);
+}
+export function isHashRouted(origin: string): boolean {
+  return HASH_ROUTED.has(origin);
+}
+
+/**
  * Normalises a URL for de-duplication: drops the #hash and trailing slash. A hash that is a screen
  * of a one-page app (#/contacts, #!/leads) is kept: it is a different screen, not a place on the page.
  */
 export function normaliseUrl(raw: string): string {
   const u = new URL(raw);
-  if (!/^#!?\/./.test(u.hash)) u.hash = "";
+  if (!/^#!?\/./.test(u.hash) && !(HASH_ROUTED.has(u.origin) && HASH_ROUTE.test(u.hash))) u.hash = "";
   if (u.pathname !== "/" && u.pathname.endsWith("/")) u.pathname = u.pathname.slice(0, -1);
   return u.toString();
 }
