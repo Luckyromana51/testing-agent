@@ -23,6 +23,7 @@ import type { RoleSession } from "./journeys.js";
 import { categoriesFor } from "../products.js";
 import { isCrawlable, normaliseUrl, siteOf } from "./urls.js";
 import { scoreFindings } from "./score.js";
+import { addressAllowed, controlScope, globMatch, NETWORKS, type RunControl } from "../control.js";
 
 export { isCrawlable, normaliseUrl } from "./urls.js";
 
@@ -41,6 +42,26 @@ export function parallelPages(asked?: number): number {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The tester skipped the page from master control: its checks so far are kept, the rest is left out. */
+class SkippedPage extends Error {}
+
+/** Slow network and slow CPU from master control, on one page (Chromium's DevTools protocol). */
+async function emulateSpeed(page: Page, control: RunControl): Promise<void> {
+  const net = control.network ? NETWORKS[control.network as keyof typeof NETWORKS] : undefined;
+  if (!net && !control.cpuSlowdown) return;
+  const cdp = await page.context().newCDPSession(page);
+  if (net) {
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: net.latencyMs,
+      downloadThroughput: (net.downKbps * 1000) / 8,
+      uploadThroughput: (net.upKbps * 1000) / 8,
+    });
+  }
+  if (control.cpuSlowdown) await cdp.send("Emulation.setCPUThrottlingRate", { rate: control.cpuSlowdown });
+}
 
 /** Picks the agents for this scan from the options (agent ids, or the old on/off flags). */
 export function selectAgents(opts: ScanOptions): WebAgent[] {
@@ -61,8 +82,10 @@ class AgentRunner {
   /** Agents left out on purpose, with the reason shown in the report. */
   skipped: AgentStat[];
 
-  constructor(agents: WebAgent[], loggedIn: boolean, consent?: { allowed: boolean; why: string }) {
+  constructor(agents: WebAgent[], loggedIn: boolean, consent?: { allowed: boolean; why: string }, control: RunControl = {}) {
     const skip = (a: WebAgent): string | undefined => {
+      if (control.tabletOn === false && "stage" in a && a.stage === "tablet") return "Left out: the tablet pass was turned off in master control.";
+      if (control.phoneOn === false && "stage" in a && a.stage === "mobile") return "Left out: the phone pass was turned off in master control.";
       if (loggedIn && a.category === "seo") return "Left out while signed in: private pages are not meant for search engines.";
       if (!loggedIn && a.needsLogin) return "Needs a saved login: add one on the project page to test the pages behind it.";
       if (a.needsConsent && !consent?.allowed) return `Changes data, so it runs only with consent. ${consent?.why ?? "Mark the project as a test copy, or record the client's written permission for checks that change data."}`;
@@ -281,13 +304,24 @@ async function scanPage(
   loading: Lock = (task) => task(),
 ): Promise<PageOutcome> {
   const page = await context.newPage();
+  const control = opts.control ?? {};
+  const gate = opts.gate;
+  const DESK = control.desktop ?? DESKTOP;
+  const TAB = control.tablet ?? TABLET;
+  const PHONE = control.phone ?? MOBILE;
+  gate?.pageStarted(slot);
+  /** Master control: the tester asked to skip this screen's page. */
+  const checkSkip = () => {
+    if (gate?.takeSkip(slot)) throw new SkippedPage("Skipped by the tester from master control");
+  };
+  await emulateSpeed(page, control).catch(() => {});
   const live = opts.live;
   const stopCast = live ? await castScreen(page, slot, live) : undefined;
   // Becomes the final address after redirects (http -> https, example.com -> www.example.com).
   let url = requestedUrl;
   const signals = listen(page);
   const codeFeed = feedCode(page, slot, live, url);
-  const inspector = opts.inspect ? new Inspector(page, url, DESKTOP) : undefined;
+  const inspector = opts.inspect ? new Inspector(page, url, DESK) : undefined;
   if (inspector) await inspector.startCoverage();
   const findings: Finding[] = [];
   const result: PageResult = { url, status: null, title: "", loadMs: null };
@@ -363,7 +397,7 @@ async function scanPage(
         codeFeed.step(`Open ${url}`, { code: stepCode.open(url) });
         const at = inspector?.now() ?? 0;
         try {
-          const answer = await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+          const answer = await page.goto(url, { waitUntil: control.waitUntil ?? "load", timeout: (control.pageTimeout ?? 30) * 1000 });
           result.loadMs = Date.now() - started;
           inspector?.step(`Open ${url}`, { at, ms: inspector.now() - at, ok: true, detail: answer ? `HTTP ${answer.status()}` : undefined });
           codeFeed.step("Page opened", { ms: result.loadMs ?? undefined, ok: (answer?.status() ?? 200) < 400, detail: answer ? `HTTP ${answer.status()}` : undefined });
@@ -375,7 +409,7 @@ async function scanPage(
         }
       });
     res = await open();
-    if (res && RETRY_STATUSES.includes(res.status())) {
+    for (let attempt = 0; attempt < (control.retries ?? 1) && res && RETRY_STATUSES.includes(res.status()); attempt++) {
       // Usually rate limiting or a brief hiccup, not a broken page: wait, then look again.
       throttled ||= res.status() === 429;
       show(`The site answered ${res.status()}: waiting, then trying again`);
@@ -393,6 +427,7 @@ async function scanPage(
     // Web fonts change the size of text: checks of overlapping or cut-off text, and the pictures,
     // must see the page with its fonts, or they find different things from run to run.
     await waitForFonts(page);
+    if (control.settleMs) await page.waitForTimeout(control.settleMs);
     result.status = res?.status() ?? null;
     throttled ||= result.status === 429;
     result.title = (await page.title()).slice(0, 200);
@@ -431,6 +466,7 @@ async function scanPage(
       );
       codeFeed.found(findings.slice(-1));
     }
+    checkSkip();
     links = await page.$$eval("a[href]", (as) => as.map((a) => (a as HTMLAnchorElement).href).filter(Boolean));
 
     // The picture is taken as the page loaded, before any agent presses keys, zooms or opens menus,
@@ -446,32 +482,36 @@ async function scanPage(
     if (moving?.length) result.moving = { desktop: moving };
     result.screenshot = shot;
 
+    checkSkip();
     await runStage("page");
     await inspector?.stopCoverage();
+    checkSkip();
 
     // Tablet: between desktop and phone, where menus often vanish. Only when an agent checks it.
-    if (runner.pageAgents("tablet").length) {
+    if (runner.pageAgents("tablet").length && control.tabletOn !== false) {
       view = "tablet";
       show("Resizing to a tablet");
-      codeFeed.step(`Resize to a tablet (${TABLET.width}×${TABLET.height})`, { code: stepCode.resize(TABLET.width, TABLET.height) });
-      await page.setViewportSize(TABLET);
+      codeFeed.step(`Resize to a tablet (${TAB.width}×${TAB.height})`, { code: stepCode.resize(TAB.width, TAB.height) });
+      await page.setViewportSize(TAB);
       await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
       await settleLayout(page);
-      inspector?.step(`Resize to a tablet (${TABLET.width}×${TABLET.height})`);
+      inspector?.step(`Resize to a tablet (${TAB.width}×${TAB.height})`);
       const tshot = `page-${index}-tablet.jpg`;
       codeFeed.step("Tablet picture", { code: stepCode.picture(tshot) });
       await stillPicture(page, path.join(opts.artifactsDir, tshot));
       result.tabletScreenshot = tshot;
       await runStage("tablet");
+      checkSkip();
     }
 
+    if (control.phoneOn === false) return { result, findings, links, throttled };
     view = "phone";
     show("Resizing to a phone");
-    codeFeed.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`, { code: stepCode.resize(MOBILE.width, MOBILE.height) });
-    await page.setViewportSize(MOBILE);
+    codeFeed.step(`Resize to a phone (${PHONE.width}×${PHONE.height})`, { code: stepCode.resize(PHONE.width, PHONE.height) });
+    await page.setViewportSize(PHONE);
     await page.evaluate("window.scrollTo(0, 0)").catch(() => {});
     await settleLayout(page);
-    inspector?.step(`Resize to a phone (${MOBILE.width}×${MOBILE.height})`);
+    inspector?.step(`Resize to a phone (${PHONE.width}×${PHONE.height})`);
     const mshot = `page-${index}-mobile.jpg`;
     codeFeed.step("Phone picture", { code: stepCode.picture(mshot) });
     const mmoving = await stillPicture(page, path.join(opts.artifactsDir, mshot), Boolean(opts.baselineDir));
@@ -479,7 +519,10 @@ async function scanPage(
     result.mobileScreenshot = mshot;
     await runStage("mobile");
   } catch (err) {
-    result.error = (err as Error).message.split("\n")[0];
+    if (err instanceof SkippedPage) {
+      result.skipped = err.message;
+      codeFeed.step("Skipped by the tester", { ok: true, detail: "The rest of this page's checks were left out" });
+    } else result.error = (err as Error).message.split("\n")[0];
   } finally {
     await runStage("end");
     await saveInspect();
@@ -513,7 +556,12 @@ function dropDuplicates(findings: Finding[]): void {
 }
 
 /** Crawls a website from `opts.url` and runs every selected agent on each page, then on the site. */
-export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
+export async function scanSite(input: ScanOptions): Promise<ScanResult> {
+  // Master control: passed in, or the running test's (the queue sets it around the engine).
+  const scoped = controlScope.get();
+  const opts: ScanOptions = { ...input, control: input.control ?? scoped?.control, gate: input.gate ?? scoped?.gate };
+  const control: RunControl = opts.control ?? {};
+  const gate = opts.gate;
   const startedAt = new Date().toISOString();
   const startUrl = normaliseUrl(opts.url);
   let origin = new URL(startUrl).origin;
@@ -521,7 +569,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const log = (m: string) => opts.onProgress?.(m);
   await mkdir(opts.artifactsDir, { recursive: true });
 
-  const runner = new AgentRunner(selectAgents(opts), Boolean(opts.login), opts.writes);
+  const runner = new AgentRunner(selectAgents(opts), Boolean(opts.login), opts.writes, control);
   log(`${runner.stats.size} specialist agents assigned`);
   if (opts.login && runner.skipped.some((s) => s.category === "seo")) {
     log("Search engine checks are left out: the test runs signed in, and private pages are not for search engines");
@@ -538,13 +586,41 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
   const stop = () => void browser.close().catch(() => {});
   opts.signal?.addEventListener("abort", stop, { once: true });
   const context = await browser.newContext({
-    viewport: DESKTOP,
+    viewport: control.desktop ?? DESKTOP,
     userAgent:
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36 GLVTestingAgent/0.2",
+      control.userAgent ?? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36 GLVTestingAgent/0.2",
+    ...(control.locale ? { locale: control.locale } : {}),
+    ...(control.timezone ? { timezoneId: control.timezone } : {}),
+    ...(control.colorScheme ? { colorScheme: control.colorScheme } : {}),
+    ...(control.reducedMotion ? { reducedMotion: control.reducedMotion } : {}),
+    ...(control.javascript === false ? { javaScriptEnabled: false } : {}),
+    ...(control.headers ? { extraHTTPHeaders: control.headers } : {}),
   });
+  if (control.blockUrls?.length) {
+    const blocked = control.blockUrls.map((p) => (p.includes("*") ? p : `*${p}*`));
+    await context.route(
+      (u) => blocked.some((p) => globMatch(p, u.href)),
+      (route) => route.abort("blockedbyclient"),
+    );
+  }
+  const testerNotes = describeTesterSetup(control);
 
   const queue = [startUrl];
   const seen = new Set(queue);
+  /** Clicks from the start page, for master control's depth limit. */
+  const depth = new Map<string, number>([[startUrl, 0]]);
+  for (const extra of control.extraUrls ?? []) {
+    try {
+      const u = normaliseUrl(extra);
+      if (new URL(u).origin === origin && !seen.has(u)) {
+        seen.add(u);
+        queue.push(u);
+        depth.set(u, 0);
+      }
+    } catch {
+      // Not an address: cleanControl already refused it.
+    }
+  }
   const linkSources = new Map<string, string>();
   const pageLinks = new Map<string, string[]>();
   /** Tested pages with their findings, by the order they were started in (the report keeps that order). */
@@ -605,11 +681,18 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
    */
   const found = new Map<number, { pageUrl: string; links: string[] }>();
   let released = 0;
+  let outOfScope = 0;
   const addLinks = (pageUrl: string, links: string[]) => {
+    const next = (depth.get(pageUrl) ?? 0) + 1;
     for (const link of links) {
       if (!linkSources.has(link)) linkSources.set(link, pageUrl);
       if (isCrawlable(link, origin, site.loggedIn) && !site.unsafe?.test(link) && !seen.has(link)) {
         seen.add(link);
+        if ((control.maxDepth !== undefined && next > control.maxDepth) || !addressAllowed(link, control)) {
+          outOfScope++;
+          continue;
+        }
+        depth.set(link, next);
         queue.push(link);
       }
     }
@@ -704,6 +787,8 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       if (same) done.splice(done.indexOf(same), 1);
     }
     done.push({ index, requested: url, gen, result: r.result, findings: r.findings });
+    if (!depth.has(r.result.url)) depth.set(r.result.url, depth.get(url) ?? 0);
+    if (control.stopOnCritical && r.findings.some((f) => f.severity === "critical")) gate?.finish(`A critical problem was found on ${r.result.url}, and master control says to finish at the first one`);
     const source = linkSources.get(url);
     for (const f of r.findings) {
       if (source && (f.rule === "page-error-status" || f.rule === "page-load-failed")) {
@@ -810,6 +895,14 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       try {
         for (;;) {
           opts.signal?.throwIfAborted();
+          if (gate?.isPaused()) {
+            live?.screen({ slot, doing: "Paused by the tester", agents: [], state: "idle" });
+            await gate.wait(opts.signal);
+          }
+          if (gate?.finishing()) {
+            if (busy === 0) wake();
+            return;
+          }
           if (failed || slot >= limit) return;
           // Pages being tested count towards the limit; one that turns out to be a repeat frees its place.
           const url = done.length + busy < maxPages ? nextUrl() : undefined;
@@ -822,6 +915,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
           }
           busy++;
           try {
+            if (control.delayMs) await sleep(control.delayMs);
             await testPage(url, slot, false);
           } finally {
             busy--;
@@ -837,6 +931,17 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
       }
     };
     await Promise.all(Array.from({ length: Math.min(parallel, maxPages) }, (_, slot) => worker(slot)));
+    gate?.clearSkipAll();
+    const finishedEarly = gate?.finishing();
+    if (finishedEarly) {
+      notes.push(`${finishedEarly}: the test stopped opening new pages after ${done.length}, then ran the site-wide checks and scored what it tested.`);
+      log(`${finishedEarly}: finishing with the pages tested so far`);
+    }
+    if (outOfScope) notes.push(`${outOfScope} linked page${outOfScope === 1 ? " was" : "s were"} left out by master control's depth limit or address lists.`);
+    const skippedPages = done.filter((d) => d.result.skipped).length;
+    if (skippedPages) notes.push(`The tester skipped ${skippedPages} page${skippedPages === 1 ? "" : "s"} from master control before every check ran on ${skippedPages === 1 ? "it" : "them"}.`);
+    notes.push(...testerNotes);
+    await gate?.wait(opts.signal);
 
     done.sort((a, b) => a.index - b.index);
     // Site agents read the pages' notes in page order, as one screen would have written them.
@@ -871,7 +976,7 @@ export async function scanSite(opts: ScanOptions): Promise<ScanResult> {
               (async () => {
                 const role = opts.roles?.find((r) => r.id === roleId);
                 if (!role) throw new Error("The journey's role was deleted from the project.");
-                const ctx = await browser.newContext({ viewport: DESKTOP });
+                const ctx = await browser.newContext({ viewport: control.desktop ?? DESKTOP, ...(control.headers ? { extraHTTPHeaders: control.headers } : {}) });
                 await signIn(ctx, role.login, log, { mailUrl: opts.mailUrl, signal: opts.signal });
                 return { context: ctx, login: role.login, name: role.name };
               })(),
@@ -983,4 +1088,16 @@ export function cookieList(list: { name: string; value: string; domain: string; 
     })
     .sort((a, b) => Number(b.firstParty) - Number(a.firstParty) || a.domain.localeCompare(b.domain) || a.name.localeCompare(b.name))
     .slice(0, 300);
+}
+
+/** Report notes for master control settings that change what the browser saw. */
+function describeTesterSetup(c: RunControl): string[] {
+  const out: string[] = [];
+  if (c.network) out.push(`Master control: pages were loaded on ${NETWORKS[c.network as keyof typeof NETWORKS]?.label ?? c.network}, so load times are slower than on full speed.`);
+  if (c.cpuSlowdown) out.push(`Master control: the browser's CPU was slowed ${c.cpuSlowdown}× to act like a slower phone.`);
+  if (c.javascript === false) out.push("Master control: JavaScript was off, so this is what visitors and search engines see without scripts.");
+  if (c.blockUrls?.length) out.push(`Master control: requests to ${c.blockUrls.join(", ")} were blocked.`);
+  if (c.phoneOn === false) out.push("Master control: the phone pass was off, so no phone checks ran.");
+  if (c.locale || c.timezone) out.push(`Master control: the browser used ${[c.locale && `language ${c.locale}`, c.timezone && `time zone ${c.timezone}`].filter(Boolean).join(" and ")}.`);
+  return out;
 }

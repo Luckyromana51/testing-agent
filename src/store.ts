@@ -1,3 +1,4 @@
+import type { Preset } from "./control.js";
 import { RumStore } from "./rum.js";
 import type { AppDevice } from "./mobile/devices.js";
 import { HookStore } from "./app/hooks.js";
@@ -170,6 +171,8 @@ export interface Settings {
   modules?: Record<string, boolean>;
   /** Test phones the owner added (Owner panel > Test phones); the built-in emulator comes from .env. */
   devices?: AppDevice[];
+  /** Master control presets the testers saved (the built-in ones are in src/control.ts). */
+  presets?: Preset[];
 }
 
 const DEFAULT_SETTINGS: Settings = { agents: {}, defaultMaxPages: 20, aiSummary: true };

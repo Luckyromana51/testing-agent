@@ -93,7 +93,7 @@ export function syncIssues(
   /** Pages each partial tool really looked at (W3C checker: the first 20, Lighthouse: the start page). */
   const toolChecked = new Map((result.tools ?? []).filter((t) => t.checked).map((t) => [`tool.${t.id}`, new Set(t.checked)]));
   // Pages that failed, crashed or refused us were not really looked at, so their issues stay as they are.
-  const looked = result.pages.filter((p) => !p.error && p.status !== null && ![401, 403, 429].includes(p.status) && p.status < 500);
+  const looked = result.pages.filter((p) => !p.error && !p.skipped && p.status !== null && ![401, 403, 429].includes(p.status) && p.status < 500);
   const scanned = new Set(looked.flatMap((p) => [p.url, p.redirectedFrom].filter(Boolean) as string[]));
   if (looked.length) for (const u of result.scanned ?? []) scanned.add(u);
   // Outside tools count as agents named tool.<id> (tool.zap, tool.lighthouse...).

@@ -9,6 +9,7 @@ import { Owner } from "./pages/Owner.tsx";
 import { Projects, ProjectView } from "./pages/Projects.tsx";
 import { LiveBoard } from "./pages/LiveBoard.tsx";
 import { Report } from "./pages/Report.tsx";
+import { MasterControl } from "./pages/MasterControl.tsx";
 import { Icon, ScoreChip } from "./ui.tsx";
 
 export function App() {
@@ -66,7 +67,7 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
   const nav: [string, string, Parameters<typeof Icon>[0]["name"], boolean][] = [
     ["#/", "New test", "new", route.name === "home" || route.name === "new"],
     ["#/live", "Live", "live", route.name === "live"],
-    ["#/projects", "Projects", "projects", route.name === "projects" || route.name === "project"],
+    ["#/projects", "Projects", "projects", route.name === "projects" || route.name === "project" || route.name === "control"],
     ["#/issues", "Issues", "issues", route.name === "issues"],
   ];
   if (user.role === "owner") nav.push(["#/owner", "Owner panel", "owner", route.name === "owner"]);
@@ -78,6 +79,7 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
     else if (route.name === "projects") page = <Projects meta={meta} />;
     else if (route.name === "project" && route.id) page = <ProjectView id={route.id} meta={meta} user={user} key={route.id} />;
     else if (route.name === "run" && route.id) page = <Report id={route.id} key={route.id} />;
+    else if (route.name === "control" && route.id) page = <MasterControl projectId={route.id} meta={meta} key={route.id} />;
     else if (route.name === "live") page = <LiveBoard isOwner={user.role === "owner"} />;
     else if (route.name === "issues") page = <Issues projectId={route.query.get("project") ?? undefined} openId={route.id} />;
     else if (route.name === "owner") page = <Owner tab={route.id} meta={meta} reloadMeta={reloadMeta} user={user} loginOff={loginOff} />;
