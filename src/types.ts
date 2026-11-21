@@ -1,3 +1,4 @@
+import type { ManualSettings } from "./manual.js";
 import type { LiveSink } from "./live.js";
 import type { ToolChoice, ToolStat } from "./tools/types.js";
 import type { Permission } from "./permission.js";
@@ -815,6 +816,8 @@ export interface Project {
   fixPrs?: FixPr[];
   /** Master control settings every test of this project starts with (scheduled ones too). */
   control?: RunControl;
+  /** Manual checklist: cases turned off, and the team's own cases. */
+  manual?: ManualSettings;
 }
 
 /** A fix Claude wrote and opened as a pull request on the project's repository. */

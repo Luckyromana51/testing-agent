@@ -1,7 +1,7 @@
 import { AppReport } from "./AppReport.tsx";
 import { ApiReport } from "./ApiReport.tsx";
 import { ChangesTab, SeoTab } from "./ReportExtras.tsx";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fixFor } from "../../../src/fixes.ts";
 import { groupFindings, type IssueGroup } from "../../../src/group.ts";
 import type { Category, Finding, PageResult, Run, Severity } from "../../../src/types.ts";
@@ -14,6 +14,7 @@ import { RunCode } from "./LiveCode.tsx";
 import { Inspect, VisualCompare } from "./Inspect.tsx";
 import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
 import { handbookReport, type HandbookStatus } from "../../../src/handbook.ts";
+import { setView, useSimple } from "../view.ts";
 
 /** Products tested in a browser, which can be watched live. */
 const BROWSER_PRODUCTS = new Set(["website", "webapp", "saas", "crm", "ecommerce"]);
@@ -56,8 +57,13 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
+  const simple = useSimple();
   const [tab, setTab] = useState<"summary" | "issues" | "pages" | "api" | "app" | "journeys" | "visual" | "wcag" | "types" | "cookies" | "changes" | "seo" | "agents" | "tools">("summary");
   const error = loadError || actionError;
+  // Simple view hides the detail tabs; one that was open goes back to "Fix first".
+  useEffect(() => {
+    if (simple && ["visual", "wcag", "types", "cookies", "seo", "agents", "tools"].includes(tab)) setTab("summary");
+  }, [simple, tab]);
 
   if (error) return <div className="page error big">{error}</div>;
   if (!run || run.id !== id) return <div className="loading">Loading…</div>;
@@ -330,6 +336,8 @@ export function Report({ id }: { id: string }) {
             Journeys ({result.journeys.filter((j) => j.ok).length}/{result.journeys.length} pass)
           </button>
         )}
+        {!simple && (
+          <>
         {result.pages.some((p) => p.visual) && (
           <button className={tab === "visual" ? "active" : ""} onClick={() => setTab("visual")}>
             Visual ({result.pages.filter((p) => p.visual?.desktop?.status === "changed" || p.visual?.phone?.status === "changed").length} changed)
@@ -348,11 +356,15 @@ export function Report({ id }: { id: string }) {
             Cookies ({result.cookies.length})
           </button>
         )}
+          </>
+        )}
         {(result.changes || (result.forms && result.forms.length > 0)) && (
           <button className={tab === "changes" ? "active" : ""} onClick={() => setTab("changes")}>
             Checks that change data {result.changes?.leftOver.length ? <span className="tab-count bad">{result.changes.leftOver.length} left</span> : null}
           </button>
         )}
+        {!simple && (
+          <>
         {(result.seo || result.rum) && (
           <button className={tab === "seo" ? "active" : ""} onClick={() => setTab("seo")}>
             {result.seo ? "SEO" : "Real visitors"}
@@ -367,6 +379,13 @@ export function Report({ id }: { id: string }) {
         {result.tools && result.tools.length > 0 && (
           <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>
             Tools ({result.tools.length})
+          </button>
+        )}
+          </>
+        )}
+        {simple && (
+          <button className="more-tabs" onClick={() => setView("full")} title="Testing types, WCAG, cookies, SEO, agents and tools">
+            More detail…
           </button>
         )}
       </div>

@@ -35,6 +35,7 @@ import { cleanScenario, MAX_SCENARIOS } from "./agents/api/scenarios.js";
 import { mockAddress, registerApiRoutes } from "./api-routes.js";
 import { registerMoreRoutes, rumSnippet } from "./more-routes.js";
 import { registerMobileRoutes } from "./mobile-routes.js";
+import { manualFilesDir, registerManualRoutes } from "./manual-routes.js";
 import { registerControlRoutes } from "./control-routes.js";
 import { describeControl, liveActionsFor } from "./control.js";
 import { cleanAppJourneys } from "./mobile/journeys.js";
@@ -612,6 +613,8 @@ export async function createApp(opts: AppOptions) {
     stores.vault.deleteRole(p.id);
     stores.vault.deleteRepoToken(p.id);
     stores.rum.deleteForProject(p.id);
+    stores.manual.deleteForProject(p.id);
+    await rm(manualFilesDir(opts.dataDir, p.id), { recursive: true, force: true });
     stores.hooks.close(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
     await rm(queue.baselineDir(p.id), { recursive: true, force: true });
@@ -677,6 +680,7 @@ export async function createApp(opts: AppOptions) {
   registerApiRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message) });
   registerMobileRoutes(app, { stores, ownerOnly, fail: (status, message) => new HttpError(status, message) });
   await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
+  registerManualRoutes(app, { stores, dataDir: opts.dataDir, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
   registerControlRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.
