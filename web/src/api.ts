@@ -6,6 +6,7 @@ import type { AppDevice } from "../../src/mobile/devices.ts";
 import type { ModuleInfo } from "../../src/modules.ts";
 import type { FlakyIssue, TrendPoint } from "../../src/trends.ts";
 import type { Alert, Incident, WatchSummary } from "../../src/watch.ts";
+import type { ControlField, LiveAction, Preset, RunControl, SectionId } from "../../src/control.ts";
 import type { Permission, PermissionKind, PermissionStatus } from "../../src/permission.ts";
 import type {
   ApiScenario,
@@ -32,6 +33,15 @@ import type {
   Severity,
   User,
 } from "../../src/types.ts";
+
+/** A run as its report page gets it: with master control's settings in words and its live switches. */
+export type RunDetail = Run & { controlSummary?: string[]; liveActions?: LiveAction[] };
+
+export interface ControlMeta {
+  sections: { id: SectionId; name: string; about: string }[];
+  fields: ControlField[];
+  presets: Preset[];
+}
 
 export type RunSummary = Omit<Run, "result" | "ai" | "progress"> & {
   overallScore?: number;
@@ -310,7 +320,14 @@ export const api = {
   checkPermission: (id: string, pid: string) => call<{ project: ProjectSummary; checks: ProofCheck[] }>("POST", `/api/projects/${id}/permissions/${pid}/check`, {}),
   revokePermission: (id: string, pid: string) => call<ProjectSummary>("POST", `/api/projects/${id}/permissions/${pid}/revoke`, {}),
 
-  run: (id: string) => call<Run>("GET", `/api/runs/${id}`),
+  control: () => call<ControlMeta>("GET", "/api/control"),
+  savePreset: (b: { name: string; about?: string; control: RunControl }) => call<Preset>("POST", "/api/control/presets", b),
+  deletePreset: (id: string) => call("DELETE", `/api/control/presets/${id}`),
+  saveProjectControl: (id: string, control: RunControl) => call<{ control: RunControl | null; summary: string[] }>("PUT", `/api/projects/${id}/control`, { control }),
+  checkControl: (id: string, control: RunControl) => call<{ control: RunControl; summary: string[] }>("POST", `/api/projects/${id}/control/check`, { control }),
+  startControlled: (id: string, control: RunControl, preset?: string) => call<Run>("POST", `/api/projects/${id}/runs/controlled`, { control, preset }),
+  liveControl: (id: string, action: LiveAction, slot?: number) => call<Run>("POST", `/api/runs/${id}/control`, { action, slot }),
+  run: (id: string) => call<RunDetail>("GET", `/api/runs/${id}`),
   deleteRun: (id: string) => call("DELETE", `/api/runs/${id}`),
   cancelRun: (id: string) => call<Run>("POST", `/api/runs/${id}/cancel`),
   summarise: (id: string) => call<Run>("POST", `/api/runs/${id}/summary`),
