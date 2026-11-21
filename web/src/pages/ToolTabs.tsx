@@ -214,6 +214,34 @@ export function ToolTabs({
                       {o.hint && <span className="muted small">{o.hint}</span>}
                       {uploadError && <span className="error-text small">{uploadError}</span>}
                     </div>
+                  ) : o.kind === "toggles" ? (
+                    <div className="form-field tool-toggles" key={o.id}>
+                      <span>{o.label}</span>
+                      <div className="toggle-grid">
+                        {o.choices.map((c) => {
+                          const on = (draft[tool.id]?.options[o.id] ?? o.default).split(",").map((s) => s.trim()).filter(Boolean);
+                          const checked = on.includes(c.value);
+                          return (
+                            <label className="check" key={c.value}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={!tool.ready}
+                                onChange={(e) => {
+                                  const next = new Set(on);
+                                  if (e.target.checked) next.add(c.value);
+                                  else next.delete(c.value);
+                                  const ordered = o.choices.map((ch) => ch.value).filter((v) => next.has(v));
+                                  set(tool.id, { options: { ...draft[tool.id].options, [o.id]: ordered.join(",") } });
+                                }}
+                              />{" "}
+                              {c.label}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {o.hint && <span className="muted small">{o.hint}</span>}
+                    </div>
                   ) : (
                   <label className="form-field" key={o.id}>
                     <span>{o.label}</span>

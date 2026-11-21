@@ -217,7 +217,13 @@ t("Network performance testing", "Bandwidth, latency, packet loss.", WEB, { agen
 
 s("Security testing (advanced)");
 t("Vulnerability assessment", "Find and rank known weaknesses.", ALL, { agents: ["sec.js-libraries", "code.packages", "web.exposed-files"], tools: ["nuclei", "zap", "trivy", "osv-scanner"] });
-t("Penetration testing", "Authorised simulated attacks.", ["website", "app", "api"], { tools: ["zap-active", "glv-probes"], manual: "Needs the client's written permission (Permission page)." });
+t("Penetration testing", "Authorised simulated attacks.", ["website", "app", "api"], { tools: ["glv-attack", "zap-active", "glv-probes"], manual: "Needs the client's written permission (Permission page)." });
+t("Command injection testing", "Shell commands run through input.", ["website", "app"], { tools: ["glv-attack", "zap-active"], agents: ["code.risky"], rules: ["attack:command-injection"], manual: "Confirmed by timing a harmless sleep; needs the client's written permission (Permission page)." });
+t("Template injection testing (SSTI)", "Input evaluated as a template.", ["website", "app"], { tools: ["glv-attack"], rules: ["attack:template-injection"], manual: "Needs the client's written permission (Permission page)." });
+t("SSRF testing", "Server made to fetch internal addresses.", ["website", "app", "api"], { tools: ["glv-attack"], agents: ["api.owasp"], rules: ["attack:ssrf"], manual: "Needs the client's written permission (Permission page)." });
+t("NoSQL injection testing", "Query operators injected into NoSQL queries.", ["website", "app", "api"], { tools: ["glv-attack"], rules: ["attack:nosql-injection"], manual: "Needs the client's written permission (Permission page)." });
+t("CORS testing", "Cross-origin reads of signed-in data.", ["website", "app", "api"], { tools: ["glv-attack"], agents: ["api.owasp"], rules: ["attack:cors-misconfiguration"], manual: "Needs the client's written permission (Permission page)." });
+t("Insecure deserialization testing", "Objects rebuilt from untrusted input.", ["website", "app"], { tools: ["glv-attack"], rules: ["attack:deserialization-surface"], manual: "Flagged as a surface to review by hand; needs the client's written permission (Permission page)." });
 t("SAST", "Analyse code without running it.", ["code", "mobile"], { agents: ["code.risky", "code.secrets", "android.code", "ios.code"], tools: ["opengrep"] });
 t("DAST", "Test the running app from outside.", ["website", "app", "api"], { tools: ["zap", "nuclei"], agents: ["web.security-headers", "sec.info-leak", "api.owasp"] });
 t("IAST", "Watch the app from inside while it runs.", ["code"], { manual: "Needs an agent installed inside the client's app server." });
@@ -226,7 +232,7 @@ t("SQL injection testing", "Input that changes database queries.", ["website", "
 t("XSS testing", "Input that runs script in browsers.", ["website", "app", "code"], { agents: ["code.risky", "web.security-headers", "sec.csp-strength"], tools: ["glv-probes", "zap-active"], rules: ["code:xss", "probe:xss*"] });
 t("CSRF testing", "Protection against cross-site requests.", ["app"], { agents: ["app.csrf"] });
 t("Authentication testing", "Secure sign-in and credentials.", ["app", "website"], { agents: ["sec.auth-forms", "app.user-enum", "app.two-step", "app.lockout", "app.forgot-password", "app.login-redirect"] });
-t("Authorization testing", "Access limits and object permissions.", ["app"], { agents: ["app.access", "app.private-pages", "app.exposed"] });
+t("Authorization testing", "Access limits and object permissions.", ["app"], { agents: ["app.access", "app.private-pages", "app.exposed"], tools: ["glv-attack"], rules: ["attack:idor"] });
 t("Session management testing", "Session ids, expiry, rotation, logout.", ["app"], { agents: ["app.session", "app.tokens"] });
 t("Encryption testing", "Data protected in transit and at rest.", ["website", "app", "api", "code"], { agents: ["web.https", "web.mixed-content", "api.transport", "code.database"], tools: ["testssl"], rules: ["db:password-column-short", "db:sensitive-column"] });
 t("Cookie security testing", "Secure, HttpOnly and SameSite.", WEB, { agents: ["web.security-headers", "web.cookies"] });

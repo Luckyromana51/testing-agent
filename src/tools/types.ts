@@ -8,8 +8,12 @@ export type ToolSafety = "safe" | "permission";
 export interface ToolOption {
   id: string;
   label: string;
-  /** "choice" (the default) picks from choices; "file" is a file the tester uploads (a Postman collection). */
-  kind?: "choice" | "file";
+  /**
+   * "choice" (the default) picks one from choices; "file" is a file the tester uploads (a Postman
+   * collection); "toggles" is a set of checkboxes, each of `choices` on or off, stored as the chosen
+   * values joined by commas (so the attack agent's families can each be switched on or off).
+   */
+  kind?: "choice" | "file" | "toggles";
   /** For a file: the file types the upload takes, e.g. ".json". */
   accept?: string;
   /** For a file: the tool cannot run without it. */
