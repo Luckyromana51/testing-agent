@@ -1,3 +1,4 @@
+import type { ManualCase, ManualResult, ManualRound, ManualStatus, RoundCounts } from "../../src/manual.ts";
 import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
@@ -270,6 +271,32 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
+export interface ManualRoundSummary {
+  id: string;
+  name: string;
+  tester: string;
+  build?: string;
+  env?: string;
+  createdAt: string;
+  finishedAt?: string;
+  counts: RoundCounts;
+}
+export interface ManualProjectView {
+  project: { id: string; name: string; type: ProductType; key: string };
+  cases: (ManualCase & { on: boolean })[];
+  rounds: ManualRoundSummary[];
+  history: Record<string, (ManualStatus | null)[]>;
+}
+export interface ManualOverviewRow {
+  id: string;
+  name: string;
+  type: ProductType;
+  cases: number;
+  on: number;
+  last: ManualRoundSummary | null;
+}
+export type { ManualCase, ManualResult, ManualRound, ManualStatus, RoundCounts };
+
 export const api = {
   authState: () => call<AuthState>("GET", "/api/auth/state"),
   setup: (b: { name: string; email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/setup", b),
@@ -368,6 +395,21 @@ export const api = {
   askFix: (issueId: string) => call<{ started: boolean }>("POST", `/api/issues/${issueId}/fix`, {}),
   fixStatus: (issueId: string) => call<{ working: boolean; prs: FixPr[] }>("GET", `/api/issues/${issueId}/fix`),
   mock: (id: string) => call<MockView>("GET", `/api/projects/${id}/mock`),
+  manualOverview: () => call<ManualOverviewRow[]>("GET", "/api/manual"),
+  manual: (projectId: string) => call<ManualProjectView>("GET", `/api/projects/${projectId}/manual`),
+  manualSwitch: (projectId: string, b: { on?: string[]; off?: string[]; all?: boolean }) => call<{ on: number; total: number }>("PATCH", `/api/projects/${projectId}/manual`, b),
+  manualAddCase: (projectId: string, b: { title: string; steps: string; expected?: string; section?: string }) => call<ManualCase>("POST", `/api/projects/${projectId}/manual/cases`, b),
+  manualDeleteCase: (projectId: string, caseId: string) => call("DELETE", `/api/projects/${projectId}/manual/cases/${encodeURIComponent(caseId)}`),
+  manualStart: (projectId: string, b: { name?: string; build?: string; env?: string; only?: "failed" }) => call<ManualRound>("POST", `/api/projects/${projectId}/manual/rounds`, b),
+  manualRound: (rid: string) => call<{ round: ManualRound; counts: RoundCounts; project: { id: string; name: string; type: ProductType; key: string } }>("GET", `/api/manual/rounds/${rid}`),
+  manualUpdateRound: (rid: string, b: { finished?: boolean; name?: string; build?: string; env?: string }) => call<{ round: ManualRound; counts: RoundCounts }>("PATCH", `/api/manual/rounds/${rid}`, b),
+  manualDeleteRound: (rid: string) => call("DELETE", `/api/manual/rounds/${rid}`),
+  manualMark: (rid: string, caseId: string, b: { status?: ManualStatus | null; note?: string }) =>
+    call<{ result: ManualResult | null; counts: RoundCounts }>("PUT", `/api/manual/rounds/${rid}/results/${encodeURIComponent(caseId)}`, b),
+  manualShot: (rid: string, caseId: string, dataUrl: string) => call<{ file: string; result: ManualResult }>("POST", `/api/manual/rounds/${rid}/results/${encodeURIComponent(caseId)}/shots`, { dataUrl }),
+  manualDeleteShot: (rid: string, caseId: string, file: string) => call("DELETE", `/api/manual/rounds/${rid}/results/${encodeURIComponent(caseId)}/shots/${file}`),
+  manualIssue: (rid: string, caseId: string, severity: string) => call<{ key: string; id: string }>("POST", `/api/manual/rounds/${rid}/results/${encodeURIComponent(caseId)}/issue`, { severity }),
+
 };
 
 export interface MockView {

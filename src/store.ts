@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { HelperStore } from "./helpers.js";
+import { ManualStore } from "./manual.js";
 import type { Issue, Project, Role, Run, User } from "./types.js";
 import { Vault } from "./vault.js";
 import { WatchStore } from "./watch.js";
@@ -271,6 +272,8 @@ export interface Stores {
   hooks: HookStore;
   /** Real visitors' speed numbers, from the in-house snippet. */
   rum: RumStore;
+  /** Manual test rounds (checklists worked through by hand). */
+  manual: ManualStore;
 }
 
 export function openStores(dataDir: string): Stores {
@@ -286,5 +289,6 @@ export function openStores(dataDir: string): Stores {
     watch: new WatchStore(db),
     hooks: new HookStore(db),
     rum: new RumStore(db),
+    manual: new ManualStore(db),
   };
 }

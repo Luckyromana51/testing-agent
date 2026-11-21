@@ -10,7 +10,12 @@ import { Projects, ProjectView } from "./pages/Projects.tsx";
 import { LiveBoard } from "./pages/LiveBoard.tsx";
 import { Report } from "./pages/Report.tsx";
 import { MasterControl } from "./pages/MasterControl.tsx";
+import { ManualHome, ManualProject, ManualRoundView } from "./pages/Manual.tsx";
+import { setView, useView } from "./view.ts";
 import { Icon, ScoreChip } from "./ui.tsx";
+
+/** Shorter names for the phone's bottom bar. */
+const SHORT: Record<string, string> = { "Manual tests": "Manual", "Owner panel": "Owner" };
 
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
@@ -68,6 +73,7 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
     ["#/", "New test", "new", route.name === "home" || route.name === "new"],
     ["#/live", "Live", "live", route.name === "live"],
     ["#/projects", "Projects", "projects", route.name === "projects" || route.name === "project" || route.name === "control"],
+    ["#/manual", "Manual tests", "checklist", route.name === "manual" || route.name === "round"],
     ["#/issues", "Issues", "issues", route.name === "issues"],
   ];
   if (user.role === "owner") nav.push(["#/owner", "Owner panel", "owner", route.name === "owner"]);
@@ -80,6 +86,9 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
     else if (route.name === "project" && route.id) page = <ProjectView id={route.id} meta={meta} user={user} key={route.id} />;
     else if (route.name === "run" && route.id) page = <Report id={route.id} key={route.id} />;
     else if (route.name === "control" && route.id) page = <MasterControl projectId={route.id} meta={meta} key={route.id} />;
+    else if (route.name === "manual" && route.id) page = <ManualProject id={route.id} key={route.id} />;
+    else if (route.name === "manual") page = <ManualHome meta={meta} />;
+    else if (route.name === "round" && route.id) page = <ManualRoundView id={route.id} key={route.id} />;
     else if (route.name === "live") page = <LiveBoard isOwner={user.role === "owner"} />;
     else if (route.name === "issues") page = <Issues projectId={route.query.get("project") ?? undefined} openId={route.id} />;
     else if (route.name === "owner") page = <Owner tab={route.id} meta={meta} reloadMeta={reloadMeta} user={user} loginOff={loginOff} />;
@@ -104,7 +113,8 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
           {nav.map(([href, label, icon, active]) => (
             <a key={href} href={href} className={`nav-item ${active ? "active" : ""}`}>
               <Icon name={icon} size={18} />
-              {label}
+              <span className="nav-text">{label}</span>
+              <span className="nav-short">{SHORT[label] ?? label}</span>
               {href === "#/live" && queue && queue.running.length > 0 && <span className="nav-live">{queue.running.length}</span>}
             </a>
           ))}
@@ -166,6 +176,7 @@ function Shell({ user, loginOff, onSignedOut }: { user: User; loginOff: boolean;
           </>
         )}
         <div className="sidebar-foot phone-more">
+          <ViewSwitch />
           <ThemeSwitch />
           <div className={`ai-status ${meta?.ai && meta.aiSummary ? "on" : ""}`}>
             {meta ? (meta.ai && meta.aiSummary ? "Claude summary is on" : "Claude summary is off") : ""}
@@ -245,6 +256,28 @@ function ThemeSwitch() {
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Simple view (the default) keeps each screen short; full view shows every agent, tool and setting. */
+export function ViewSwitch() {
+  const view = useView();
+  return (
+    <div className="view-switch">
+      <div className="theme-switch" role="group" aria-label="How much to show">
+        {(
+          [
+            ["simple", "Simple"],
+            ["full", "Full"],
+          ] as const
+        ).map(([v, label]) => (
+          <button key={v} className={view === v ? "active" : ""} aria-pressed={view === v} onClick={() => setView(v)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="view-hint">{view === "simple" ? "Simple view: only what most tests need." : "Full view: every agent, tool and setting."}</div>
     </div>
   );
 }
