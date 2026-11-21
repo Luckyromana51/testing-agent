@@ -133,6 +133,15 @@ Other steps: `header Name: value`, `body {...}`, `as Role name` (or `as nobody`)
 
 **API watch** (project page): checks an endpoint every few minutes with the saved login (uptime, answer time, SSL, words the answer must hold), and can also run the read-only scenarios every 15 to 60 minutes.
 
+### SOAP, gRPC, WebSocket and contract tests
+
+Pick the kind on the new API test form.
+
+- **SOAP**: reads the WSDL, builds a request for each operation from its schema and calls the operations whose names say they only read (GetOrder, ListCustomers...). Operations that change data are listed but called only on a test server. Reports plain http, faults with stack traces, faults sent with HTTP 200, slow operations and leaks.
+- **gRPC**: the methods come from an uploaded `.proto` file or the server's reflection service. Methods whose names say they only read are called with example values; methods that change data are never called on a live server. Reports no TLS, reflection open to anyone, methods that answer without the login, errors that show the server's insides, the health service and slow methods.
+- **WebSocket**: our own small client connects with the saved login, sends the messages the project lists and checks the answers, then tries without a login, from another website (Origin) and with plain `ws://`.
+- **Contract tests (Pact)**: upload a Pact file (version 2, 3 or 4) that a website or app wrote. Each of its requests is sent to the API and the answer must keep the contract (status, headers, body, with Pact's matching rules). Requests that change data are sent only to a test server.
+
 ### Source code engine (offline)
 
 Give it a Git repository (https; private ones need an access token in the project's login) or upload a zip. The code is read on the server and deleted after the test; installed packages and build output are skipped.
@@ -313,6 +322,14 @@ For a web app, SaaS or CRM project, the test signs in with the saved login and t
 The demo CRM in `test/fixtures/demo-crm.ts` has each of these problems planted, and `test/crm-saas.test.ts` checks the test finds every one without changing any data (except the saves of a journey allowed to send forms).
 
 Checks that change data (account lockout on a spare account you mark, file upload safety with harmless marker files, mass assignment on a save a journey made, forgot-password, the Salesforce guest data check and Claude filling forms) run only on a project marked as a test copy, or with the client's written "Checks that change data" permission, never on scheduled re-tests. Each report lists what ran, what was put back and anything left to delete by hand. The Salesforce guest check is proven against a demo Aura endpoint; its first run on a real Experience Cloud site is still to come.
+
+## Website extras
+
+- **Tablet.** Every page is also checked at tablet width (820 px), with tablet screenshots next to the desktop and phone ones.
+- **Real-visitor speed** (project page > Visitors and SEO). A small script for the site's pages sends each visitor's real LCP, INP, CLS, TTFB and FCP to this server (`/rum/<token>`), with no cookies, names or IP addresses. The project shows the 75th percentile of the last 28 days, and reports flag slow pages once 20 visits have come in.
+- **SEO audit** (same tab). Target keywords per page, the backlinks you list and a Search Console CSV export. It cannot find backlinks nobody listed or see rankings without that export: that needs a web-wide crawl or Google's own data.
+- **Ask Claude to fix.** Save the site's repository (GitHub or GitLab, https) and a token in the project's vault. On an issue, **Ask Claude to fix** writes the smallest change and opens a pull request on a new `glv-fix/...` branch. Nothing is merged. Needs `ANTHROPIC_API_KEY`.
+- **Watch the sign-in live.** For a signed-in test, the live view shows the sign-in from **Start test**. When the sign-in gets stuck (a CAPTCHA, a code, a button that does nothing) and someone is watching, the screen is handed over: click and type on the picture, then press **Done**, and the test carries on.
 
 ## What the categories cover
 
@@ -559,6 +576,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Client connections: MCP server, Hostinger API, SSH
 - Mobile app testing on devices with Appium
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
-- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps, screenshot compare and PDF reports
+- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps
 - A local copy of the OSV database kept up to date on the server
 - SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export
