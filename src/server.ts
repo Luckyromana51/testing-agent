@@ -38,6 +38,7 @@ import { registerMobileRoutes } from "./mobile-routes.js";
 import { manualFilesDir, registerManualRoutes } from "./manual-routes.js";
 import { registerControlRoutes } from "./control-routes.js";
 import { registerHackRoutes } from "./hack-routes.js";
+import { registerConnectionRoutes } from "./connection-routes.js";
 import { cleanControl, describeControl, liveActionsFor } from "./control.js";
 import { cleanAppJourneys } from "./mobile/journeys.js";
 import { approve as approvePicture, type View } from "./runner/visual.js";
@@ -55,6 +56,8 @@ declare module "fastify" {
     user?: User;
     /** The Mac helper making the request (helper routes only). */
     helper?: Helper;
+    /** GLV MCP server: the project the client's MCP token opens. */
+    mcpProject?: string;
   }
 }
 
@@ -249,6 +252,18 @@ export async function createApp(opts: AppOptions) {
         return reply.code(401).send({ error: "This helper token is not known here. Pair the Mac again from Owner panel > Mac helpers." });
       }
       req.helper = helper;
+      return;
+    }
+    // GLV's MCP server: the client's AI assistant signs in with its project's MCP token, never a session.
+    if (req.url === "/api/mcp" || req.url.startsWith("/api/mcp?")) {
+      if (tooManyFailures(req.ip)) return reply.code(429).send({ error: "Too many wrong MCP tokens. Try again in 15 minutes." });
+      const token = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ""))?.[1];
+      const projectId = token ? stores.connections.mcpProject(token) : undefined;
+      if (!projectId) {
+        recordFailure(req.ip);
+        return reply.code(401).header("www-authenticate", "Bearer").send({ error: "This MCP token is not known here. Make one on the project's Connections tab." });
+      }
+      req.mcpProject = projectId;
       return;
     }
     if (loginOff) {
@@ -619,6 +634,7 @@ export async function createApp(opts: AppOptions) {
     stores.vault.deleteRepoToken(p.id);
     stores.rum.deleteForProject(p.id);
     stores.manual.deleteForProject(p.id);
+    stores.connections.deleteForProject(p.id);
     await rm(manualFilesDir(opts.dataDir, p.id), { recursive: true, force: true });
     stores.hooks.close(p.id);
     if (p.target.file) await rm(path.join(queue.uploadsDir(), path.basename(p.target.file)), { force: true });
@@ -687,6 +703,7 @@ export async function createApp(opts: AppOptions) {
   await registerMoreRoutes(app, { stores, queue, getProject, projectSummary, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
   registerManualRoutes(app, { stores, dataDir: opts.dataDir, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
   registerControlRoutes(app, { stores, queue, getProject, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
+  registerConnectionRoutes(app, { stores, queue, dataDir: opts.dataDir, getProject, ownerOnly, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
   registerHackRoutes(app, { stores, queue, fail: (status, message) => new HttpError(status, message), userName: (req) => req.user?.name || req.user?.email || "Owner" });
 
   // The webhook inbox itself: open to the client's app (no login), only with the project's secret address.

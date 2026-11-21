@@ -1,3 +1,4 @@
+import type { ConnectionKind, ConnectionTest, ConnectionView } from "../../src/connections/types.ts";
 import type { ManualCase, ManualResult, ManualRound, ManualStatus, RoundCounts } from "../../src/manual.ts";
 import type { AgentInfo } from "../../src/agents/types.ts";
 import type { ProductInfo } from "../../src/products.ts";
@@ -314,7 +315,39 @@ export interface HackTarget {
   last?: { runId: string; at: string; status: string; score?: number; findings?: number };
 }
 
+/** The project's client connections (Connections tab). Secrets never come back: only whether one is saved. */
+export type { ConnectionKind, ConnectionTest, ConnectionView } from "../../src/connections/types.ts";
+export interface ConnectionsInfo {
+  connections: ConnectionView[];
+  mcpTokens: { id: string; name: string; createdAt: string; createdBy: string; lastUsed?: string }[];
+  glvMcpUrl: string;
+  kinds: { kind: ConnectionKind; label: string }[];
+}
+export interface ConnectionDraft {
+  kind?: ConnectionKind;
+  name?: string;
+  host?: string;
+  port?: number | string;
+  username?: string;
+  auth?: "key" | "password";
+  tunnel?: boolean;
+  siteUrl?: string;
+  url?: string;
+  secretRef?: string;
+  checks?: boolean;
+  key?: string;
+  password?: string;
+  token?: string;
+}
+
 export const api = {
+  connections: (id: string) => call<ConnectionsInfo>("GET", `/api/projects/${id}/connections`),
+  addConnection: (id: string, b: ConnectionDraft) => call<ConnectionsInfo & { id: string }>("POST", `/api/projects/${id}/connections`, b),
+  updateConnection: (id: string, cid: string, b: ConnectionDraft) => call<ConnectionsInfo>("PATCH", `/api/projects/${id}/connections/${cid}`, b),
+  deleteConnection: (id: string, cid: string) => call<ConnectionsInfo>("DELETE", `/api/projects/${id}/connections/${cid}`),
+  testConnection: (id: string, cid: string) => call<ConnectionsInfo & { test: ConnectionTest }>("POST", `/api/projects/${id}/connections/${cid}/test`, {}),
+  addMcpToken: (id: string, name: string) => call<ConnectionsInfo & { token: string }>("POST", `/api/projects/${id}/mcp-tokens`, { name }),
+  deleteMcpToken: (id: string, tid: string) => call<ConnectionsInfo>("DELETE", `/api/projects/${id}/mcp-tokens/${tid}`),
   authState: () => call<AuthState>("GET", "/api/auth/state"),
   setup: (b: { name: string; email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/setup", b),
   login: (b: { email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/login", b),

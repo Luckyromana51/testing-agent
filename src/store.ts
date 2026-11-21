@@ -10,6 +10,7 @@ import { ManualStore } from "./manual.js";
 import type { Issue, Project, Role, Run, User } from "./types.js";
 import { Vault } from "./vault.js";
 import { WatchStore } from "./watch.js";
+import { ConnectionStore } from "./connections/store.js";
 
 /**
  * SQLite storage (built into Node 22, no native build step). Each row keeps its object as JSON,
@@ -274,21 +275,25 @@ export interface Stores {
   rum: RumStore;
   /** Manual test rounds (checklists worked through by hand). */
   manual: ManualStore;
+  /** Client connections (SSH, Hostinger, MCP), secrets sealed with the vault's key. */
+  connections: ConnectionStore;
 }
 
 export function openStores(dataDir: string): Stores {
   const db = openDatabase(dataDir);
+  const vault = new Vault(db, dataDir);
   return {
     runs: new RunStore(db),
     projects: new ProjectStore(db),
     issues: new IssueStore(db),
     settings: new SettingsStore(db),
     users: new UserStore(db),
-    vault: new Vault(db, dataDir),
+    vault,
     helpers: new HelperStore(db),
     watch: new WatchStore(db),
     hooks: new HookStore(db),
     rum: new RumStore(db),
     manual: new ManualStore(db),
+    connections: new ConnectionStore(db, vault),
   };
 }
