@@ -1,3 +1,4 @@
+import type { ConnectionKind, ResolvedConnection } from "../connections/types.js";
 import type { ModuleId } from "../modules.js";
 import type { PermissionKind } from "../permission.js";
 import type { AppJourney, AppSummary, Category, Finding, Login, ProductType, ProjectTarget } from "../types.js";
@@ -63,6 +64,8 @@ export interface ToolInfo {
   ownCategory?: boolean;
   /** Runs only when this optional module is on (Owner panel > Modules). */
   module?: ModuleId;
+  /** Reads a client system through the project's saved connection (Connections tab); never on by default. */
+  needsConnection?: ConnectionKind;
 }
 
 /** A tool the tester turned on for a project, with its options. */
@@ -104,6 +107,10 @@ export interface ToolContext {
   app?: AppSummary;
   /** Mobile apps: the project's journeys for the test phone. */
   appJourneys?: AppJourney[];
+  /** The project's client connections (SSH, Hostinger, MCP), secrets decrypted for this run only. */
+  connections?: ResolvedConnection[];
+  /** The server's data folder (where an SSH connection keeps the server key it learned). */
+  dataDir?: string;
 }
 
 export interface ToolReport {

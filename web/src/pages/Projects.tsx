@@ -1,3 +1,4 @@
+import { ConnectionsCard } from "./Connections.tsx";
 import { useEffect, useState } from "react";
 import type { ToolChoice } from "../../../src/tools/types.ts";
 import type { Schedule, User } from "../../../src/types.ts";
@@ -92,7 +93,7 @@ function ProjectCard({ p, productName }: { p: ProjectSummary; productName: strin
   );
 }
 
-type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "appjourneys" | "tests" | "permission";
+type ProjectTab = "overview" | "app" | "api" | "growth" | "fixes" | "trends" | "watch" | "journeys" | "appjourneys" | "tests" | "permission" | "connections";
 
 /** "#/project/<id>?tab=permission" opens that tab (links from badges and the hack agent). */
 const tabFromHash = (): ProjectTab | undefined => {
@@ -155,6 +156,7 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
     ...(journeysOn ? ([["journeys", "User journeys", String(p.journeys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ...(p.type === "android" || p.type === "ios" ? ([["appjourneys", "App journeys", String(p.appJourneys?.length ?? 0)]] as [ProjectTab, string, string?][]) : []),
     ["tests", "What runs"],
+    ...(p.type !== "android" && p.type !== "ios" ? ([["connections", "Connections"]] as [ProjectTab, string, string?][]) : []),
     ...(hasPermissionTools
       ? ([["permission", "Load and attack", unlocked ? "on" : "off"]] as [ProjectTab, string, string?][])
       : []),
@@ -436,6 +438,13 @@ export function ProjectView({ id, meta, user }: { id: string; meta: Meta; user: 
         <>
           <h2 className="section-title">Load and attack tests</h2>
           <PermissionCard project={p} isOwner={user.role === "owner"} onChanged={reload} />
+        </>
+      )}
+
+      {current === "connections" && (
+        <>
+          <h2 className="section-title">Connections to the client's system</h2>
+          <ConnectionsCard project={p} isOwner={user.role === "owner"} onUseAddress={(url) => save({ url })} />
         </>
       )}
 

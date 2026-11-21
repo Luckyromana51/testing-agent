@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { CONNECTION_TOOLS } from "../connections/tools.js";
 import path from "node:path";
 import { checkProof, hasPermission, permitFor, PERMISSION_KINDS, type Permission } from "../permission.js";
 import { moduleOn, MODULES } from "../modules.js";
@@ -60,6 +61,8 @@ export const TOOLS: Tool[] = [
   iosSimulatorTool,
   // Mobile apps on a test phone (Appium).
   appiumTool,
+  // Client connections (Connections tab): the client's server over SSH, their Hostinger account, their MCP server.
+  ...CONNECTION_TOOLS,
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);
@@ -157,7 +160,7 @@ export async function defaultChoices(product: ProductType): Promise<ToolChoice[]
   if (process.env.DEFAULT_TOOLS === "none") return [];
   const status = await toolStatus();
   return toolsFor(product)
-    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
+    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && !t.needsConnection && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
     .map((t) => ({ id: t.id }));
 }
 
@@ -185,6 +188,9 @@ export interface ToolRunInput {
   modules?: Record<string, boolean>;
   /** Mobile apps: the project's journeys for the test phone. */
   appJourneys?: AppJourney[];
+  /** The project's client connections, decrypted for this run only (connection tools use them). */
+  connections?: import("../connections/types.js").ResolvedConnection[];
+  dataDir?: string;
 }
 
 /** Load and attack tests run one at a time on this server, so two never compete for it (or for the client's site). */
@@ -352,6 +358,7 @@ export async function runTools(result: ScanResult, input: ToolRunInput): Promise
             ...(input.modules ? { modules: input.modules } : {}),
             ...(result.app ? { app: result.app } : {}),
             ...(input.appJourneys ? { appJourneys: input.appJourneys } : {}),
+            ...(tool.needsConnection && input.connections ? { connections: input.connections, dataDir: input.dataDir } : {}),
             options,
             outDir: input.artifactsDir,
             workDir: input.workDir,

@@ -578,9 +578,11 @@ export async function scanSite(input: ScanOptions): Promise<ScanResult> {
   }
 
   // Behind a company proxy, route both the browser and the agents' requests through it.
-  const proxyServer = process.env.HTTPS_PROXY || process.env.https_proxy;
+  // A tunnel through the client's server carries everything, the site's own name included.
+  const proxyServer = opts.proxy ?? (process.env.HTTPS_PROXY || process.env.https_proxy);
   const browser: Browser = await chromium.launch({
-    ...(proxyServer ? { proxy: { server: proxyServer, bypass: process.env.NO_PROXY || process.env.no_proxy } } : {}),
+    // "<-loopback>": the client server's own localhost goes through the tunnel too.
+    ...(opts.proxy ? { proxy: { server: opts.proxy, bypass: "<-loopback>" } } : proxyServer ? { proxy: { server: proxyServer, bypass: process.env.NO_PROXY || process.env.no_proxy } } : {}),
     // The server handles Ctrl-C and docker stop itself: it cancels the run, which closes this browser.
     ...(opts.signal ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false } : {}),
   });

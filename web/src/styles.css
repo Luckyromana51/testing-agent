@@ -6282,3 +6282,122 @@ code {
     position: static;
   }
 }
+
+/* Connections tab (client's SSH server, Hostinger account, MCP server) */
+.connections .card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.connections .card > p {
+  margin: 0;
+  line-height: 1.5;
+}
+.connection {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.connection.conn-good {
+  border-left-color: var(--good);
+}
+.connection.conn-fail {
+  border-left-color: var(--bad);
+}
+.connection-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.connection-head .muted,
+.connection > .muted {
+  overflow-wrap: anywhere;
+}
+.connection-test {
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.connection-test.conn-good > div:first-child {
+  color: var(--good);
+}
+.connection-test.conn-fail > div:first-child {
+  color: var(--bad);
+}
+.connection-test ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.connection-sites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+}
+.connection-form .form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.connection-form .form-row .form-field {
+  flex: 1 1 180px;
+}
+.connection-form .form-row .form-field.narrow {
+  flex: 0 1 100px;
+}
+.secret-area textarea {
+  width: 100%;
+  min-height: 92px;
+  padding-right: 42px;
+  resize: vertical;
+  font-size: 12px;
+}
+.secret-area textarea.masked {
+  -webkit-text-security: disc;
+}
+.secret-area .eye-btn {
+  top: 8px;
+  transform: none;
+}
+.token-once {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--good-soft);
+}
+.token-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.token-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.connections code {
+  overflow-wrap: anywhere;
+}
+.connections-mcp-title {
+  margin-top: 28px;
+}
+.connection-test ul {
+  color: var(--text);
+}
+.connection-form .toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

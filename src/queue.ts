@@ -8,6 +8,10 @@ import { runEngine } from "./engines/index.js";
 import { LiveHub, liveFeed } from "./live.js";
 import { defaultChoices, runTools, toolById } from "./tools/index.js";
 import { secretsOf } from "./vault.js";
+import { connectionSecrets } from "./connections/store.js";
+import { openTunnel, sshSession, type SshSession, type Tunnel } from "./connections/ssh.js";
+import { toolForKind } from "./connections/tools.js";
+import type { ResolvedConnection } from "./connections/types.js";
 import { writeConsent } from "./permission.js";
 import type { Stores } from "./store.js";
 import { moduleOn } from "./modules.js";
@@ -250,12 +254,35 @@ export class ScanQueue {
         if (login) log("Using the saved login (kept encrypted on this server)");
         const roles = (login?.kind === "web" || login?.kind === "api") && extraOn(control, "roles") ? this.stores.vault.roles(project.id) : [];
         if (roles.length) log(`Also testing as ${roles.length} other account${roles.length === 1 ? "" : "s"}: ${roles.map((r) => r.name).join(", ")}`);
+        // Client connections (Connections tab): their checks join the test, and an SSH tunnel can carry the browser.
+        const conns = this.stores.connections.forRun(project.id);
+        for (const f of conns.failed) log(`Connection "${f.connection.name}" left out: ${f.error}`);
+        const connections: ResolvedConnection[] = conns.ok;
+        const isWeb = ["website", "ecommerce", "webapp", "saas", "crm"].includes(project.type);
+        const via = isWeb ? connections.find((c) => c.kind === "ssh" && c.tunnel && c.siteUrl) : undefined;
+        let tunnel: Tunnel | undefined;
+        let tunnelSession: SshSession | undefined;
+        let target = project.target;
+        if (via) {
+          log(`Opening a tunnel through ${via.host} to test ${via.siteUrl} as that server sees it`);
+          tunnelSession = await sshSession(via, { workDir, dataDir: this.dataDir });
+          try {
+            tunnel = await openTunnel(tunnelSession, signal);
+          } catch (err) {
+            await tunnelSession.cleanup();
+            throw new Error(`The tunnel through ${via.host} did not open: ${(err as Error).message}`);
+          }
+          target = { ...project.target, url: via.siteUrl };
+          signal.addEventListener("abort", () => void tunnel?.close(), { once: true });
+        }
+        try {
         let cookie: string | undefined;
         // Tests without screens (API, code, apps) send their calls and problems to the code panel through liveFeed.
         const screenless = ["api", "code", "android", "ios"].includes(project.type);
         const start = () => runEngine({
           product: project.type,
-          target: project.target,
+          target,
+          ...(tunnel ? { proxy: tunnel.proxy } : {}),
           login,
           agents: run.agents,
           maxPages: control.maxPages ?? project.target.maxPages ?? settings.get().defaultMaxPages,
@@ -308,6 +335,17 @@ export class ScanQueue {
           choices = choices.filter((c) => toolById(c.id)?.safety !== "permission");
           log("Load and attack tools are left out of scheduled tests: start a test by hand to run them");
         }
+        // Each connection with its checks on adds its own read-only check tool.
+        for (const c of connections) {
+          const id = toolForKind[c.kind];
+          if (c.checks && toolById(id)?.products.includes(project.type) && !choices.some((x) => x.id === id)) choices.push({ id });
+        }
+        if (tunnel) {
+          // The outside tools cannot use the tunnel: on this server the client's localhost is our own.
+          const left = choices.filter((c) => !toolById(c.id)?.needsConnection);
+          if (left.length) log(`Outside tools (${left.map((c) => toolById(c.id)?.name ?? c.id).join(", ")}) are left out: they cannot go through the tunnel`);
+          choices = choices.filter((c) => toolById(c.id)?.needsConnection);
+        }
         if (choices.length) {
           update({ tools: choices });
           const cookieValues = (cookie ?? "").split(/;\s*/).map((p) => p.slice(p.indexOf("=") + 1));
@@ -317,7 +355,7 @@ export class ScanQueue {
             choices,
             cookie,
             login,
-            secrets: [...secretsOf(login, project.target.repoUrl), ...roles.flatMap((r) => secretsOf(r.login)), ...cookieValues],
+            secrets: [...secretsOf(login, project.target.repoUrl), ...roles.flatMap((r) => secretsOf(r.login)), ...cookieValues, ...connectionSecrets(connections)],
             artifactsDir: this.artifactsDir(run.id),
             uploadsDir: this.uploadsDir(),
             workDir,
@@ -329,7 +367,13 @@ export class ScanQueue {
             permissions: (projects.get(project.id) ?? project).permissions,
             modules: settings.get().modules,
             appJourneys: extraOn(control, "appJourneys") ? (projects.get(project.id) ?? project).appJourneys?.filter((j) => !j.off) : undefined,
+            connections,
+            dataDir: this.dataDir,
           });
+        }
+        } finally {
+          await tunnel?.close();
+          await tunnelSession?.cleanup();
         }
       } finally {
         await rm(workDir, { recursive: true, force: true });

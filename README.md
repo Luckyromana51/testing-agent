@@ -369,6 +369,17 @@ Checks that change data (account lockout on a spare account you mark, file uploa
 - **Ask Claude to fix.** Save the site's repository (GitHub or GitLab, https) and a token in the project's vault. On an issue, **Ask Claude to fix** writes the smallest change and opens a pull request on a new `glv-fix/...` branch. Nothing is merged. Needs `ANTHROPIC_API_KEY`.
 - **Watch the sign-in live.** For a signed-in test, the live view shows the sign-in from **Start test**. When the sign-in gets stuck (a CAPTCHA, a code, a button that does nothing) and someone is watching, the screen is handed over: click and type on the picture, then press **Done**, and the test carries on.
 
+## Client connections (SSH, Hostinger, MCP)
+
+Everything runs on GLV's own servers. A project's **Connections** tab is how they reach the client's own system. The owner adds a connection and presses **Test the connection**; from then on every test of the project (scheduled ones too) adds that connection's read-only checks to the report.
+
+- **SSH server**: GLV signs in with the client's key (or password) using OpenSSH (in the Docker image). Only fixed, read-only commands run: system past end of support, waiting security updates, databases listening on every network, SSH root or password sign-in, disk, memory, clock, old PHP. The server's key is learned on the first test and must stay the same. With **Test the site through this server** on, the test's browser opens the client's private test site (like `http://localhost:8080` on their server) through an SSH tunnel; outside tools and load or attack tools are left out of those tests.
+- **Hostinger account**: the client's API token from hPanel. Only GET requests: servers stopped or without firewall or backups, domains expired or ending soon, domains without SPF or DMARC. The test lists the account's websites ("use as this project's address") and servers ("add an SSH connection").
+- **MCP server**: the client's own MCP server. GLV lists its tools (never calls one) and checks sign-in, HTTPS, Origin checks, CORS and tool poisoning (hidden characters, hidden instructions).
+- **GLV's MCP server** (`/api/mcp`): a token made on the tab lets the client's AI assistant read that one project's status, open issues and latest report, and start a normal test (safe tools only).
+
+Secrets pasted on the tab are sealed with `SECRET_KEY` and never shown again. To keep a secret out of the database, put it in `.env` as `CONN_<NAME>` and write `env:CONN_<NAME>` on the tab, or put an SSH key file in `SSH_KEYS_DIR` (default `/data/ssh-keys`) and write `file:<name>`. Only `CONN_` names can be read, so a connection can never send the server's own keys anywhere.
+
 ## What the categories cover
 
 | Area | Checks |
@@ -611,7 +622,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 
 - GraphQL mutations on a test server
 - Jira export
-- Client connections: MCP server, Hostinger API, SSH
 - iOS traffic recording on the test phone (Android only for now), and Espresso or XCUITest suites the client wrote
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
 - More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps

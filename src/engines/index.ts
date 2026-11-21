@@ -55,6 +55,8 @@ export interface EngineInput {
   seo?: SeoInput;
   /** Websites: real visitors' speed from the in-house snippet. */
   rum?: RumSummary;
+  /** Web tests: the browser's proxy (a tunnel through the client's server). */
+  proxy?: string;
   /** Mobile apps: the project's previous test of the app, to list what changed. */
   previousApp?: { app: AppSummary; at: string };
 }
@@ -167,6 +169,7 @@ async function pickEngine(input: EngineInput): Promise<ScanResult> {
     default:
       return scanSite({
         url: target.url ?? "",
+        ...(input.proxy ? { proxy: input.proxy } : {}),
         maxPages: input.maxPages,
         product,
         agents,

@@ -310,6 +310,22 @@ export class Vault {
     this.db.prepare("DELETE FROM repo_logins WHERE project_id = ?").run(projectId);
   }
 
+  /** Seals any secret text with the current key (client connections use it for SSH keys and tokens). */
+  sealText(plain: string, aad: string): { secret: string; keyId: string } {
+    return { secret: seal(this.current, plain, aad), keyId: this.current.id };
+  }
+
+  /** Opens text sealed by sealText. Undefined when it was sealed with a key this server no longer has. */
+  openText(sealed: string, keyId: string, aad: string): string | undefined {
+    const key = this.keys.get(keyId);
+    if (!key) return undefined;
+    try {
+      return open(key, sealed, aad);
+    } catch {
+      return undefined;
+    }
+  }
+
   status(): VaultStatus {
     const rows = [
       ...(this.db.prepare("SELECT key_id FROM logins").all() as { key_id: string }[]),

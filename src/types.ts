@@ -147,6 +147,8 @@ export interface JourneyResult {
 
 export interface ScanOptions {
   url: string;
+  /** The browser's proxy for this test (the SOCKS tunnel through a client's server), instead of HTTPS_PROXY. */
+  proxy?: string;
   maxPages?: number;
   /** Check every link found (internal and external) for 4xx/5xx. */
   checkLinks?: boolean;

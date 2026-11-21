@@ -67,7 +67,7 @@ ARG SCHEMATHESIS_VERSION=4.32.7 NEWMAN_VERSION=6.2.3 APPIUM_VERSION=3.9.1 UIAUTO
 # testssl.sh (from Ubuntu's own packages) checks HTTPS setups. Lighthouse comes with npm.
 # adb, aapt, apksigner and zipalign (Ubuntu's own packages) let Appium install and drive apps on
 # the Android emulator (docker compose --profile android).
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates default-jre-headless testssl.sh python3-venv \
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates default-jre-headless testssl.sh python3-venv \
       adb aapt apksigner zipalign \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /opt/android-sdk/platform-tools /opt/android-sdk/build-tools/34.0.0 \
