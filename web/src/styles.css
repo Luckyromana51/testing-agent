@@ -1,59 +1,115 @@
+/*
+ * GLV Testing Agent design tokens.
+ * Concept: an inspection bench. Calm graphite surfaces, GLV indigo for actions, and colour kept
+ * for what a tester must notice (severity, pass, fail). Numbers that are readings (scores, counts,
+ * addresses, code) use IBM Plex Mono; everything else uses IBM Plex Sans. Fonts ship inside the
+ * app (no outside font service).
+ */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f1f2ef;
   --panel: #ffffff;
-  --sidebar: #0f1b2d;
-  --sidebar-text: #dbe3ee;
-  --sidebar-muted: #8a9bb3;
-  --text: #16202e;
-  --muted: #5f6b7a;
-  --border: #e3e7ed;
-  --accent: #2563eb;
-  --accent-soft: #e8efff;
-  --good: #16a34a;
-  --warn: #d97706;
-  --bad: #dc2626;
-  --critical: #b91c1c;
-  --high: #ea580c;
-  --medium: #ca8a04;
-  --low: #2563eb;
-  --info: #64748b;
+  --panel-2: #f7f8f6;
+  --sidebar: #171a21;
+  --sidebar-2: #20242d;
+  --sidebar-text: #e4e6eb;
+  --sidebar-muted: #959cab;
+  --text: #1a1d24;
+  --muted: #5a6170;
+  --border: #dcdfe1;
+  --border-strong: #c3c8cd;
+  --accent: #4338ca;
+  --accent-hover: #3730a3;
+  --accent-soft: #e9e8fb;
+  --on-accent: #ffffff;
+  --on-solid: #ffffff;
+  --good: #15803d;
+  --good-soft: #e3f3e8;
+  --warn: #b45309;
+  --warn-soft: #fbf0dc;
+  --bad: #c62828;
+  --bad-soft: #fbe6e4;
+  --critical: #a51d1d;
+  --high: #c2410c;
+  --medium: #a16207;
+  --low: #4338ca;
+  --info: #5a6170;
+  --focus: #6366f1;
   --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(23, 26, 33, 0.06);
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b1220;
-    --panel: #121b2c;
-    --sidebar: #070d18;
-    --text: #e6ebf2;
-    --muted: #94a3b8;
-    --border: #233047;
-    --accent-soft: #1b2a4a;
+    --bg: #101217;
+    --panel: #171a21;
+    --panel-2: #1c2028;
+    --sidebar: #0b0d11;
+    --sidebar-2: #161920;
+    --text: #e7e9ee;
+    --muted: #9aa2b1;
+    --border: #2a2f3a;
+    --border-strong: #3b4250;
+    --accent: #8b8cf6;
+    --accent-hover: #a5a6fa;
+    --accent-soft: #23244a;
+    --on-accent: #0f1020;
+  --on-solid: #121318;
+    --good: #4ade80;
+    --good-soft: #13291c;
+    --warn: #f0b04a;
+    --warn-soft: #2e2412;
+    --bad: #f87171;
+    --bad-soft: #321718;
+    --critical: #ef4444;
+    --high: #f97316;
+    --medium: #eab308;
+    --low: #8b8cf6;
+    --info: #9aa2b1;
+    --focus: #a5a6fa;
+    --shadow: none;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-    --bg: #0b1220;
-    --panel: #121b2c;
-    --sidebar: #070d18;
-    --text: #e6ebf2;
-    --muted: #94a3b8;
-    --border: #233047;
-    --accent-soft: #1b2a4a;
-    color-scheme: dark;
-  }
+  --bg: #101217;
+  --panel: #171a21;
+  --panel-2: #1c2028;
+  --sidebar: #0b0d11;
+  --sidebar-2: #161920;
+  --text: #e7e9ee;
+  --muted: #9aa2b1;
+  --border: #2a2f3a;
+  --border-strong: #3b4250;
+  --accent: #8b8cf6;
+  --accent-hover: #a5a6fa;
+  --accent-soft: #23244a;
+  --on-accent: #0f1020;
+  --on-solid: #121318;
+  --good: #4ade80;
+  --good-soft: #13291c;
+  --warn: #f0b04a;
+  --warn-soft: #2e2412;
+  --bad: #f87171;
+  --bad-soft: #321718;
+  --critical: #ef4444;
+  --high: #f97316;
+  --medium: #eab308;
+  --low: #8b8cf6;
+  --info: #9aa2b1;
+  --focus: #a5a6fa;
+  --shadow: none;
+  color-scheme: dark;
+}
 
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
-  font-family:
-    Inter,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--font);
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -95,7 +151,7 @@ button {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
   display: grid;
   place-items: center;
   font-weight: 700;
@@ -163,7 +219,7 @@ button {
 }
 .btn.primary {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 .btn.primary:disabled {
   opacity: 0.6;
@@ -186,8 +242,6 @@ button {
 }
 .section-label {
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--sidebar-muted);
   font-weight: 600;
 }
@@ -340,8 +394,6 @@ button {
 }
 .eyebrow {
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
   font-weight: 600;
 }
@@ -569,7 +621,7 @@ button {
 .pill.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 .select {
   width: auto;
@@ -645,11 +697,10 @@ button {
 .sev {
   font-size: 11px;
   font-weight: 700;
-  text-transform: uppercase;
   padding: 3px 8px;
   border-radius: 6px;
   text-align: center;
-  color: white;
+  color: var(--on-solid);
 }
 .sev-critical {
   background: var(--critical);
@@ -830,7 +881,7 @@ button {
   min-width: 0;
 }
 code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 0.92em;
 }
 
@@ -1169,7 +1220,7 @@ a.brand {
   background: var(--muted);
 }
 .cat-functional {
-  background: #2563eb;
+  background: var(--accent);
 }
 .cat-accessibility {
   background: #7c3aed;
@@ -1295,8 +1346,6 @@ a.brand {
 }
 .stat-label {
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
   font-weight: 600;
 }
@@ -1345,8 +1394,6 @@ a.brand {
 .table th {
   text-align: left;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--muted);
   font-weight: 600;
   padding: 10px 14px;
@@ -1806,8 +1853,6 @@ a.brand {
   gap: 10px;
   color: var(--muted);
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 .or::before,
 .or::after {
@@ -2500,7 +2545,7 @@ body.dragging-rows * {
   overflow: hidden;
   text-overflow: ellipsis;
   border-bottom: 1px solid var(--border);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
 }
 .live-picture {
   position: relative;
@@ -2522,11 +2567,11 @@ body.dragging-rows * {
 }
 .live-picture img.clickable {
   cursor: crosshair;
-  outline: 3px solid var(--accent, #2563eb);
+  outline: 3px solid var(--accent, var(--accent));
 }
 .live-handover {
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--accent, #2563eb) 12%, var(--card, #fff));
+  background: color-mix(in srgb, var(--accent, var(--accent)) 12%, var(--card, #fff));
   border-top: 1px solid var(--border);
   display: grid;
   gap: 8px;
@@ -2734,7 +2779,7 @@ body.dragging-rows * {
 .proof-host {
   display: inline-block;
   margin-right: 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
 }
 .proof-host.ok {
@@ -2843,7 +2888,7 @@ body.dragging-rows * {
 }
 .input.code,
 textarea.code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 13px;
   width: 100%;
   resize: vertical;
@@ -2998,7 +3043,7 @@ button.net-row:hover,
   white-space: nowrap;
 }
 .net-bar.t-document {
-  background: #2563eb;
+  background: var(--accent);
 }
 .net-bar.t-script {
   background: #ca8a04;
@@ -3055,7 +3100,7 @@ button.net-row:hover,
   width: 38%;
 }
 .console {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12.5px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -3132,18 +3177,18 @@ button.net-row:hover,
 }
 .ov-tab {
   fill: rgb(37 99 235 / 0.08);
-  stroke: #2563eb;
+  stroke: var(--accent);
   stroke-width: 2;
 }
 .ov-path {
   fill: none;
-  stroke: #2563eb;
+  stroke: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 5 4;
   opacity: 0.7;
 }
 .ov-num {
-  fill: #2563eb;
+  fill: var(--accent);
 }
 .ov-num-label {
   fill: #fff;
@@ -3442,7 +3487,7 @@ button.net-row:hover,
   flex-wrap: wrap;
   gap: 8px 18px;
   background: var(--bad);
-  color: #fff;
+  color: var(--on-solid);
   padding: 10px 16px;
   border-radius: var(--radius);
   margin-bottom: 14px;
@@ -3544,7 +3589,7 @@ button.net-row:hover,
 }
 .tab-count.bad {
   background: var(--bad);
-  color: #fff;
+  color: var(--on-solid);
 }
 .see-all {
   margin-top: 6px;
@@ -3772,7 +3817,7 @@ button.net-row:hover,
 }
 
 /* ---- Signed-in app: roles, webhook inbox, access grid, app calls ------------------------------ */
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mono { font-family: var(--mono); }
 .pad { padding: 12px 16px 0; margin: 0; }
 .badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
 .badge.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--border)); }
@@ -3797,7 +3842,7 @@ button.net-row:hover,
 .access-grid td:first-child { white-space: normal; overflow-wrap: anywhere; min-width: 220px; }
 .access-grid td[class^="cell-"] { text-align: center; font-weight: 600; font-size: 12px; }
 .cell-ok { color: var(--good); background: color-mix(in srgb, var(--good) 8%, transparent); }
-.cell-bad { color: #fff; background: var(--bad); }
+.cell-bad { color: var(--on-solid); background: var(--bad); }
 .cell-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .cell-muted { color: var(--muted); }
 @media (max-width: 700px) {
@@ -3822,7 +3867,7 @@ button.net-row:hover,
 .scenario-steps { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; }
 .scenario-steps li.bad > .mono { color: var(--bad); }
 .api-approve { margin-top: 12px; gap: 10px; align-items: center; }
-.scenario-editor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; min-height: 140px; }
+.scenario-editor textarea { font-family: var(--mono); font-size: 12px; min-height: 140px; }
 .scenario-editor { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 @media (max-width: 800px) { .api-panes { grid-template-columns: 1fr; } }
 .row.between { justify-content: space-between; }
@@ -3852,7 +3897,7 @@ button.net-row:hover,
 }
 .code-url {
   overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11.5px;
 }
 .code-tabs button {
@@ -3931,7 +3976,7 @@ button.net-row:hover,
   min-width: 0;
 }
 .code-at {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
   min-width: 52px;
@@ -3946,7 +3991,7 @@ button.net-row:hover,
 .code-line,
 .code-text {
   display: block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -3965,7 +4010,6 @@ button.net-row:hover,
 .code-level {
   font-size: 10.5px;
   font-weight: 700;
-  text-transform: uppercase;
   border-radius: 4px;
   padding: 1px 6px;
   background: var(--bg);
@@ -4018,7 +4062,7 @@ button.net-row:hover,
 .code-pre {
   margin: 0;
   padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -4034,7 +4078,7 @@ button.net-row:hover,
   user-select: none;
 }
 .hl-tag {
-  color: #2563eb;
+  color: var(--accent);
 }
 .hl-attr {
   color: #9333ea;
@@ -4220,7 +4264,7 @@ button.net-row:hover,
   min-width: 0;
 }
 .mc-text {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   resize: vertical;
 }
@@ -4246,7 +4290,7 @@ button.net-row:hover,
 }
 .mc-seg button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .mc-chips {
   display: flex;
@@ -4470,4 +4514,565 @@ button.net-row:hover,
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* =============================================================================================
+   Design pass (v3): the inspection bench.
+   Kept last on purpose: these rules restyle shared pieces (type, buttons, cards, navigation,
+   the report's score readout and the phone layout) without touching how any page works.
+   ============================================================================================= */
+
+/* Type: one sans for reading, Plex Mono only for readings (scores, counts, addresses, code). */
+body {
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+h1,
+h2,
+h3 {
+  letter-spacing: -0.012em;
+  line-height: 1.2;
+}
+h1 {
+  font-weight: 600;
+}
+h2,
+h3 {
+  font-weight: 600;
+}
+.welcome h1,
+.page-head h1 {
+  font-size: 28px;
+}
+.overall-num,
+.score-num,
+.score-chip,
+.run-title,
+.stat-value,
+.sev-count,
+.queue-strip {
+  font-variant-numeric: tabular-nums;
+}
+.overall-num,
+.score-num,
+.score-chip {
+  font-family: var(--mono);
+}
+.eyebrow,
+.section-label,
+.stat-label,
+.table th {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.eyebrow {
+  font-size: 13px;
+}
+.muted,
+.run-sub {
+  color: var(--muted);
+}
+a {
+  text-underline-offset: 2px;
+}
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Keyboard focus is always visible; mouse clicks stay clean. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Buttons: one solid action per screen (primary), quiet outlines for the rest. */
+.btn {
+  border-radius: 8px;
+  min-height: 36px;
+  padding: 7px 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--text);
+}
+.btn.small {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+.btn.danger,
+.btn.ghost.danger {
+  color: var(--bad);
+}
+.btn.danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+
+/* Surfaces: flat panels with a hairline; no stacked shadows. */
+.card,
+.welcome-card,
+.score-card,
+.ai-panel,
+.progress-card,
+.page-card,
+.overall,
+.findings,
+.table-card {
+  box-shadow: var(--shadow);
+}
+.table th {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+.input,
+select.input {
+  border-radius: 8px;
+  min-height: 36px;
+}
+
+/* Tabs: a clear underline and a hint of the active tab's ink. */
+.tabs button {
+  border-radius: 6px 6px 0 0;
+  transition: color 0.12s;
+}
+.tabs button:hover {
+  color: var(--text);
+}
+.tabs button.active {
+  border-bottom-width: 2px;
+}
+
+/* Severity badges: sentence case, readable in both themes. */
+.sev {
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 5px;
+  letter-spacing: 0.01em;
+}
+
+/* ---- Sidebar ------------------------------------------------------------------------------- */
+.shell {
+  grid-template-columns: 264px 1fr;
+}
+.sidebar {
+  padding: 18px 14px;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+}
+.logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.brand {
+  text-decoration: none;
+  color: inherit;
+}
+.brand-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.nav-item {
+  padding: 8px 10px;
+  color: var(--sidebar-muted);
+  position: relative;
+}
+.nav-item:hover {
+  color: var(--sidebar-text);
+}
+.nav-item.active {
+  background: var(--sidebar-2);
+  color: #ffffff;
+}
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: #8b8cf6;
+}
+.section-label {
+  font-size: 12px;
+  padding: 0 4px;
+}
+.run-item {
+  padding: 7px 8px;
+}
+.run-item.active {
+  background: var(--sidebar-2);
+}
+.score-chip {
+  width: 34px;
+  height: 34px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* ---- Page headers ------------------------------------------------------------------------- */
+.main {
+  padding: 28px 40px 48px;
+}
+.run-title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 2px 0 6px;
+}
+.header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.back {
+  display: inline-block;
+  margin-bottom: 6px;
+}
+
+/* ---- Report: the score readout ------------------------------------------------------------
+   One instrument panel instead of a pile of cards: the overall reading on the left, each
+   kind of check as a gauge on the right, separated by hairlines. */
+.scores {
+  grid-template-columns: 220px 1fr;
+  gap: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.scores .overall {
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 28px 20px;
+  background: var(--panel-2);
+}
+.overall-num {
+  font-size: 64px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.overall-label {
+  text-align: center;
+}
+/* Hairlines between gauges: each gauge's 1px ring sits in the 1px gap, so lines never double. */
+.scores .score-grid {
+  gap: 1px;
+  grid-template-columns: repeat(3, 1fr);
+}
+.scores .score-card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 18px 20px;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.score-card-top {
+  align-items: baseline;
+}
+.score-num {
+  font-size: 20px;
+}
+.bar {
+  height: 4px;
+  margin: 12px 0 10px;
+}
+@media (max-width: 700px) {
+  .scores {
+    grid-template-columns: 1fr;
+  }
+  .scores .overall {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 20px;
+  }
+  .overall-num {
+    font-size: 52px;
+  }
+  .scores .score-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Findings list: more air per row, so a long report reads like a list, not a grid. */
+.finding-row {
+  padding: 13px 16px;
+}
+.finding-title {
+  font-weight: 500;
+  line-height: 1.4;
+}
+.finding-body {
+  line-height: 1.6;
+}
+.evidence,
+pre,
+code {
+  font-family: var(--mono);
+}
+
+/* Product picker on the home page: the icon carries the colour, the card stays calm. */
+.product-card,
+.welcome-card {
+  transition: border-color 0.12s;
+}
+.product-card:hover {
+  border-color: var(--accent);
+}
+
+/* Dark mode: tinted product icons instead of light pastel squares. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .product-icon {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+}
+:root[data-theme="dark"] .product-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---- Phone and small tablet ----------------------------------------------------------------
+   A compact top bar (brand + More) and the main places as a tab bar at the bottom of the
+   screen, where a thumb reaches them. "More" still opens projects, colours and account. */
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: auto;
+    max-height: 100vh;
+    padding: 10px 16px;
+    gap: 10px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .sidebar.open {
+    height: 100vh;
+  }
+  .logo {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+  .brand-sub {
+    display: none;
+  }
+  .menu-btn {
+    min-height: 36px;
+  }
+  .sidebar .nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 0;
+    overflow: visible;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    background: var(--sidebar);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .sidebar .nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 2px;
+    font-size: 11.5px;
+    text-align: center;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .sidebar .nav-item.active {
+    background: transparent;
+    color: #ffffff;
+  }
+  .sidebar .nav-item.active::before {
+    left: 30%;
+    right: 30%;
+    top: -6px;
+    bottom: auto;
+    width: auto;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+  }
+  .sidebar .nav-live {
+    position: absolute;
+    top: 2px;
+    left: calc(50% + 6px);
+    margin: 0;
+  }
+  .sidebar:not(.open) .queue-strip {
+    display: none;
+  }
+  .main {
+    padding: 18px 16px calc(84px + env(safe-area-inset-bottom));
+  }
+  .welcome h1,
+  .page-head h1 {
+    font-size: 24px;
+  }
+  .run-title {
+    font-size: 20px;
+  }
+  .run-header {
+    flex-direction: column;
+  }
+}
+.sev,
+.sev-count {
+  text-transform: capitalize;
+}
+
+/* Owner overview tiles: readings in Plex Mono, six fit one row on a laptop. */
+.tile-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.tile-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/* Product picker on a phone: compact rows (icon, name, one line), the check lists stay on larger
+   screens, so all nine products fit in about two screens instead of five. */
+@media (max-width: 600px) {
+  .product-grid {
+    gap: 8px;
+  }
+  .product-card {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    column-gap: 12px;
+    row-gap: 2px;
+    align-items: start;
+    padding: 12px 14px;
+  }
+  .product-card .product-top {
+    grid-row: span 2;
+    margin: 0;
+  }
+  .product-card .product-icon {
+    width: 40px;
+    height: 40px;
+  }
+  .product-card .product-name {
+    margin: 0;
+    font-size: 15px;
+  }
+  .product-card .product-desc {
+    margin: 0;
+    font-size: 13px;
+  }
+  .product-card .product-tests {
+    display: none;
+  }
+}
+.product-card:not(.soon):hover {
+  transform: none;
+  box-shadow: var(--shadow);
+}
+
+/* Summary tiles (WCAG and testing types): counts read as instrument readings. */
+.wcag-tile b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.wcag-tile:hover {
+  border-color: var(--border-strong);
+}
+
+/* Testing types: every section's table lines up on the same three columns. */
+.types-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.types-table th:nth-child(1) {
+  width: 32%;
+}
+.types-table th:nth-child(2) {
+  width: 17%;
+}
+@media (max-width: 640px) {
+  /* On a phone each testing type becomes a small block: name, then result, then how. */
+  .types-table thead {
+    display: none;
+  }
+  .types-table,
+  .types-table tbody,
+  .types-table tr,
+  .types-table td {
+    display: block;
+    width: 100%;
+  }
+  .types-table tr {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .types-table td {
+    padding: 2px 0;
+    border: 0;
+  }
 }

@@ -130,7 +130,7 @@ export function Report({ id }: { id: string }) {
         )}
         {run.projectId && run.status !== "running" && run.status !== "queued" && (
           <button
-            className="btn"
+            className="btn primary"
             onClick={async () => {
               const next = await api.retest(run.projectId!).catch((e: Error) => (setError(e.message), null));
               if (next) go(`#/run/${next.id}`);
@@ -883,7 +883,7 @@ function TypesTab({ run }: { run: Run }) {
       {sections.map((sec) => (
         <div key={sec} className="card table-card" style={{ marginBottom: 16 }}>
           <h3 style={{ margin: "12px 16px 4px" }}>{sec}</h3>
-          <table className="table wcag-table">
+          <table className="table wcag-table types-table">
             <thead>
               <tr>
                 <th>Testing type</th>
