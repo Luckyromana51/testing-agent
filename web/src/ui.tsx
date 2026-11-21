@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from "react";
+import { useState, type InputHTMLAttributes, type ReactNode } from "react";
 import type { Fix } from "../../src/fixes.ts";
 import type { IssueStatus, ProductType, Severity } from "../../src/types.ts";
 import { scoreTone, STATUS_LABEL } from "./lib.ts";
 
-const ICON_PATHS: Record<ProductType | "issues" | "owner" | "control" | "projects" | "new" | "logout" | "upload" | "live" | "checklist", string> = {
+const ICON_PATHS: Record<ProductType | "issues" | "owner" | "control" | "projects" | "new" | "logout" | "upload" | "live" | "checklist" | "hack" | "sun" | "moon", string> = {
+  hack: "M12 3v3M12 18v3M3 12h3M18 12h3M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9ZM12 11.2v1.6",
+  sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4",
+  moon: "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z",
   checklist: "M9 6h11M9 12h11M9 18h11M4 5.5l1.2 1.2L7.5 4.5M4 11.5l1.2 1.2 2.3-2.2M4.5 18h2",
   live: "M4.5 6.5h15A1.5 1.5 0 0 1 21 8v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17V8a1.5 1.5 0 0 1 1.5-1.5ZM10 10v5l4.5-2.5L10 10ZM8 3.5l4 3 4-3",
   website:
@@ -134,5 +137,55 @@ export function Trend({ points }: { points: { score: number; at: string }[] }) {
         </circle>
       ))}
     </svg>
+  );
+}
+
+/** The most pages one website test may visit (the server's MAX_PAGES). */
+export const MAX_PAGES = 20_000;
+
+/**
+ * Under a "Pages to test" box: nothing for an everyday number, and for a big crawl a rough idea of
+ * the time and disk it takes, so nobody starts a 20,000 page test by accident.
+ */
+export function CrawlNote({ pages, parallel = 1 }: { pages: number; parallel?: number }) {
+  if (!Number.isFinite(pages) || pages <= 500) return <div className="muted small">From 1 up to {MAX_PAGES.toLocaleString()} pages.</div>;
+  if (pages > MAX_PAGES) return <div className="error-text small">At most {MAX_PAGES.toLocaleString()} pages in one test.</div>;
+  // About 8 seconds a page with every check, shared between the pages tested at once.
+  const minutes = Math.ceil((pages * 8) / Math.max(1, parallel) / 60);
+  const time = minutes < 90 ? `${minutes} minutes` : `${Math.round(minutes / 60)} hours`;
+  const disk = (pages * 0.25) / 1000; // pictures and page files, about 250 KB a page
+  return (
+    <div className={`crawl-note ${pages > 1000 ? "big" : ""}`}>
+      Big crawl: about {time} at {parallel} page{parallel === 1 ? "" : "s"} at once, and about {disk < 1 ? `${Math.round(disk * 1000)} MB` : `${disk.toFixed(1)} GB`} of
+      pictures. Only the pages the site really has are tested. For speed, test more pages at once (Owner panel &gt; Settings) or limit the addresses in
+      master control.
+    </div>
+  );
+}
+
+/**
+ * A password, token or secret box with an eye button that shows or hides what was typed. It starts
+ * hidden, and hides again when the form is sent (the box loses its value or the page changes).
+ */
+export function PasswordInput(props: Omit<InputHTMLAttributes<HTMLInputElement>, "type">) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="password-box">
+      <input {...props} type={shown ? "text" : "password"} />
+      <button
+        type="button"
+        className="eye-btn"
+        aria-label={shown ? "Hide password" : "Show password"}
+        aria-pressed={shown}
+        title={shown ? "Hide" : "Show"}
+        onClick={() => setShown((s) => !s)}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+          <circle cx="12" cy="12" r="2.8" />
+          {shown && <path d="M4 4l16 16" />}
+        </svg>
+      </button>
+    </span>
   );
 }

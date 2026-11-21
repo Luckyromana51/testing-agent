@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Category, User } from "../../../src/types.ts";
 import { api, type DeviceView, type HelperView, type Meta } from "../api.ts";
 import { CATEGORY_LABEL, go, plural, timeAgo, usePoll } from "../lib.ts";
-import { OpenCounts, Toggle } from "../ui.tsx";
+import { CrawlNote, MAX_PAGES, OpenCounts, PasswordInput, Toggle } from "../ui.tsx";
 
 type Tab = "overview" | "agents" | "modules" | "team" | "macs" | "devices" | "settings";
 const TABS: [Tab, string][] = [
@@ -337,9 +337,8 @@ function TeamTab({ me }: { me: User }) {
         </label>
         <label className="form-field">
           <span>Temporary password (at least 10 characters)</span>
-          <input
+          <PasswordInput
             className="input"
-            type="password"
             required
             minLength={10}
             autoComplete="new-password"
@@ -582,11 +581,12 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
             className="input"
             type="number"
             min={1}
-            max={200}
+            max={MAX_PAGES}
             value={pages}
             onChange={(e) => setPages(Number(e.target.value))}
             onBlur={() => pages !== meta.defaultMaxPages && save({ defaultMaxPages: pages })}
           />
+          <CrawlNote pages={pages} parallel={meta.parallelPages} />
         </label>
         <label className="form-field">
           <span>Projects tested at the same time</span>
@@ -673,9 +673,8 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
           <div className="stat-label">Change my password</div>
           <label className="form-field">
             <span>Current password</span>
-            <input
+            <PasswordInput
               className="input"
-              type="password"
               autoComplete="current-password"
               value={pw.current}
               onChange={(e) => setPw({ ...pw, current: e.target.value })}
@@ -683,9 +682,8 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
           </label>
           <label className="form-field">
             <span>New password</span>
-            <input
+            <PasswordInput
               className="input"
-              type="password"
               minLength={10}
               autoComplete="new-password"
               value={pw.password}

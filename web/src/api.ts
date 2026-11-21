@@ -101,14 +101,16 @@ export type PermissionView = Permission & { status: PermissionStatus };
 export interface PermissionDraft {
   hosts: string[];
   kinds: PermissionKind[];
-  grantedBy: string;
-  reference: string;
+  grantedBy?: string;
+  reference?: string;
   writes: boolean;
-  maxUsers: number;
-  maxMinutes: number;
-  from: string;
-  until: string;
+  maxUsers?: number;
+  maxMinutes?: number;
+  from?: string;
+  until?: string;
   confirm: boolean;
+  /** GLV's own system: no client paperwork, the proof file still needed. */
+  own?: boolean;
 }
 
 export interface ProofCheck {
@@ -297,6 +299,21 @@ export interface ManualOverviewRow {
 }
 export type { ManualCase, ManualResult, ManualRound, ManualStatus, RoundCounts };
 
+/** Where a project stands for the hack agent (the server's hackTarget). */
+export type HackState = "ready" | "waiting-proof" | "not-unlocked" | "no-address" | "busy" | "not-supported";
+export interface HackTarget {
+  projectId: string;
+  name: string;
+  type: ProductType;
+  host?: string;
+  state: HackState;
+  why: string;
+  own?: boolean;
+  until?: string;
+  tools: string[];
+  last?: { runId: string; at: string; status: string; score?: number; findings?: number };
+}
+
 export const api = {
   authState: () => call<AuthState>("GET", "/api/auth/state"),
   setup: (b: { name: string; email: string; password: string }) => call<{ user: User }>("POST", "/api/auth/setup", b),
@@ -314,7 +331,7 @@ export const api = {
   closeHooks: (id: string) => call("DELETE", `/api/projects/${id}/hooks`),
   watchJourneysNow: (id: string) => call<JourneyWatchRun | null>("POST", `/api/projects/${id}/watch/journeys`, {}),
   project: (id: string) => call<ProjectDetail>("GET", `/api/projects/${id}`),
-  createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[] } & TargetFields) =>
+  createProject: (b: { name: string; type: ProductType; schedule: Schedule; tools?: ToolChoice[]; agents?: Record<string, boolean> } & TargetFields) =>
     call<{ project: ProjectSummary; run: Run }>("POST", "/api/projects", b),
   updateProject: (
     id: string,
@@ -353,6 +370,9 @@ export const api = {
   saveProjectControl: (id: string, control: RunControl) => call<{ control: RunControl | null; summary: string[] }>("PUT", `/api/projects/${id}/control`, { control }),
   checkControl: (id: string, control: RunControl) => call<{ control: RunControl; summary: string[] }>("POST", `/api/projects/${id}/control/check`, { control }),
   startControlled: (id: string, control: RunControl, preset?: string) => call<Run>("POST", `/api/projects/${id}/runs/controlled`, { control, preset }),
+  hack: () => call<{ tools: string[]; targets: HackTarget[] }>("GET", "/api/hack"),
+  startHack: (b: { projectIds: string[]; tools: ToolChoice[]; maxPages?: number }) =>
+    call<{ started: { projectId: string; name: string; runId: string }[]; skipped: { projectId: string; name: string; why: string }[] }>("POST", "/api/hack/runs", b),
   liveControl: (id: string, action: LiveAction, slot?: number) => call<Run>("POST", `/api/runs/${id}/control`, { action, slot }),
   run: (id: string) => call<RunDetail>("GET", `/api/runs/${id}`),
   deleteRun: (id: string) => call("DELETE", `/api/runs/${id}`),

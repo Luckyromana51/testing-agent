@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RumSummary } from "../../../src/types.ts";
 import { api, type ProjectSummary, type RumView, type Upload } from "../api.ts";
+import { PasswordInput } from "../ui.tsx";
 import { timeAgo } from "../lib.ts";
 import { FilePicker } from "./Home.tsx";
 
@@ -135,7 +136,7 @@ export function FixRepoCard({ project, onChanged }: Props) {
         </label>
         <label className="form-field grow">
           <span>{t.saved ? "New token" : "Token"}</span>
-          <input className="input" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="new-password" />
+          <PasswordInput className="input" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="new-password" />
         </label>
       </div>
       {token && (

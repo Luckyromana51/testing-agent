@@ -2,10 +2,10 @@ import { useMemo, useState } from "react";
 import type { ProductType, Schedule } from "../../../src/types.ts";
 import { api, type Meta, type TargetFields, type Upload } from "../api.ts";
 import { go } from "../lib.ts";
-import { Icon } from "../ui.tsx";
+import { CrawlNote, Icon, MAX_PAGES } from "../ui.tsx";
 import { setView, useSimple } from "../view.ts";
 import { LOGIN_QUESTION, LoginFields, loginKind, type LoginDraft } from "./LoginFields.tsx";
-import { ToolTabs, toolChoices, toolDraft, type ToolDraft } from "./ToolTabs.tsx";
+import { AgentToggles, ToolTabs, toolChoices, toolDraft, type AgentDraft, type ToolDraft } from "./ToolTabs.tsx";
 
 /** First screen: what kind of product do you want to test? */
 export function Home({ meta }: { meta: Meta }) {
@@ -163,6 +163,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [tools, setTools] = useState<ToolDraft>(() => toolDraft(meta, type));
+  const [agentOff, setAgentOff] = useState<AgentDraft>({});
   const isWeb = WEB_TYPES.includes(type);
   const simple = useSimple();
   const agents = useMemo(
@@ -182,6 +183,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
     );
   }
 
+  const onAgents = agents.filter((a) => agentOff[a.id] !== false).length;
   const file = upload ? { file: upload.file, fileName: upload.fileName } : {};
   const fields: TargetFields = isWeb
     ? { url, maxPages, checkLinks }
@@ -216,6 +218,7 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
         type,
         schedule,
         tools: toolChoices(meta, tools),
+        ...(Object.keys(agentOff).length ? { agents: agentOff } : {}),
         ...fields,
         ...(withLogin && kind ? { login: { ...login, kind } } : {}),
       });
@@ -428,10 +431,11 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
                 className="input"
                 type="number"
                 min={1}
-                max={200}
+                max={MAX_PAGES}
                 value={maxPages}
                 onChange={(e) => setMaxPages(Number(e.target.value))}
               />
+              <CrawlNote pages={maxPages} parallel={meta.parallelPages} />
             </label>
           )}
           <label className="form-field">
@@ -463,24 +467,28 @@ export function NewProject({ meta, type }: { meta: Meta; type: ProductType }) {
         {simple ? (
           <div className="simple-runs">
             <div>
-              <b>What runs:</b> {agents.length} automatic checks{toolChoices(meta, tools).length ? ` and ${toolChoices(meta, tools).length} testing tools` : ""}, picked for a{" "}
+              <b>What runs:</b> {onAgents} automatic checks{toolChoices(meta, tools).length ? ` and ${toolChoices(meta, tools).length} testing tools` : ""}, picked for a{" "}
               {product.name.toLowerCase()}.{" "}
               {type === "api" && testServer ? "On this test server they also create, change and delete their own test records." : "They only look; they never change anything."}
               {isWeb && ` Up to ${maxPages} pages are tested.`}
             </div>
+            <details className="simple-checks">
+              <summary>Turn single checks on or off</summary>
+              <AgentToggles agents={agents} off={agentOff} onChange={setAgentOff} />
+            </details>
             <button type="button" className="link" onClick={() => setView("full")}>
-              Choose checks, tools, pages and re-tests (full view)
+              Choose tools, pages and re-tests (full view)
             </button>
           </div>
         ) : (
           <div className="form-field">
             <span>What runs in this test</span>
-            <ToolTabs meta={meta} type={type} agents={agents} draft={tools} onChange={setTools} />
+            <ToolTabs meta={meta} type={type} agents={agents} draft={tools} onChange={setTools} agentOff={agentOff} onAgentsChange={setAgentOff} />
           </div>
         )}
         <div className="form-actions">
-          <button className="btn primary" disabled={busy || !ready}>
-            {busy ? "Starting…" : simple ? "Start the test" : startLabel(agents.length, toolChoices(meta, tools).length)}
+          <button className="btn primary" disabled={busy || !ready || (onAgents === 0 && toolChoices(meta, tools).length === 0)}>
+            {busy ? "Starting…" : simple ? "Start the test" : startLabel(onAgents, toolChoices(meta, tools).length)}
           </button>
           {error && <div className="error">{error}</div>}
         </div>

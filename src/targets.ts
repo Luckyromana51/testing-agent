@@ -6,7 +6,7 @@ import { uploadedPath } from "./engines/index.js";
 import { validateRepoUrl } from "./engines/code.js";
 import { validateTarget } from "./runner/urls.js";
 import type { ApiAuthType, Login, LoginKind, LoginSummary, ProductType, ProjectTarget, RoleLogin, RoleSummary } from "./types.js";
-import { WEB_PRODUCTS } from "./products.js";
+import { MAX_PAGES, WEB_PRODUCTS } from "./products.js";
 
 export interface TargetInput {
   url?: string;
@@ -98,7 +98,7 @@ export function buildTarget(type: ProductType, input: TargetInput, uploadsDir: s
 
   if (WEB_PRODUCTS.includes(type)) {
     if (set("url") || !t.url) t.url = validateTarget(clean(input.url));
-    if (set("maxPages") || t.maxPages === undefined) t.maxPages = Math.min(Math.max(Number(input.maxPages) || defaultMaxPages, 1), 200);
+    if (set("maxPages") || t.maxPages === undefined) t.maxPages = Math.min(Math.max(Number(input.maxPages) || defaultMaxPages, 1), MAX_PAGES);
     if (set("checkLinks") || t.checkLinks === undefined) t.checkLinks = input.checkLinks !== false;
     if (set("testServer")) {
       if (input.testServer === true) t.testServer = true;

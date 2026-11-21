@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { ALL_AGENTS } from "./agents/registry.js";
 import type { ToolChoice } from "./tools/types.js";
+import { MAX_PAGES } from "./products.js";
 import { CATEGORIES, type Category, type ProductType } from "./types.js";
 
 /**
@@ -144,7 +145,7 @@ const choice = (...pairs: [string, string][]) => pairs.map(([value, label]) => (
 
 export const CONTROL_FIELDS: ControlField[] = [
   // crawl
-  { id: "maxPages", section: "crawl", label: "Most pages", kind: "number", min: 1, max: 1000, products: WEB, hint: "The project's own number when left empty." },
+  { id: "maxPages", section: "crawl", label: "Most pages", kind: "number", min: 1, max: MAX_PAGES, products: WEB, hint: "The project's own number when left empty. Up to 20,000." },
   { id: "maxDepth", section: "crawl", label: "Most clicks from the start page", kind: "number", min: 0, max: 20, products: WEB, hint: "0 tests only the start page and the extra pages below.", normal: "No limit" },
   { id: "include", section: "crawl", label: "Only addresses with", kind: "list", products: WEB, hint: "One per line: /shop/ or */product/*. The start page is always tested." },
   { id: "exclude", section: "crawl", label: "Never addresses with", kind: "list", products: WEB, hint: "One per line: /blog/, ?print=, */tag/*" },
@@ -315,7 +316,7 @@ export function cleanControl(input: unknown): RunControl {
     if (v !== undefined) c[k] = v;
   };
   if (i.allAgents === true) c.allAgents = true;
-  set("maxPages", num(i.maxPages, 1, 1000));
+  set("maxPages", num(i.maxPages, 1, MAX_PAGES));
   set("maxDepth", num(i.maxDepth, 0, 20));
   set("include", list(i.include));
   set("exclude", list(i.exclude));

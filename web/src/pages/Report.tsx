@@ -629,21 +629,35 @@ function IssueList({ groups, categories, unit }: { groups: IssueGroup[]; categor
   );
 }
 
+const PAGE_BATCH = 60;
+
 function Pages({ run, onRunChange }: { run: Run; onRunChange: () => void }) {
   const pages = run.result!.pages;
   const [inspect, setInspect] = useState<number | null>(null);
+  // A big crawl has thousands of pages: show them in batches, and count issues once per page.
+  const [shown, setShown] = useState(PAGE_BATCH);
+  const byPage = useMemo(() => {
+    const m = new Map<string, Finding[]>();
+    for (const f of run.result!.findings) if (f.severity !== "info") m.set(f.pageUrl, [...(m.get(f.pageUrl) ?? []), f]);
+    return m;
+  }, [run.result]);
   return (
     <div className="pages">
       {inspect !== null && <Inspect run={run} index={inspect} onClose={() => setInspect(null)} onRunChange={onRunChange} />}
-      {pages.map((p, pi) => {
-        const issues = groupFindings(run.result!.findings.filter((f) => f.pageUrl === p.url && f.severity !== "info")).length;
+      {pages.length > PAGE_BATCH && (
+        <div className="muted small pages-count">
+          Showing {Math.min(shown, pages.length).toLocaleString()} of {pages.length.toLocaleString()} pages tested.
+        </div>
+      )}
+      {pages.slice(0, shown).map((p, pi) => {
+        const issues = groupFindings(byPage.get(p.url) ?? []).length;
         return (
           <div className="page-card" key={p.url}>
             <div className="shots">
-              {p.screenshot && <img className="shot" src={api.artifact(run.id, p.screenshot)} alt={`Desktop view of ${p.url}`} />}
-              {p.tabletScreenshot && <img className="shot tablet" src={api.artifact(run.id, p.tabletScreenshot)} alt={`Tablet view of ${p.url}`} />}
+              {p.screenshot && <img className="shot" loading="lazy" src={api.artifact(run.id, p.screenshot)} alt={`Desktop view of ${p.url}`} />}
+              {p.tabletScreenshot && <img className="shot tablet" loading="lazy" src={api.artifact(run.id, p.tabletScreenshot)} alt={`Tablet view of ${p.url}`} />}
               {p.mobileScreenshot && (
-                <img className="shot mobile" src={api.artifact(run.id, p.mobileScreenshot)} alt={`Phone view of ${p.url}`} />
+                <img className="shot mobile" loading="lazy" src={api.artifact(run.id, p.mobileScreenshot)} alt={`Phone view of ${p.url}`} />
               )}
             </div>
             <div className="page-info">
@@ -693,6 +707,11 @@ function Pages({ run, onRunChange }: { run: Run; onRunChange: () => void }) {
           </div>
         );
       })}
+      {shown < pages.length && (
+        <button className="btn" onClick={() => setShown((n) => n + PAGE_BATCH * 2)}>
+          Show {Math.min(PAGE_BATCH * 2, pages.length - shown)} more pages
+        </button>
+      )}
     </div>
   );
 }

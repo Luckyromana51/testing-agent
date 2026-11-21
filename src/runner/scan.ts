@@ -572,6 +572,7 @@ export async function scanSite(input: ScanOptions): Promise<ScanResult> {
 
   const runner = new AgentRunner(selectAgents(opts), Boolean(opts.login), opts.writes, control);
   log(`${runner.stats.size} specialist agents assigned`);
+  if (maxPages > 1000) log(`Big crawl: up to ${maxPages.toLocaleString("en")} pages. The test stops when the site has no more pages, and you can finish it early from the live bar`);
   if (opts.login && runner.skipped.some((s) => s.category === "seo")) {
     log("Search engine checks are left out: the test runs signed in, and private pages are not for search engines");
   }
