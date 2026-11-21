@@ -126,7 +126,8 @@ describe("live switches", () => {
 
   it("skips one screen's page, or each open page once", () => {
     const gate = new RunGate();
-    gate.skip(2);
+    for (const slot of [0, 1, 2]) gate.pageStarted(slot);
+    assert.equal(gate.skip(2), true);
     assert.equal(gate.takeSkip(1), false);
     assert.equal(gate.takeSkip(2), true);
     assert.equal(gate.takeSkip(2), false);
@@ -135,6 +136,18 @@ describe("live switches", () => {
     assert.equal(gate.takeSkip(0), false, "only the page that was open");
     assert.equal(gate.takeSkip(1), true);
     assert.equal(gate.state().skipped, 3);
+  });
+
+  it("has nothing to skip when no page is open (signing in, or the site-wide checks after the pages)", () => {
+    const gate = new RunGate();
+    assert.equal(gate.skip(), false, "before any page");
+    gate.pageStarted(0);
+    assert.equal(gate.skip(3), false, "a screen with no page");
+    gate.pageEnded(0);
+    assert.equal(gate.openPages(), 0);
+    assert.equal(gate.skip(), false, "after every page closed");
+    gate.pageStarted(0);
+    assert.equal(gate.takeSkip(0), false, "a skip that had nothing to act on is not kept for a later page");
   });
 
   it("finishes when asked, or when the time limit passes", () => {

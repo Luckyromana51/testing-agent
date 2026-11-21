@@ -43,6 +43,7 @@ import {
   wordpressAgent,
 } from "./web/site.js";
 import { speedAgent } from "./web/speed.js";
+import { consentGateAgent } from "./web/consent.js";
 import { coverAgent, cutTextAgent, overlapAgent, overlapPhoneAgent, readabilityAgent, tabletAgent } from "./web/ui.js";
 import { seoAuditAgent } from "../seo/audit.js";
 
@@ -88,6 +89,7 @@ export const WEB_AGENTS: WebAgent[] = [
   overlapPhoneAgent,
   cutTextAgent,
   coverAgent,
+  consentGateAgent,
   // Speed beyond the timing numbers.
   imagesAgent,
   networkAgent,

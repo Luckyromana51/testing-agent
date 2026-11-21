@@ -135,7 +135,7 @@ t("Property-based testing", "Many generated inputs checked against general rules
 
 s("Web application testing");
 t("UI testing", "Visible elements, controls and layout.", WEB, { agents: ["ui.overlap", "ui.cut-text", "ui.cover", "web.mobile", "web.tablet"] });
-t("UX testing", "Workflows are intuitive and efficient.", WEB, { agents: ["func.navigation", "ui.cover", "func.not-found-page", "ui.readability"], manual: "How it feels to real users needs a usability session." });
+t("UX testing", "Workflows are intuitive and efficient.", WEB, { agents: ["func.navigation", "ui.cover", "ui.consent-gate", "func.not-found-page", "ui.readability"], manual: "How it feels to real users needs a usability session." });
 t("Cross-browser testing", "Browsers and versions.", WEB, { agents: ["func.browsers"], tools: ["mac-safari"] });
 t("Responsive testing", "Screen sizes and orientations.", WEB, { agents: ["web.mobile", "web.tablet", "func.devices", "ui.overlap-phone", "a11y.zoom"] });
 t("Navigation testing", "Menus, links, breadcrumbs, page changes.", WEB, { agents: ["func.navigation", "web.links", "func.anchors", "seo.link-graph"] });
