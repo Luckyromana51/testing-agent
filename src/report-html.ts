@@ -3,6 +3,7 @@ import { fixFor } from "./fixes.js";
 import { groupFindings, SEVERITY_ORDER } from "./group.js";
 import type { Category, Run } from "./types.js";
 import { wcagReport } from "./wcag.js";
+import { handbookReport } from "./handbook.js";
 
 /**
  * The client report: one printable page with our brand (scores, the major issues with how to fix
@@ -29,6 +30,11 @@ export function reportHtml(run: Run, projectName: string, brand = process.env.RE
   const date = new Date(run.finishedAt ?? run.createdAt).toLocaleString("en-IN", { dateStyle: "long", timeStyle: "short" });
   const isWeb = r.pages.length > 0 && /^https?:/.test(r.pages[0].url);
   const wcag = isWeb ? wcagReport(r) : null;
+  const types = handbookReport(r, run.product ?? "website");
+  const TYPE_TEXT = { fails: "Problems found", passes: "Tested, no problems", platform: "Done by the platform", "not-run": "Not run this time", manual: "Needs a person" } as const;
+  const typeRows = types.rows
+    .map((t) => `<tr><td>${esc(t.section)}</td><td><b>${esc(t.name)}</b></td><td class="st ${t.status === "fails" ? "fails" : t.status === "passes" || t.status === "platform" ? "passes" : t.status === "manual" ? "manual" : "not-tested"}">${TYPE_TEXT[t.status]}${t.findings ? ` (${t.findings})` : ""}</td><td>${t.problems.map(esc).join("<br>") || esc(t.ranBy.join(", ") || t.platform || t.manual || "")}</td></tr>`)
+    .join("");
   const scoreCards = (Object.entries(r.scores) as [Category, number][])
     .map(([c, s]) => `<div class="score"><b style="color:${tone(s)}">${s}</b><span>${LABEL[c]}</span></div>`)
     .join("");
@@ -103,6 +109,8 @@ ${
 <table><tr><th>Criterion</th><th>Name</th><th>Level</th><th>Result</th><th>Problems found</th></tr>${wcagRows}</table>`
     : ""
 }
+<h2>Testing types (Software Testing Handbook)</h2><p>${types.counts.fails} types found problems · ${types.counts.passes} tested with no problems · ${types.counts.platform} done by the platform · ${types.counts["not-run"]} not run this time · ${types.counts.manual} need a person.${types.cases ? ` ${types.cases.toLocaleString("en-IN")} test cases counted, ${types.casesFailed.toLocaleString("en-IN")} failed.` : ""}</p>
+<table><tr><th>Group</th><th>Testing type</th><th>Result</th><th>Details</th></tr>${typeRows}</table>
 ${cookies ? `<h2>Cookies the site sets</h2><table><tr><th>Name</th><th>Set by</th><th>Secure</th><th>HttpOnly</th><th>SameSite</th><th>Ends</th></tr>${cookies}</table>` : ""}
 <footer>Made by ${esc(brand)} with the GLV Testing Agent. Test run ${esc(run.id)}.</footer>
 </body></html>`;

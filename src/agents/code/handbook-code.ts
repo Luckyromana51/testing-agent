@@ -286,7 +286,7 @@ export const codeTestsAgent: CodeAgent = {
         skipped += skips.length;
         firstSkip ||= f.path;
       }
-      const hasTests = /\b(it|test)\s*\(|\bdef test_|@Test\b|func Test\w+\(|\[(Fact|Test|TestMethod)\]|public function test\w+/.test(f.text);
+      const hasTests = /\b(it|test)(\.(only|skip|todo|concurrent))?\s*\(|\bdef test_|@Test\b|func Test\w+\(|\[(Fact|Test|TestMethod)\]|public function test\w+/.test(f.text);
       const asserts = /\b(expect|assert\w*|should|t\.(Error|Fatal|Fail)\w*|require\.\w+|verify|toBe|toEqual|Assert\.\w+|assertThat|self\.assert\w+|pytest\.raises|check\.\w+|snapshot)\b/i.test(f.text);
       if (hasTests && !asserts) hits.add("tests:no-assertions", "medium", "functional", "Test files that never check anything", "These test files run code but contain no assertion (expect, assert, should), so they pass whatever the code does. Add the expected results.", f.path);
     }

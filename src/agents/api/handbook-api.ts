@@ -109,6 +109,8 @@ export const apiNegativeAgent: ApiAgent = {
           if (r.status === null) continue;
           tried++;
           const line = `GET ${c.op.path} with ${p.name} ${k.what}: HTTP ${r.status}`;
+          // Every error, crashes too, counts for "errors come back in different formats".
+          if (r.status >= 400) errorTypes.set(`${r.status} ${r.contentType.split(";")[0] || "(no type)"}`, line);
           const l = findLeak(r.text);
           if (l) {
             failed++;
@@ -121,7 +123,6 @@ export const apiNegativeAgent: ApiAgent = {
             crash.push(line);
             continue;
           }
-          if (r.status >= 400) errorTypes.set(`${r.status} ${r.contentType.split(";")[0] || "(no type)"}`, line);
           if (k.mustRefuse && r.status < 300) {
             failed++;
             accepted.push(`${line} (expected 400 or 422)`);

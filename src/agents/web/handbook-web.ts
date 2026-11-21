@@ -50,7 +50,13 @@ export const backForwardAgent: SiteAgent = {
     const wrong: string[] = [];
     let tried = 0;
     try {
-      for (const p of trail) await page.goto(p.url, { waitUntil: "load", timeout: 30_000 });
+      // Errors a page already shows on a normal visit are reported by the console check, not here.
+      const known = new Set<string>();
+      for (const p of trail) {
+        await page.goto(p.url, { waitUntil: "load", timeout: 30_000 });
+        await sleep(300);
+      }
+      for (const e of errors) known.add(e);
       const steps: { press: "back" | "forward"; expect: PageResult }[] = [];
       for (let i = trail.length - 2; i >= 0; i--) steps.push({ press: "back", expect: trail[i] });
       steps.push({ press: "forward", expect: trail[1] });
@@ -64,7 +70,7 @@ export const backForwardAgent: SiteAgent = {
         const title = await page.title().catch(() => "");
         if (!sameDoc(now, s.expect.url)) wrong.push(`${s.press === "back" ? "Back" : "Forward"}: expected ${pathOf(s.expect.url)}, the browser showed ${pathOf(now)}`);
         else if (s.expect.title && title && title !== s.expect.title) wrong.push(`${s.press === "back" ? "Back" : "Forward"} to ${pathOf(now)}: the title is "${title.slice(0, 60)}", it was "${s.expect.title.slice(0, 60)}"`);
-        else if (errors.length > before) wrong.push(`${s.press === "back" ? "Back" : "Forward"} to ${pathOf(now)}: ${errors.slice(before, before + 2).join("; ")}`);
+        else if (errors.slice(before).some((e) => !known.has(e))) wrong.push(`${s.press === "back" ? "Back" : "Forward"} to ${pathOf(now)}: ${errors.slice(before).filter((e) => !known.has(e)).slice(0, 2).join("; ")}`);
         else if (res && res.status() >= 400) wrong.push(`${s.press === "back" ? "Back" : "Forward"} to ${pathOf(now)}: HTTP ${res.status()}`);
         // Chrome says why a page could not come back from the back/forward cache.
         if (s.press === "back" && !blocked.length) {
@@ -291,7 +297,9 @@ export const cacheAgent: SiteAgent = {
       if (req.method() !== "GET" || r.status() !== 200 || seen.size >= 40) return;
       const type = req.resourceType();
       if (!["document", "script", "stylesheet", "image", "font"].includes(type) || !sameSite(r.url(), host)) return;
-      if (!seen.has(r.url())) seen.set(r.url(), { type, headers: r.headers() });
+      // Only the address and kind: the browser may have answered from its own cache, and a
+      // cached answer has no Set-Cookie, so the headers are read again below, fresh.
+      if (!seen.has(r.url())) seen.set(r.url(), { type, headers: {} });
     });
     try {
       await page.goto(start.url, { waitUntil: "load", timeout: 30_000 });
@@ -429,7 +437,7 @@ export const cookiesAgent: SiteAgent = {
         }),
       );
     }
-    const long = all.filter((c) => c.expires > 0 && c.expires - now > 400 * DAY);
+    const long = all.filter((c) => c.expires > 0 && c.expires - now > 396 * DAY);
     tried += all.length;
     if (long.length) {
       failed += long.length;
@@ -439,7 +447,7 @@ export const cookiesAgent: SiteAgent = {
           rule: "cookie:too-long",
           severity: "low",
           title: "Cookies are kept for more than 13 months",
-          detail: "European regulators (CNIL, ICO) expect tracking cookies to last at most 13 months, and Chrome cuts every cookie to 400 days anyway. Set a shorter Max-Age or Expires.",
+          detail: "European regulators (CNIL, ICO) expect tracking cookies to last at most 13 months (Chrome already cuts every cookie to 400 days). Set a shorter Max-Age or Expires.",
           pageUrl: where,
           evidence: list(long.map((c) => `${c.name} (${c.domain}): ${Math.round((c.expires - now) / DAY / 30)} months`)),
           count: long.length,

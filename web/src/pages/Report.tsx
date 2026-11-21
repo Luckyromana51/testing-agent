@@ -13,6 +13,7 @@ import { ControlCard, LiveControlBar } from "./MasterControl.tsx";
 import { RunCode } from "./LiveCode.tsx";
 import { Inspect, VisualCompare } from "./Inspect.tsx";
 import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
+import { handbookReport, type HandbookStatus } from "../../../src/handbook.ts";
 
 /** Products tested in a browser, which can be watched live. */
 const BROWSER_PRODUCTS = new Set(["website", "webapp", "saas", "crm", "ecommerce"]);
@@ -55,7 +56,7 @@ export function Report({ id }: { id: string }) {
     (r) => r.status === "queued" || r.status === "running",
   );
   const [actionError, setError] = useState("");
-  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "api" | "app" | "journeys" | "visual" | "wcag" | "cookies" | "changes" | "seo" | "agents" | "tools">("summary");
+  const [tab, setTab] = useState<"summary" | "issues" | "pages" | "api" | "app" | "journeys" | "visual" | "wcag" | "types" | "cookies" | "changes" | "seo" | "agents" | "tools">("summary");
   const error = loadError || actionError;
 
   if (error) return <div className="page error big">{error}</div>;
@@ -339,6 +340,9 @@ export function Report({ id }: { id: string }) {
             WCAG 2.2
           </button>
         )}
+        <button className={tab === "types" ? "active" : ""} onClick={() => setTab("types")}>
+          Testing types
+        </button>
         {result.cookies && result.cookies.length > 0 && (
           <button className={tab === "cookies" ? "active" : ""} onClick={() => setTab("cookies")}>
             Cookies ({result.cookies.length})
@@ -394,6 +398,7 @@ export function Report({ id }: { id: string }) {
       {tab === "journeys" && <Journeys run={run} />}
       {tab === "visual" && <VisualTab run={run} onRunChange={reload} />}
       {tab === "wcag" && <WcagTab run={run} />}
+      {tab === "types" && <TypesTab run={run} />}
       {tab === "cookies" && <CookiesTab run={run} />}
       {tab === "changes" && <ChangesTab run={run} />}
       {tab === "seo" && <SeoTab result={result} />}
@@ -844,6 +849,77 @@ function WcagTab({ run }: { run: Run }) {
   );
 }
 
+const TYPE_TEXT: Record<HandbookStatus, string> = { fails: "Problems found", passes: "Tested, no problems", platform: "Done by the platform", "not-run": "Not run this time", manual: "Needs a person" };
+const TYPE_CLASS: Record<HandbookStatus, string> = { fails: "fails", passes: "passes", platform: "passes", "not-run": "not-tested", manual: "manual" };
+
+/** Every testing type of the testing handbook for this product, with what this test did for it. */
+function TypesTab({ run }: { run: Run }) {
+  const report = useMemo(() => handbookReport(run.result!, run.product ?? "website"), [run.result, run.product]);
+  const [show, setShow] = useState<HandbookStatus | "all">("all");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const rows = report.rows.filter((r) => (show === "all" || r.status === show) && (!q || `${r.name} ${r.purpose} ${r.section}`.toLowerCase().includes(q)));
+  const sections = [...new Set(rows.map((r) => r.section))];
+  return (
+    <div>
+      <div className="wcag-summary">
+        {(["fails", "passes", "platform", "not-run", "manual"] as HandbookStatus[]).map((st) => (
+          <button key={st} className={`card wcag-tile st-${TYPE_CLASS[st]}${show === st ? " active" : ""}`} onClick={() => setShow(show === st ? "all" : st)}>
+            <b>{report.counts[st]}</b>
+            <span>{TYPE_TEXT[st]}</span>
+          </button>
+        ))}
+      </div>
+      <p className="muted small">
+        {report.rows.length} testing types of the Software Testing Handbook apply to this kind of product. This test ran {plural(report.checks, "check")}
+        {report.cases > 0 && (
+          <>
+            {" "}and counted {report.cases.toLocaleString("en-IN")} test cases, {report.casesFailed.toLocaleString("en-IN")} of them failed
+          </>
+        )}
+        . "Not run this time" types have a check you can turn on in master control (some, like load tests, need the client's permission).
+      </p>
+      <input className="input" placeholder="Search testing types" value={query} onChange={(e) => setQuery(e.target.value)} style={{ maxWidth: 320, marginBottom: 12 }} />
+      {sections.map((sec) => (
+        <div key={sec} className="card table-card" style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: "12px 16px 4px" }}>{sec}</h3>
+          <table className="table wcag-table">
+            <thead>
+              <tr>
+                <th>Testing type</th>
+                <th>Result</th>
+                <th>How it was tested</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows
+                .filter((r) => r.section === sec)
+                .map((r) => (
+                  <tr key={r.name}>
+                    <td>
+                      <b>{r.name}</b>
+                      <div className="muted small">{r.purpose}</div>
+                    </td>
+                    <td className={`st-${TYPE_CLASS[r.status]}`}>
+                      {TYPE_TEXT[r.status]}
+                      {r.findings > 0 && <div className="small">{plural(r.findings, "problem")}</div>}
+                      {r.cases > 0 && <div className="small muted">{r.cases.toLocaleString("en-IN")} test cases</div>}
+                    </td>
+                    <td className="small">
+                      {r.problems.length > 0 && <div>{r.problems.join(" · ")}</div>}
+                      {r.ranBy.length > 0 && <div className="muted">Checked by: {r.ranBy.join(", ")}</div>}
+                      {r.status !== "fails" && r.status !== "passes" && <div className="muted">{r.platform ?? r.manual ?? "Its checks are turned off for this test."}</div>}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Every cookie the site set (never the values), with its security flags. */
 function CookiesTab({ run }: { run: Run }) {
   const list = run.result!.cookies ?? [];
@@ -898,6 +974,7 @@ function Agents({ run }: { run: Run }) {
           <tr>
             <th>Agent</th>
             <th>Findings</th>
+            <th>Test cases</th>
             <th>Time</th>
             <th>Status</th>
           </tr>
@@ -910,6 +987,7 @@ function Agents({ run }: { run: Run }) {
                 <code className="muted small">{s.id}</code>
               </td>
               <td>{s.findings}</td>
+              <td className="small">{s.cases ? `${s.cases.toLocaleString("en-IN")} (${s.casesFailed ?? 0} failed)` : s.runs ? plural(s.runs, "run") : "—"}</td>
               <td>{(s.ms / 1000).toFixed(1)} s</td>
               <td>
                 {s.untested ? (

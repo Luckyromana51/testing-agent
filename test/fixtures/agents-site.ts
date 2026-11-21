@@ -361,7 +361,14 @@ function clean(): (path: string, query: URLSearchParams) => Page | Buffer | null
   };
   return (path, query) => {
     const page = pages[path];
-    if (page) return page(query);
+    if (page) {
+      // Done right: the menu marks the page you are on, and deep pages have breadcrumbs.
+      const p = page(query);
+      let body = p.body.replace(`<a href="${path}">`, `<a href="${path}" aria-current="page">`);
+      const parts = path.split("/").filter(Boolean);
+      if (parts.length >= 2) body = body.replace("<main>", `<main><nav aria-label="Breadcrumb"><a href="/">Home</a> › <a href="/${parts[0]}">${parts[0]}</a> › ${parts.at(-1)}</nav>`);
+      return { ...p, body };
+    }
     return files[path]?.() ?? null;
   };
 }
