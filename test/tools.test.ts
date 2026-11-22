@@ -172,14 +172,14 @@ describe("choosing tools", () => {
 
   it("offers the right tools for each product type", () => {
     const ids = (p: Parameters<typeof cleanChoices>[0]) => TOOLS.filter((t) => t.products.includes(p)).map((t) => t.id);
-    assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "byo-playwright", "glv-probes", "glv-attack", "zap-active", "k6", "jmeter", "mac-safari", "mac-voiceover", "conn-ssh", "conn-hostinger", "conn-mcp"]);
-    assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "glv-probes", "zap-active", "k6", "jmeter", "schemathesis", "newman", "conn-ssh", "conn-hostinger", "conn-mcp"]);
-    assert.deepEqual(ids("code"), ["gitleaks", "opengrep", "osv-scanner", "trivy", "conn-ssh", "conn-hostinger"]);
-    assert.deepEqual(ids("ios"), ["mac-ios-sim", "appium"], "the Mac helper and the test phone run the app; the iOS engine itself reads the IPA");
-    assert.deepEqual(ids("android"), ["appium"]);
+    assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "malware", "surface", "verapdf", "browser-matrix", "byo-playwright", "glv-probes", "glv-attack", "ai-redteam", "ports", "zap-active", "k6", "jmeter", "mac-safari", "mac-voiceover", "conn-ssh", "conn-hostinger", "conn-mcp"]);
+    assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "surface", "glv-probes", "ai-redteam", "ports", "zap-active", "k6", "jmeter", "schemathesis", "newman", "replay", "conn-ssh", "conn-hostinger", "conn-mcp"]);
+    assert.deepEqual(ids("code"), ["gitleaks", "opengrep", "osv-scanner", "trivy", "mutation", "conn-ssh", "conn-hostinger"]);
+    assert.deepEqual(ids("ios"), ["mac-ios-sim", "appium", "mobsf"], "the Mac helper and the test phone run the app; the iOS engine itself reads the IPA");
+    assert.deepEqual(ids("android"), ["appium", "mobsf", "mobile-runtime"]);
     // Load and attack tools need the client's permission, each of its own kind.
     const needs = TOOLS.filter((t) => t.safety !== "safe").map((t) => `${t.id}:${t.permission}`);
-    assert.deepEqual(needs, ["glv-probes:attack", "glv-attack:attack", "zap-active:attack", "k6:load", "jmeter:load"]);
+    assert.deepEqual(needs, ["glv-probes:attack", "glv-attack:attack", "ai-redteam:attack", "ports:attack", "zap-active:attack", "k6:load", "jmeter:load"]);
   });
 });
 
