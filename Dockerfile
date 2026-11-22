@@ -12,14 +12,17 @@ ARG TARGETOS TARGETARCH \
 # Go's build cache is emptied after each tool and its download cache at the end, so the build needs a
 # few GB less free disk at its peak and the finished step keeps only the built programs (otherwise
 # Docker keeps several GB of Go caches in its build cache). See "Disk space" in the README.
-RUN mkdir -p /tools \
+# retry() reruns a slow or dropped module download a few times before giving up, so a slow connection
+# does not fail the build on the first stalled transfer (Go has no --retry flag of its own).
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    mkdir -p /tools \
  && for pkg in \
       github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION} \
       github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION} \
       github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} \
       github.com/aquasecurity/trivy/cmd/trivy@${TRIVY_VERSION} \
       go.k6.io/k6@${K6_VERSION}; do \
-      CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath -ldflags="-s -w" "$pkg" || exit 1; \
+      retry env CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath -ldflags="-s -w" "$pkg" || exit 1; \
       go clean -cache || exit 1; \
     done \
  && for b in nuclei gitleaks osv-scanner trivy k6; do cp "$(find /go/bin -name "$b" -type f | head -n 1)" /tools/; done \
@@ -29,11 +32,12 @@ RUN mkdir -p /tools \
 # Built the same checked way; each is optional, so one that fails to build is left out and its
 # feature says "not installed" instead of breaking the image.
 ARG SUBFINDER_VERSION=v2.9.0 INTERACTSH_VERSION=v1.2.4 GO_IOS_VERSION=v1.0.182
-RUN for pkg in \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    for pkg in \
       github.com/projectdiscovery/subfinder/v2/cmd/subfinder@${SUBFINDER_VERSION} \
       github.com/projectdiscovery/interactsh/cmd/interactsh-client@${INTERACTSH_VERSION} \
       github.com/danielpaulus/go-ios@${GO_IOS_VERSION}; do \
-      CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath -ldflags="-s -w" "$pkg" || echo "Left out: $pkg"; \
+      retry env CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath -ldflags="-s -w" "$pkg" || echo "Left out: $pkg"; \
       go clean -cache; \
     done \
  && for b in subfinder interactsh-client; do f="$(find /go/bin -name "$b" -type f | head -n 1)"; [ -n "$f" ] && cp "$f" /tools/ || true; done \
@@ -42,12 +46,13 @@ RUN for pkg in \
 # Opengrep is not written in Go: its release binary is downloaded and its signature checked with
 # cosign against Opengrep's own GitHub release workflow. If it cannot be verified, it is left out
 # and the Opengrep tab shows "not installed" (the image still builds).
-RUN CGO_ENABLED=0 go install github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_VERSION} \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    (retry env CGO_ENABLED=0 go install github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_VERSION} || echo "cosign could not be built: Opengrep will be left out") \
  && go clean -cache -modcache \
  && case "$TARGETARCH" in amd64) dist=opengrep_manylinux_x86 ;; arm64) dist=opengrep_manylinux_aarch64 ;; *) dist="" ;; esac \
  && url="https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/$dist" \
  && if [ -n "$dist" ] \
-      && curl -fsSL -o /tmp/opengrep "$url" && curl -fsSL -o /tmp/opengrep.cert "$url.cert" && curl -fsSL -o /tmp/opengrep.sig "$url.sig" \
+      && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 -o /tmp/opengrep "$url" && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 -o /tmp/opengrep.cert "$url.cert" && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 -o /tmp/opengrep.sig "$url.sig" \
       && /go/bin/cosign verify-blob --cert /tmp/opengrep.cert --signature /tmp/opengrep.sig \
            --certificate-identity-regexp "https://github.com/opengrep/opengrep.+" \
            --certificate-oidc-issuer https://token.actions.githubusercontent.com /tmp/opengrep; then \
@@ -61,7 +66,7 @@ RUN CGO_ENABLED=0 go install github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_V
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS jmeter
 ARG JMETER_VERSION=5.6.3 \
     JMETER_SHA512=5978a1a35edb5a7d428e270564ff49d2b1b257a65e17a759d259a9283fc17093e522fe46f474a043864aea6910683486340706d745fcdf3db1505fd71e689083
-RUN curl -fsSL --retry 3 --retry-delay 5 -o /tmp/jmeter.tgz "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz" \
+RUN curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 -o /tmp/jmeter.tgz "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz" \
  && echo "${JMETER_SHA512}  /tmp/jmeter.tgz" | sha512sum -c - \
  && tar -xzf /tmp/jmeter.tgz -C /opt \
  && mv "/opt/apache-jmeter-${JMETER_VERSION}" /opt/jmeter \
@@ -71,6 +76,9 @@ RUN curl -fsSL --retry 3 --retry-delay 5 -o /tmp/jmeter.tgz "https://archive.apa
 # (the cross-browser lab opens pages in all three).
 FROM mcr.microsoft.com/playwright:v1.63.0-noble AS build
 WORKDIR /app
+# Survive a slow or flaky connection: npm waits longer and retries a dropped download instead of
+# failing the whole build (a slow link otherwise times out mid-package). Pins are unchanged.
+ENV npm_config_fetch_timeout=300000 npm_config_fetch_retries=5 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=300000
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
@@ -78,6 +86,11 @@ RUN npm run build && npm prune --omit=dev
 
 FROM mcr.microsoft.com/playwright:v1.63.0-noble
 ARG SCHEMATHESIS_VERSION=4.32.7 NEWMAN_VERSION=6.2.3 APPIUM_VERSION=3.9.1 UIAUTOMATOR2_VERSION=8.7.3
+# Survive a slow or flaky connection (a ~13 kB/s link blew pip's 15s read timeout mid-wheel). pip and
+# npm now wait far longer and retry a stalled download instead of aborting the build. These are read
+# by every pip/npm step below, so the heavy, optional tools retry rather than fail. Pins are unchanged.
+ENV PIP_DEFAULT_TIMEOUT=300 PIP_RETRIES=10 \
+    npm_config_fetch_timeout=300000 npm_config_fetch_retries=5 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=300000
 # git clones repositories for the source code engine. Java runs the W3C HTML checker, and
 # testssl.sh (from Ubuntu's own packages) checks HTTPS setups. Lighthouse comes with npm.
 # adb, aapt, apksigner and zipalign (Ubuntu's own packages) let Appium install and drive apps on
@@ -101,7 +114,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends yara clamav cla
 # veraPDF (PDF/UA checks for the PDF accessibility tool), installed with its own unattended installer.
 # Optional: if the download fails it is left out and the tab says so.
 RUN mkdir -p /tmp/vera && cd /tmp/vera \
- && if curl -fsSL --retry 3 -o vera.zip https://software.verapdf.org/releases/verapdf-installer.zip \
+ && if curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 -o vera.zip https://software.verapdf.org/releases/verapdf-installer.zip \
       && python3 -c "import zipfile;zipfile.ZipFile('vera.zip').extractall('.')" \
       && printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<AutomatedInstallation langpack="eng">\n<com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>\n<com.izforge.izpack.panels.target.TargetPanel id="install_dir"><installpath>/opt/verapdf</installpath></com.izforge.izpack.panels.target.TargetPanel>\n<com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select"><pack index="0" name="veraPDF GUI" selected="true"/><pack index="1" name="veraPDF Batch files" selected="true"/><pack index="2" name="veraPDF Validation model" selected="false"/><pack index="3" name="veraPDF Documentation" selected="false"/><pack index="4" name="veraPDF Sample Plugins" selected="false"/></com.izforge.izpack.panels.packs.PacksPanel>\n<com.izforge.izpack.panels.install.InstallPanel id="install"/>\n<com.izforge.izpack.panels.finish.FinishPanel id="finish"/>\n</AutomatedInstallation>\n' > auto.xml \
       && java -jar verapdf-*/verapdf-izpack-installer-*.jar auto.xml >/dev/null; then \
@@ -110,11 +123,16 @@ RUN mkdir -p /tmp/vera && cd /tmp/vera \
  && rm -rf /tmp/vera
 # Schemathesis (Python) and Newman (Node) each live in their own folder, away from the app's own
 # packages: Newman brings old dependencies of its own, which never load into the app.
-RUN python3 -m venv /opt/schemathesis \
- && /opt/schemathesis/bin/pip install --no-cache-dir "schemathesis==${SCHEMATHESIS_VERSION}" \
- && ln -s /opt/schemathesis/bin/st /usr/local/bin/st \
- && npm install -g --prefix /opt/newman --ignore-scripts --no-audit --no-fund "newman@${NEWMAN_VERSION}" \
- && ln -s /opt/newman/bin/newman /usr/local/bin/newman
+# Best-effort like every other optional tool: a failed/slow download leaves the tool out and its tab
+# shows "not installed" (ready() reports it) rather than aborting the whole image build.
+RUN (python3 -m venv /opt/schemathesis \
+      && /opt/schemathesis/bin/pip install --no-cache-dir "schemathesis==${SCHEMATHESIS_VERSION}" \
+      && ln -s /opt/schemathesis/bin/st /usr/local/bin/st \
+      || echo "Schemathesis not installed: the API property/fuzz tab shows not installed") \
+ && (npm install -g --prefix /opt/newman --ignore-scripts --no-audit --no-fund "newman@${NEWMAN_VERSION}" \
+      && ln -s /opt/newman/bin/newman /usr/local/bin/newman \
+      || echo "Newman not installed: the Postman-collection tab shows not installed") \
+ && npm cache clean --force || true
 # Frida (mobile runtime security on a test phone) in its own folder. garak (NVIDIA's open-source LLM
 # scanner, for the chatbot red-team tab) is large (it brings PyTorch), so it is added only when the
 # image is built with --build-arg WITH_GARAK=1; GLV's own probes run either way.
@@ -127,7 +145,7 @@ RUN python3 -m venv /opt/frida \
 # installed. Syft: fuller SBOMs. Prowler: cloud account posture (read-only). Prism: richer API mocks.
 # GLV's own lockfile reader, CycloneDX output and Node mock server work without any of them.
 ARG SYFT_VERSION=1.18.1 PROWLER_VERSION=5.14.0 PRISM_VERSION=5.14.2
-RUN (curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}" || echo "Syft was not installed: the SBOM tool uses GLV's own reader") \
+RUN (curl -sSfL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}" || echo "Syft was not installed: the SBOM tool uses GLV's own reader") \
  && (python3 -m venv /opt/prowler && /opt/prowler/bin/pip install --no-cache-dir "prowler==${PROWLER_VERSION}" && ln -s /opt/prowler/bin/prowler /usr/local/bin/prowler || echo "Prowler was not installed: the cloud posture tab shows not installed") \
  && (npm install -g --prefix /opt/prism --no-audit --no-fund "@stoplight/prism-cli@${PRISM_VERSION}" && ln -s /opt/prism/bin/prism /usr/local/bin/prism || echo "Prism was not installed: API mocks use GLV's own mock server") \
  && npm cache clean --force || true
@@ -154,10 +172,11 @@ RUN if [ "${WITH_WAVE4_SPEECH}" = "1" ]; then \
 # Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
 # when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
 ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home
-RUN npm install -g --prefix /opt/appium --no-audit --no-fund "appium@${APPIUM_VERSION}" \
- && ln -s /opt/appium/bin/appium /usr/local/bin/appium \
- && appium driver install --source=npm "appium-uiautomator2-driver@${UIAUTOMATOR2_VERSION}" \
- && npm cache clean --force
+RUN (npm install -g --prefix /opt/appium --no-audit --no-fund "appium@${APPIUM_VERSION}" \
+      && ln -s /opt/appium/bin/appium /usr/local/bin/appium \
+      && appium driver install --source=npm "appium-uiautomator2-driver@${UIAUTOMATOR2_VERSION}" \
+      || echo "Appium not installed: the Android-emulator profile reports it needs Appium") \
+ && npm cache clean --force || true
 WORKDIR /app
 ENV NODE_ENV=production PORT=4000 DATA_DIR=/data
 COPY --from=build /app/package.json ./
