@@ -143,7 +143,15 @@ async function documentFindings({ browser, linkSources, origin, log, site }: Sit
     const ext = new URL(url).pathname.match(DOC_LINK)![1].toLowerCase();
     let bytes: Buffer;
     try {
-      const res = await browser.request.get(url, { timeout: 60_000, maxRedirects: 3 });
+      // A document that is briefly overloaded (429/503) or has a transient 5xx would otherwise be
+      // skipped silently — a false pass, and a source of flaky results when the server warms up.
+      // Retry those a few times with a short backoff, as a real accessibility tool would.
+      let res = await browser.request.get(url, { timeout: 60_000, maxRedirects: 3 });
+      for (let attempt = 0; attempt < 3 && (res.status() === 429 || res.status() >= 500); attempt++) {
+        site.signal?.throwIfAborted();
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        res = await browser.request.get(url, { timeout: 60_000, maxRedirects: 3 });
+      }
       if (res.status() >= 400 || Number(res.headers()["content-length"] ?? 0) > MAX_BYTES) continue;
       bytes = await res.body();
     } catch {
