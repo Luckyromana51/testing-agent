@@ -125,11 +125,12 @@ RUN mkdir -p /tmp/vera && cd /tmp/vera \
 # packages: Newman brings old dependencies of its own, which never load into the app.
 # Best-effort like every other optional tool: a failed/slow download leaves the tool out and its tab
 # shows "not installed" (ready() reports it) rather than aborting the whole image build.
-RUN (python3 -m venv /opt/schemathesis \
-      && /opt/schemathesis/bin/pip install --no-cache-dir "schemathesis==${SCHEMATHESIS_VERSION}" \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    (python3 -m venv /opt/schemathesis \
+      && retry /opt/schemathesis/bin/pip install --no-cache-dir "schemathesis==${SCHEMATHESIS_VERSION}" \
       && ln -s /opt/schemathesis/bin/st /usr/local/bin/st \
       || echo "Schemathesis not installed: the API property/fuzz tab shows not installed") \
- && (npm install -g --prefix /opt/newman --ignore-scripts --no-audit --no-fund "newman@${NEWMAN_VERSION}" \
+ && (retry npm install -g --prefix /opt/newman --ignore-scripts --no-audit --no-fund "newman@${NEWMAN_VERSION}" \
       && ln -s /opt/newman/bin/newman /usr/local/bin/newman \
       || echo "Newman not installed: the Postman-collection tab shows not installed") \
  && npm cache clean --force || true
@@ -137,25 +138,28 @@ RUN (python3 -m venv /opt/schemathesis \
 # scanner, for the chatbot red-team tab) is large (it brings PyTorch), so it is added only when the
 # image is built with --build-arg WITH_GARAK=1; GLV's own probes run either way.
 ARG FRIDA_TOOLS_VERSION=14.4.5 WITH_GARAK=0 GARAK_VERSION=0.13.1
-RUN python3 -m venv /opt/frida \
- && (/opt/frida/bin/pip install --no-cache-dir "frida-tools==${FRIDA_TOOLS_VERSION}" && ln -s /opt/frida/bin/frida /usr/local/bin/frida || echo "Frida was not installed") \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    python3 -m venv /opt/frida \
+ && (retry /opt/frida/bin/pip install --no-cache-dir "frida-tools==${FRIDA_TOOLS_VERSION}" && ln -s /opt/frida/bin/frida /usr/local/bin/frida || echo "Frida was not installed") \
  && if [ "$WITH_GARAK" = "1" ]; then python3 -m venv /opt/garak \
-      && (/opt/garak/bin/pip install --no-cache-dir "garak==${GARAK_VERSION}" && ln -s /opt/garak/bin/garak /usr/local/bin/garak || echo "garak was not installed"); fi
+      && (retry /opt/garak/bin/pip install --no-cache-dir "garak==${GARAK_VERSION}" && ln -s /opt/garak/bin/garak /usr/local/bin/garak || echo "garak was not installed"); fi
 # Wave 2 (2026 gap report), all optional and best-effort — each tool works from its tab only when it
 # installed. Syft: fuller SBOMs. Prowler: cloud account posture (read-only). Prism: richer API mocks.
 # GLV's own lockfile reader, CycloneDX output and Node mock server work without any of them.
 ARG SYFT_VERSION=1.18.1 PROWLER_VERSION=5.14.0 PRISM_VERSION=5.14.2
-RUN (curl -sSfL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}" || echo "Syft was not installed: the SBOM tool uses GLV's own reader") \
- && (python3 -m venv /opt/prowler && /opt/prowler/bin/pip install --no-cache-dir "prowler==${PROWLER_VERSION}" && ln -s /opt/prowler/bin/prowler /usr/local/bin/prowler || echo "Prowler was not installed: the cloud posture tab shows not installed") \
- && (npm install -g --prefix /opt/prism --no-audit --no-fund "@stoplight/prism-cli@${PRISM_VERSION}" && ln -s /opt/prism/bin/prism /usr/local/bin/prism || echo "Prism was not installed: API mocks use GLV's own mock server") \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    (curl -sSfL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}" || echo "Syft was not installed: the SBOM tool uses GLV's own reader") \
+ && (python3 -m venv /opt/prowler && retry /opt/prowler/bin/pip install --no-cache-dir "prowler==${PROWLER_VERSION}" && ln -s /opt/prowler/bin/prowler /usr/local/bin/prowler || echo "Prowler was not installed: the cloud posture tab shows not installed") \
+ && (retry npm install -g --prefix /opt/prism --no-audit --no-fund "@stoplight/prism-cli@${PRISM_VERSION}" && ln -s /opt/prism/bin/prism /usr/local/bin/prism || echo "Prism was not installed: API mocks use GLV's own mock server") \
  && npm cache clean --force || true
 # Wave 3 (2026 gap report, P3), all optional and best-effort. ModelScan: deeper model-file scan.
 # Checkov: deeper IaC scan. GLV's own model/pickle and IaC rules work without either. kube-bench,
 # Kubescape, Dockle and GoAccess run on the CLIENT'S server over SSH when installed there, not here.
 ARG MODELSCAN_VERSION=0.8.5 CHECKOV_VERSION=3.2.344 WITH_WAVE3_PY=1
-RUN if [ "${WITH_WAVE3_PY}" = "1" ]; then \
-      (python3 -m venv /opt/modelscan && /opt/modelscan/bin/pip install --no-cache-dir "modelscan==${MODELSCAN_VERSION}" && ln -s /opt/modelscan/bin/modelscan /usr/local/bin/modelscan || echo "ModelScan not installed: the model-security tool uses GLV's own pickle-format check"); \
-      (python3 -m venv /opt/checkov && /opt/checkov/bin/pip install --no-cache-dir "checkov==${CHECKOV_VERSION}" && ln -s /opt/checkov/bin/checkov /usr/local/bin/checkov || echo "Checkov not installed: the IaC tool uses GLV's own rules"); \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    if [ "${WITH_WAVE3_PY}" = "1" ]; then \
+      (python3 -m venv /opt/modelscan && retry /opt/modelscan/bin/pip install --no-cache-dir "modelscan==${MODELSCAN_VERSION}" && ln -s /opt/modelscan/bin/modelscan /usr/local/bin/modelscan || echo "ModelScan not installed: the model-security tool uses GLV's own pickle-format check"); \
+      (python3 -m venv /opt/checkov && retry /opt/checkov/bin/pip install --no-cache-dir "checkov==${CHECKOV_VERSION}" && ln -s /opt/checkov/bin/checkov /usr/local/bin/checkov || echo "Checkov not installed: the IaC tool uses GLV's own rules"); \
     else echo "Wave-3 Python tools skipped (WITH_WAVE3_PY=0)"; fi || true
 # Wave 4 (previously-deferred tail). The only in-image dependency is open-source speech for the
 # voice-bot tool (Whisper STT + Piper TTS). It is OPT-IN and off by default because Whisper pulls
@@ -164,17 +168,19 @@ RUN if [ "${WITH_WAVE3_PY}" = "1" ]; then \
 # in wave 4 is external and free: SearXNG/Ollama, a Windows eval VM + msedgedriver, and the client's
 # own FCM/APNs, Google, tracker and LLM keys — nothing to install here.
 ARG WHISPER_VERSION=20240930 WITH_WAVE4_SPEECH=0
-RUN if [ "${WITH_WAVE4_SPEECH}" = "1" ]; then \
-      (python3 -m venv /opt/whisper && /opt/whisper/bin/pip install --no-cache-dir "openai-whisper==${WHISPER_VERSION}" && ln -s /opt/whisper/bin/whisper /usr/local/bin/whisper || echo "Whisper not installed: the voice-bot tool reports it needs speech-to-text"); \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    if [ "${WITH_WAVE4_SPEECH}" = "1" ]; then \
+      (python3 -m venv /opt/whisper && retry /opt/whisper/bin/pip install --no-cache-dir "openai-whisper==${WHISPER_VERSION}" && ln -s /opt/whisper/bin/whisper /usr/local/bin/whisper || echo "Whisper not installed: the voice-bot tool reports it needs speech-to-text"); \
       (apt-get update && apt-get install -y --no-install-recommends piper || echo "Piper not installed via apt: install a Piper release binary and set PIPER_PATH for the voice-bot tool"); \
       rm -rf /var/lib/apt/lists/*; \
     else echo "Wave-4 speech skipped (WITH_WAVE4_SPEECH=0): the voice-bot tool reports it needs Whisper/Piper until installed"; fi || true
 # Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
 # when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
 ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home
-RUN (npm install -g --prefix /opt/appium --no-audit --no-fund "appium@${APPIUM_VERSION}" \
+RUN retry() { n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 4 ] && return 1; echo "retry $n: $*"; sleep 10; done; }; \
+    (retry npm install -g --prefix /opt/appium --no-audit --no-fund "appium@${APPIUM_VERSION}" \
       && ln -s /opt/appium/bin/appium /usr/local/bin/appium \
-      && appium driver install --source=npm "appium-uiautomator2-driver@${UIAUTOMATOR2_VERSION}" \
+      && retry appium driver install --source=npm "appium-uiautomator2-driver@${UIAUTOMATOR2_VERSION}" \
       || echo "Appium not installed: the Android-emulator profile reports it needs Appium") \
  && npm cache clean --force || true
 WORKDIR /app
