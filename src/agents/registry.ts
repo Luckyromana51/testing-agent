@@ -54,6 +54,10 @@ import { dpdpAgent, dpdpFormsAgent, gigwAgent } from "./web/india.js";
 import { documentsAgent } from "./web/documents.js";
 import { oauthAgent } from "./web/oauth.js";
 import { exifAgent } from "./web/exif.js";
+import { hreflangAgent, localSeoAgent, socialPreviewAgent } from "./web/seo-more.js";
+import { jsRenderAgent } from "./web/js-render.js";
+import { aaaAgent, colourVisionAgent } from "./web/a11y-more.js";
+import { visualLayoutAgent } from "./web/visual-layout.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -138,6 +142,15 @@ export const WEB_AGENTS: WebAgent[] = [
   documentsAgent,
   oauthAgent,
   exifAgent,
+  // Wave 2 of the gap report: local SEO, hreflang, social previews, JS-render diff, colour-blind
+  // and low-vision, WCAG AAA/cognitive, and layout breaks on phones.
+  localSeoAgent,
+  hreflangAgent,
+  socialPreviewAgent,
+  jsRenderAgent,
+  colourVisionAgent,
+  aaaAgent,
+  visualLayoutAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
   ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.

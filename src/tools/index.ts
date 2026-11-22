@@ -49,6 +49,7 @@ import { apiMockTool } from "./api-mock.js";
 import { paymentsTool } from "./payments.js";
 import { emailRenderTool } from "./email-render.js";
 import { exportCodeTool } from "./export-code.js";
+import { vpatTool } from "./vpat.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -70,6 +71,7 @@ export const TOOLS: Tool[] = [
   emailRenderTool,
   pairwiseTool,
   exportCodeTool,
+  vpatTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
