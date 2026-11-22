@@ -51,6 +51,11 @@ import { emailRenderTool } from "./email-render.js";
 import { exportCodeTool } from "./export-code.js";
 import { vpatTool } from "./vpat.js";
 import { regionSpeedTool } from "./region-speed.js";
+import { inAppBrowserTool } from "./inapp-browser.js";
+import { appPerfTool } from "./app-perf.js";
+import { deeplinkRunTool } from "./deeplink-run.js";
+import { maestroTool } from "./maestro.js";
+import { talkbackTool } from "./talkback.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -74,6 +79,7 @@ export const TOOLS: Tool[] = [
   exportCodeTool,
   vpatTool,
   regionSpeedTool,
+  inAppBrowserTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
@@ -112,6 +118,10 @@ export const TOOLS: Tool[] = [
   appiumTool,
   mobsfTool,
   mobileRuntimeTool,
+  appPerfTool,
+  deeplinkRunTool,
+  maestroTool,
+  talkbackTool,
   // Client connections (Connections tab): the client's server over SSH, their Hostinger account, their MCP server.
   ...CONNECTION_TOOLS,
 ];
