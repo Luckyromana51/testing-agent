@@ -421,6 +421,45 @@ t("In-app and India browsers", "WhatsApp/Instagram/Facebook webviews, Samsung, O
 t("Consent proof (GDPR/DPDP)", "Trackers before consent, a real Reject button, Reject actually rejects.", ["website", "app"], { agents: ["privacy.consent-proof"], rules: ["privacy:tracker-before-consent", "privacy:reject-not-honoured", "privacy:no-reject-button"] });
 t("PCI DSS 4.0 script controls", "Script inventory and integrity on payment pages (6.4.3, 11.6.1).", ["website"], { agents: ["sec.pci-scripts"], rules: ["pci:*"] });
 
+s("2026 gap report (wave 3)");
+t("Model file security", "Unsafe pickle model files (.pkl/.pt) that run code when loaded.", ["code"], { tools: ["model-security"], rules: ["model:*"] });
+t("Infrastructure-as-code checks", "Terraform/CloudFormation/Kubernetes/Dockerfile safety rules.", ["code"], { tools: ["iac"], rules: ["iac:*"] });
+t("Code fuzzing readiness", "Property-based/fuzz testing (fast-check, Hypothesis, Jazzer).", ["code"], { tools: ["code-fuzz"], rules: ["fuzz:*"] });
+t("Browser extension checks", "Over-broad permissions and content-script risks in a manifest.", ["code"], { tools: ["browser-ext"], rules: ["ext:*"] });
+t("Desktop app security", "Electron/Tauri webview settings (node integration, context isolation, CSP).", ["code"], { tools: ["desktop-app"], rules: ["desktop:*"] });
+t("Print & PDF export layout", "Invoices/tickets print without being cut off; a print stylesheet exists.", ["website", "app"], { tools: ["print-layout"], rules: ["print:*"] });
+t("Video, streaming & WebRTC quality", "Start time, buffering, media errors, WebRTC calls.", ["website", "app"], { tools: ["webrtc"], rules: ["webrtc:*"] });
+t("Legal page change watch", "A fingerprint of terms/privacy pages to spot later changes.", ["website", "app"], { tools: ["page-watch"], rules: ["watch:*"] });
+t("Carbon / sustainability", "Grams of CO2 per page view, from page weight (ESG reports).", ["website", "app"], { agents: ["perf.carbon"], rules: ["carbon:*"] });
+t("Image, video & Discover SEO", "VideoObject schema, a large Discover image, image dimensions.", ["website"], { agents: ["seo.image-video"], rules: ["videoseo:*", "news:*", "imgseo:*"] });
+t("Video & audio accessibility", "Captions on video, transcripts for audio (WCAG 1.2).", ["website", "app"], { agents: ["a11y.media"], rules: ["mediaa11y:*"] });
+t("Second accessibility engine", "A second rule set beside axe (positive tabindex, duplicate ids, moving text).", ["website", "app"], { agents: ["a11y.engine2"], rules: ["a11y2:*"] });
+t("HIPAA / health data leakage", "PHI in URLs and sent to third-party trackers.", ["website", "app"], { agents: ["sec.hipaa"], rules: ["hipaa:*"] });
+t("Data reconciliation", "A total matches across two systems (CRM vs accounting).", ["api", "app"], { tools: ["reconciliation"], rules: ["recon:*"] });
+t("Data quality & ETL", "Nulls, duplicates and out-of-range values in a data export.", ["api", "code"], { tools: ["data-quality"], rules: ["dq:*"] });
+t("Message queues & events", "An AsyncAPI spec is complete and valid (Kafka/RabbitMQ/SQS).", ["api", "code"], { tools: ["queues"], rules: ["queue:*"] });
+t("Distributed tracing", "A request's trace id propagates across microservices (OpenTelemetry).", ["api"], { tools: ["tracing"], rules: ["trace:*"] });
+t("Kubernetes & Docker host", "Privileged pods, rootful Docker, host network (kube-bench/Dockle).", ["website", "app", "api", "code"], { tools: ["k8s"], rules: ["k8s:*"] });
+t("Log-file SEO", "What Googlebot really crawls, from the server's access logs.", ["website", "app"], { tools: ["log-seo"], rules: ["logseo:*"] });
+t("Backup & DR drill", "Backups are recent and a restore is actually tested.", ["website", "app", "api"], { tools: ["dr-drill"], rules: ["dr:*"] });
+t("Database code tests", "Stored procedures and triggers that have no tests (pgTAP/tSQLt).", ["api", "code"], { tools: ["db-code"], rules: ["dbcode:*"] });
+t("AI call cost & speed", "Tokens, latency and timeouts of an AI endpoint (runaway-bill guard).", ["website", "app", "api"], { tools: ["ai-cost"], rules: ["aicost:*"] });
+t("SMS & WhatsApp messages", "Length, opt-out wording, India DLT ids, variable placeholders.", ["website", "app", "api"], { tools: ["messaging"], rules: ["msg:*"] });
+t("Post-quantum readiness", "TLS ML-KEM hybrid key exchange, and weak-crypto in code.", ["website", "app", "api", "code"], { tools: ["pqc"], rules: ["pqc:*"] });
+t("SOC 2 / ISO 27001 evidence", "Maps GLV's scans to audit controls as an evidence appendix.", ["website", "app", "api", "code"], { tools: ["soc2"], rules: ["soc2:*"] });
+t("Backlink index (Common Crawl)", "Who links to the site, from Common Crawl's open web graph.", ["website"], { tools: ["backlinks"], rules: ["backlink:*"] });
+t("Store listing checks", "Data-safety form / privacy labels match the app; size limits.", ["mobile"], { tools: ["store-listing"], rules: ["store:*"] });
+t("In-app purchases & subscriptions", "Billing library, server-side receipt validation, buy/restore/cancel/refund.", ["mobile"], { tools: ["iap"], rules: ["iap:*"] });
+t("IAST (interactive app testing)", "An agent inside the app watches data flow during tests.", ALL, { manual: "Deferred: OpenTelemetry-based taint tracking is research-grade; revisit when mature." });
+t("Keyword & rank tracking", "Where the client ranks for a keyword on Google.", ["website"], { manual: "Cannot fully copy in-house: needs Google results (scraping breaks their terms). Connect the client's own Search Console instead." });
+t("AI answer visibility tracking", "Whether ChatGPT/Gemini/Perplexity mention the client.", ["website"], { manual: "Needs those AI services' API keys, so outside the in-house rule unless the client provides keys. On-page AI readiness is covered by GEO." });
+t("Windows-only browsers & fonts", "Edge on Windows and Windows font rendering.", ["website", "app"], { manual: "Needs a Windows VM on GLV hardware with a Mac-helper-style agent (infrastructure, not code)." });
+t("Wear, watch, TV & Auto", "Wear OS, watchOS, Android TV, Android Auto.", ["mobile"], { manual: "Deferred: needs the matching emulators + Appium; rare for GLV today." });
+t("Smart TV, kiosk, POS, IoT, games", "Other device classes.", ["mobile"], { manual: "Deferred: niche for GLV (Tizen/webOS emulators, MQTT brokers); games are out of scope." });
+t("Push notifications end to end", "Send a test push and confirm it opens the right screen.", ["mobile"], { manual: "Needs the client's FCM/APNs keys and a live device; run as a manual send with the client's keys." });
+t("Jira / Linear export", "Push findings into the client's tracker.", RUN, { manual: "On the later list: needs the client's tracker token; export findings as CSV meanwhile." });
+t("Test management & traceability", "Requirements → test cases → results, release sign-off.", ALL, { manual: "Covered by the manual checklists and the master-control pass/fail gate; extend per enterprise client." });
+
 export const HANDBOOK: HandbookType[] = T;
 
 /** Which handbook modules a product type belongs to. */
