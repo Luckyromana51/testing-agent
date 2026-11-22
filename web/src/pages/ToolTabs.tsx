@@ -301,14 +301,26 @@ export function ToolTabs({
                         {o.label}
                         {o.required ? " *" : ""}
                       </span>
-                      <input
-                        className="input"
-                        value={draft[tool.id]?.options[o.id] ?? o.default}
-                        placeholder={o.placeholder}
-                        maxLength={o.maxLength ?? 500}
-                        disabled={!tool.ready}
-                        onChange={(e) => set(tool.id, { options: { ...draft[tool.id].options, [o.id]: e.target.value } })}
-                      />
+                      {o.multiline ? (
+                        <textarea
+                          className="input tool-textarea"
+                          rows={4}
+                          value={draft[tool.id]?.options[o.id] ?? o.default}
+                          placeholder={o.placeholder}
+                          maxLength={o.maxLength ?? 500}
+                          disabled={!tool.ready}
+                          onChange={(e) => set(tool.id, { options: { ...draft[tool.id].options, [o.id]: e.target.value } })}
+                        />
+                      ) : (
+                        <input
+                          className="input"
+                          value={draft[tool.id]?.options[o.id] ?? o.default}
+                          placeholder={o.placeholder}
+                          maxLength={o.maxLength ?? 500}
+                          disabled={!tool.ready}
+                          onChange={(e) => set(tool.id, { options: { ...draft[tool.id].options, [o.id]: e.target.value } })}
+                        />
+                      )}
                       {o.hint && <span className="muted small">{o.hint}</span>}
                     </label>
                   ) : o.kind === "toggles" ? (

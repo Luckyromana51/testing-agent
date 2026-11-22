@@ -76,7 +76,7 @@ export const rankTrackingTool: Tool = {
   homepage: "https://github.com/searxng/searxng",
   signedIn: "public",
   options: [
-    { id: "keywords", label: "Keywords (one per line)", kind: "text", required: true, maxLength: 2000, placeholder: "website testing company\nAI testing agent India", hint: "One keyword per line.", choices: [], default: "" },
+    { id: "keywords", label: "Keywords (one per line)", kind: "text", required: true, multiline: true, maxLength: 2000, placeholder: "website testing company\nAI testing agent India", hint: "One keyword per line.", choices: [], default: "" },
     { id: "domain", label: "Domain to find", kind: "text", required: true, placeholder: "glvinfotechsolutions.com", choices: [], default: "" },
     { id: "searxng", label: "SearXNG endpoint (free, self-hosted)", kind: "text", pattern: "^https?://.+", placeholder: "https://searxng.glv.internal", hint: "Leave blank to use a Google Custom Search key instead.", choices: [], default: "" },
     { id: "googleKey", label: "Google Custom Search key (client's own free key)", kind: "text", placeholder: "AIza…", choices: [], default: "" },
@@ -178,7 +178,7 @@ export const aiVisibilityTool: Tool = {
     { id: "apiKey", label: "API key (only if the endpoint needs one — client's own)", kind: "text", placeholder: "sk-… (optional)", choices: [], default: "" },
     { id: "brand", label: "Brand name", kind: "text", required: true, placeholder: "GLV Infotech", choices: [], default: "" },
     { id: "domain", label: "Domain", kind: "text", required: true, placeholder: "glvinfotechsolutions.com", choices: [], default: "" },
-    { id: "prompts", label: "Questions (one per line)", kind: "text", required: true, maxLength: 3000, placeholder: "Best AI software testing companies in India?\nWho offers in-house security testing for SaaS?", hint: "Buyer-style questions a prospect might ask an AI.", choices: [], default: "" },
+    { id: "prompts", label: "Questions (one per line)", kind: "text", required: true, multiline: true, maxLength: 3000, placeholder: "Best AI software testing companies in India?\nWho offers in-house security testing for SaaS?", hint: "Buyer-style questions a prospect might ask an AI.", choices: [], default: "" },
   ],
   async ready() {
     return null;

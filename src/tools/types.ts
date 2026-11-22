@@ -21,6 +21,8 @@ export interface ToolOption {
   placeholder?: string;
   /** For text: the most characters it takes (500 when not set). */
   maxLength?: number;
+  /** For text: a multi-line box (one value per line), e.g. keywords or scenarios. Newlines are kept. */
+  multiline?: boolean;
   /** For a file: the file types the upload takes, e.g. ".json". */
   accept?: string;
   /** For a file: the tool cannot run without it. */

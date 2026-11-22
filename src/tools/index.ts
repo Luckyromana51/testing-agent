@@ -245,7 +245,8 @@ export function cleanChoices(product: ProductType, input: unknown, permissions?:
       if (opt.kind === "text" && opt.required && !String(v ?? "").trim()) throw new Error(`${tool.name}: fill in ${opt.label}, or turn ${tool.name} off.`);
       if (v === undefined) continue;
       if (opt.kind === "text") {
-        const text = String(v).replace(/[\u0000-\u001f]/g, " ").trim();
+        // Keep newlines and tabs (a multi-line option is one-value-per-line); strip other control chars. Normalise CRLF.
+        const text = String(v).replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ").trim();
         if (text.length > (opt.maxLength ?? 500)) throw new Error(`${tool.name}: ${opt.label} is too long.`);
         if (text && opt.pattern && !new RegExp(opt.pattern).test(text)) throw new Error(`${tool.name}: ${opt.label} does not look right${opt.placeholder ? ` (like ${opt.placeholder})` : ""}.`);
         if (text) options[opt.id] = text;

@@ -108,3 +108,12 @@ describe("wave 4: every rule has a written fix", () => {
     }
   });
 });
+
+describe("wave 4: multi-line text options", () => {
+  it("keeps newlines (one value per line) but strips other control chars", async () => {
+    const { cleanChoices } = await import("../src/tools/index.ts");
+    const picks = cleanChoices("website", [{ id: "rank-tracking", options: { keywords: "first kw\r\nsecond\u0007kw\nthird", domain: "glv.test" } }], []);
+    assert.equal(picks.length, 1);
+    assert.equal(picks[0].options.keywords, "first kw\nsecond kw\nthird");
+  });
+});

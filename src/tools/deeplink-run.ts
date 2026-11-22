@@ -41,7 +41,7 @@ export const deeplinkRunTool: Tool = {
   manual: true,
   options: [
     { id: "device", label: "Test phone", kind: "text", placeholder: "auto", choices: [], default: "auto" },
-    { id: "links", label: "Extra links to test", kind: "text", maxLength: 2000, placeholder: "myapp://pay?order=1\nhttps://app.example.com/reset", hint: "One per line. The app's own App Links are included automatically.", choices: [], default: "" },
+    { id: "links", label: "Extra links to test", kind: "text", multiline: true, maxLength: 2000, placeholder: "myapp://pay?order=1\nhttps://app.example.com/reset", hint: "One per line. The app's own App Links are included automatically.", choices: [], default: "" },
   ],
   async ready() {
     return null;

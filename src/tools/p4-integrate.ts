@@ -275,7 +275,7 @@ export const voiceBotTool: Tool = {
   signedIn: "uses-login",
   options: [
     { id: "endpoint", label: "Voice endpoint (accepts the utterance, returns audio/text)", kind: "text", required: true, pattern: "^https?://.+", placeholder: "https://bot.client.com/voice", choices: [], default: "" },
-    { id: "scenarios", label: "Scenarios", kind: "text", required: true, maxLength: 3000, placeholder: "what are your hours => open | 9 | 5\nbook an appointment => booked | confirmed", hint: "One per line: what to say => expected word | another expected word.", choices: [], default: "" },
+    { id: "scenarios", label: "Scenarios", kind: "text", required: true, multiline: true, maxLength: 3000, placeholder: "what are your hours => open | 9 | 5\nbook an appointment => booked | confirmed", hint: "One per line: what to say => expected word | another expected word.", choices: [], default: "" },
   ],
   async ready() {
     // The text path works without any binaries; the audio path uses Whisper/Piper when present.
