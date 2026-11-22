@@ -41,6 +41,14 @@ import { raceTool } from "./race.js";
 import { cloudTool } from "./cloud.js";
 import { chaosTool } from "./chaos.js";
 import { mutationTool } from "./mutation.js";
+import { sbomTool } from "./sbom.js";
+import { unitTestsTool } from "./unit-tests.js";
+import { pairwiseTool } from "./pairwise.js";
+import { openapiDiffTool } from "./openapi-diff.js";
+import { apiMockTool } from "./api-mock.js";
+import { paymentsTool } from "./payments.js";
+import { emailRenderTool } from "./email-render.js";
+import { exportCodeTool } from "./export-code.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -59,6 +67,9 @@ export const TOOLS: Tool[] = [
   verapdfTool,
   browserMatrixTool,
   aiEvalTool,
+  emailRenderTool,
+  pairwiseTool,
+  exportCodeTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
@@ -77,6 +88,9 @@ export const TOOLS: Tool[] = [
   schemathesisTool,
   newmanTool,
   replayTool,
+  openapiDiffTool,
+  apiMockTool,
+  paymentsTool,
   // Source code
   gitleaksTool,
   opengrepTool,
@@ -84,6 +98,8 @@ export const TOOLS: Tool[] = [
   trivyTool,
   mutationTool,
   cloudTool,
+  sbomTool,
+  unitTestsTool,
   // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
   safariTool,
   voiceOverTool,
