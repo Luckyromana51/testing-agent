@@ -44,19 +44,11 @@ async function visualLayoutFindings(ctx: PageContext): Promise<Finding[]> {
   const data = (await ctx.page.evaluate(MEASURE).catch(() => null)) as { vw: number; scrollWidth: number; boxes: BoxInfo[] } | null;
   if (!data) return out;
   const breaks = layoutBreaks(data.vw, data.scrollWidth, data.boxes);
-  if (breaks.sideScroll)
-    out.push(
-      finding({
-        category: "mobile",
-        rule: "layout:phone-side-scroll",
-        severity: "medium",
-        title: `The page scrolls sideways on a phone (${breaks.sideScroll}px too wide)`,
-        detail: "At phone width something is wider than the screen, so the whole page scrolls sideways — a real layout break visitors notice. Usually a fixed-width container, a wide table or an oversized image. Use max-width: 100%, let tables scroll inside their own box, and let rows wrap.",
-        pageUrl: ctx.url,
-        evidence: `viewport ${data.vw}px, content ${data.scrollWidth}px${breaks.offCanvas.length ? `\nwidest off-screen: ${breaks.offCanvas.slice(0, 4).map((b) => `${b.tag} (${b.width}px)`).join(", ")}` : ""}`,
-      }),
-    );
-  else if (breaks.offCanvas.length >= 2)
+  // Side-scroll is already reported deterministically by the core mobile check (rule "mobile-overflow",
+  // threshold 5px on scrollWidth−clientWidth). This agent's unique value is naming the blocks pushed
+  // off-canvas, so it reports only those — no second, near-threshold side-scroll finding that would
+  // double-count the same break and flip on/off with render timing.
+  if (breaks.offCanvas.length >= 2)
     out.push(
       finding({
         category: "mobile",
@@ -74,7 +66,7 @@ async function visualLayoutFindings(ctx: PageContext): Promise<Finding[]> {
 export const visualLayoutAgent: PageAgent = {
   id: "ui.visual-layout",
   name: "Phone layout breaks",
-  description: "A layout-aware check at phone width: catches the page scrolling sideways and content pushed off the screen (real breaks), while ignoring the harmless colour and text shifts a pixel compare would flag.",
+  description: "A layout-aware check at phone width: names blocks pushed off the side of the screen (a real break), while ignoring the harmless colour and text shifts a pixel compare would flag. Sideways scrolling itself is reported by the core mobile check.",
   category: "mobile",
   engine: "web",
   products: WEB_PRODUCTS,
