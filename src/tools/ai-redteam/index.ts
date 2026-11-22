@@ -51,12 +51,12 @@ export function fillBody(template: string, prompt: string, session: string): str
   return filled;
 }
 
-interface Chat {
+export interface Chat {
   send(prompt: string): Promise<{ text: string; ms: number; rendered?: boolean }>;
   close(): Promise<void>;
 }
 
-async function apiChat(ctx: ToolContext, endpoint: string): Promise<Chat> {
+export async function apiChat(ctx: ToolContext, endpoint: string): Promise<Chat> {
   const template = ctx.options.body || '{"message":"{{prompt}}"}';
   try {
     fillBody(template, "test", "s");
@@ -89,7 +89,7 @@ async function apiChat(ctx: ToolContext, endpoint: string): Promise<Chat> {
 }
 
 /** A chat box on a web page: typed into like a person would, the new text read back. */
-async function widgetChat(ctx: ToolContext, pageUrl: string): Promise<Chat> {
+export async function widgetChat(ctx: ToolContext, pageUrl: string): Promise<Chat> {
   const browser: Browser = await chromium.launch();
   const context = await browser.newContext({ ...(ctx.cookie ? { extraHTTPHeaders: { cookie: ctx.cookie } } : {}) });
   const page: Page = await context.newPage();

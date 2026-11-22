@@ -34,6 +34,10 @@ import { aiRedTeamTool } from "./ai-redteam/index.js";
 import { browserMatrixTool } from "./browser-matrix.js";
 import { mobileRuntimeTool, mobsfTool } from "./mobile-security.js";
 import { replayTool } from "./replay.js";
+import { aiEvalTool } from "./ai-eval.js";
+import { mcpAttackTool } from "./mcp-attack.js";
+import { lookalikeTool } from "./lookalike.js";
+import { raceTool } from "./race.js";
 import { mutationTool } from "./mutation.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
@@ -49,8 +53,10 @@ export const TOOLS: Tool[] = [
   // Hacked sites, the client's other servers, and documents (2026 gap report, wave 1).
   malwareTool,
   surfaceTool,
+  lookalikeTool,
   verapdfTool,
   browserMatrixTool,
+  aiEvalTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
@@ -59,6 +65,8 @@ export const TOOLS: Tool[] = [
   attackTool,
   aiRedTeamTool,
   portsTool,
+  mcpAttackTool,
+  raceTool,
   zapActiveTool,
   k6Tool,
   jmeterTool,

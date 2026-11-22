@@ -8,6 +8,8 @@ import { commandFamily, nosqlFamily, sstiFamily } from "./inject.js";
 import { sessionFamily } from "./session.js";
 import { ssrfFamily } from "./ssrf.js";
 import { blindFamily } from "./blind.js";
+import { cachePoisonFamily, smugglingFamily } from "./desync.js";
+import { logicFamily } from "./logic.js";
 import { exposedFamily } from "./exposed.js";
 import { buildSurface } from "./surface.js";
 import type { AttackFinding, Family } from "./types.js";
@@ -24,12 +26,15 @@ export const FAMILIES: Family[] = [
   sstiFamily,
   crlfFamily,
   hostHeaderFamily,
+  cachePoisonFamily,
   corsFamily,
   ssrfFamily,
   blindFamily,
   nosqlFamily,
   accessFamily,
   commandFamily,
+  smugglingFamily,
+  logicFamily,
 ];
 
 const FAMILY_IDS = FAMILIES.map((f) => f.id);
@@ -56,6 +61,8 @@ export const attackTool: Tool = {
     "Exposed .git/.env/backups and serialized-object (deserialization) surfaces",
     "Session-token (JWT) weaknesses: unsigned, guessable secret, never expiring — read offline",
     "Blind SSRF, blind XSS and Log4Shell-style holes, proved by a call to GLV's own callback server",
+    "Web cache poisoning (on a cache-busted copy only) and HTTP request smuggling (safe timeout probes)",
+    "Store business logic: negative, fractional and huge quantities in its own cart (only when changes are allowed)",
     "Confirmed holes chained into one realistic attack path",
   ],
   products: [...WEB_PRODUCTS],

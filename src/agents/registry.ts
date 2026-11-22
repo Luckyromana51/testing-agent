@@ -52,6 +52,8 @@ import { emailDnsAgent } from "./web/email-dns.js";
 import { darkPatternsAgent, fakeTimerAgent } from "./web/dark-patterns.js";
 import { dpdpAgent, dpdpFormsAgent, gigwAgent } from "./web/india.js";
 import { documentsAgent } from "./web/documents.js";
+import { oauthAgent } from "./web/oauth.js";
+import { exifAgent } from "./web/exif.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -134,6 +136,8 @@ export const WEB_AGENTS: WebAgent[] = [
   dpdpFormsAgent,
   gigwAgent,
   documentsAgent,
+  oauthAgent,
+  exifAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
   ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
