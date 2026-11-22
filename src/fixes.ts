@@ -4,6 +4,7 @@ import { WEB_AGENT_FIXES } from "./fixes-web.js";
 import { P1_FIXES, p1PatternFix } from "./fixes-p1.js";
 import { P2_FIXES, p2PatternFix } from "./fixes-p2.js";
 import { P3_FIXES, p3PatternFix } from "./fixes-p3.js";
+import { P4_FIXES } from "./fixes-p4.js";
 import type { Finding } from "./types.js";
 
 /** How to fix an issue, written for the developer who will do it. */
@@ -856,7 +857,7 @@ function toolFix(rule: string, detail: string): Fix | undefined {
 /** The fix for a finding, or a general one built from the finding's own text. */
 export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
   if (f.rule === "ios:missing-purpose") return missingPurposeFix(f.detail);
-  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule] ?? WEB_AGENT_FIXES[f.rule] ?? MOBILE_FIXES[f.rule] ?? HANDBOOK_FIXES[f.rule] ?? P1_FIXES[f.rule] ?? p1PatternFix(f.rule) ?? P2_FIXES[f.rule] ?? p2PatternFix(f.rule) ?? P3_FIXES[f.rule] ?? p3PatternFix(f.rule);
+  const known = FIXES[f.rule] ?? ENGINE_FIXES[f.rule] ?? WEB_AGENT_FIXES[f.rule] ?? MOBILE_FIXES[f.rule] ?? HANDBOOK_FIXES[f.rule] ?? P1_FIXES[f.rule] ?? p1PatternFix(f.rule) ?? P2_FIXES[f.rule] ?? p2PatternFix(f.rule) ?? P3_FIXES[f.rule] ?? p3PatternFix(f.rule) ?? P4_FIXES[f.rule];
   if (known) return known;
   if (/^(android|ios):secret-/.test(f.rule)) return MOBILE_SECRET;
   if (/^code:secret-/.test(f.rule)) return ROTATE_SECRET;
@@ -873,4 +874,4 @@ export function fixFor(f: Pick<Finding, "rule" | "detail">): Fix {
 }
 
 /** Rules that have a written fix (used by tests to keep the list complete). */
-export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES), ...Object.keys(WEB_AGENT_FIXES), ...Object.keys(MOBILE_FIXES), ...Object.keys(HANDBOOK_FIXES), ...Object.keys(P1_FIXES), ...Object.keys(P2_FIXES), ...Object.keys(P3_FIXES)];
+export const FIX_RULES = [...Object.keys(FIXES), ...Object.keys(ENGINE_FIXES), ...Object.keys(WEB_AGENT_FIXES), ...Object.keys(MOBILE_FIXES), ...Object.keys(HANDBOOK_FIXES), ...Object.keys(P1_FIXES), ...Object.keys(P2_FIXES), ...Object.keys(P3_FIXES), ...Object.keys(P4_FIXES)];

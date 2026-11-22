@@ -61,6 +61,10 @@ import { pageWatchTool, printLayoutTool, webrtcTool } from "./p3-web.js";
 import { dataQualityTool, queuesTool, reconciliationTool, tracingTool } from "./p3-api.js";
 import { dbCodeTool, drDrillTool, k8sTool, logSeoTool } from "./p3-ops.js";
 import { aiCostTool, backlinksTool, iapTool, messagingTool, pqcTool, soc2Tool, storeListingTool } from "./p3-misc.js";
+import { iastTool } from "./p4-security.js";
+import { aiVisibilityTool, rankTrackingTool } from "./p4-seo.js";
+import { deviceMatrixTool, gameTestTool, windowsBrowserTool } from "./p4-device.js";
+import { pushSendTool, trackerExportTool, voiceBotTool } from "./p4-integrate.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -94,6 +98,14 @@ export const TOOLS: Tool[] = [
   pqcTool,
   soc2Tool,
   backlinksTool,
+  // 2026 gap report, wave 4 (previously-deferred items, now in-house / free).
+  rankTrackingTool,
+  aiVisibilityTool,
+  windowsBrowserTool,
+  deviceMatrixTool,
+  gameTestTool,
+  voiceBotTool,
+  trackerExportTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
@@ -135,6 +147,8 @@ export const TOOLS: Tool[] = [
   codeFuzzTool,
   browserExtTool,
   desktopAppTool,
+  // 2026 gap report, wave 4 (code): in-house IAST taint scan + runtime hook.
+  iastTool,
   // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
   safariTool,
   voiceOverTool,
@@ -149,6 +163,8 @@ export const TOOLS: Tool[] = [
   talkbackTool,
   storeListingTool,
   iapTool,
+  // 2026 gap report, wave 4 (mobile): test push send through the client's own FCM/APNs.
+  pushSendTool,
   // Client connections (Connections tab): the client's server over SSH, their Hostinger account, their MCP server.
   ...CONNECTION_TOOLS,
   // 2026 gap report, wave 3 (P3) ops checks over the client's SSH connection.

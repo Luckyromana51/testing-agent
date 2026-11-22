@@ -450,14 +450,16 @@ t("SOC 2 / ISO 27001 evidence", "Maps GLV's scans to audit controls as an eviden
 t("Backlink index (Common Crawl)", "Who links to the site, from Common Crawl's open web graph.", ["website"], { tools: ["backlinks"], rules: ["backlink:*"] });
 t("Store listing checks", "Data-safety form / privacy labels match the app; size limits.", ["mobile"], { tools: ["store-listing"], rules: ["store:*"] });
 t("In-app purchases & subscriptions", "Billing library, server-side receipt validation, buy/restore/cancel/refund.", ["mobile"], { tools: ["iap"], rules: ["iap:*"] });
-t("IAST (interactive app testing)", "An agent inside the app watches data flow during tests.", ALL, { manual: "Deferred: OpenTelemetry-based taint tracking is research-grade; revisit when mature." });
-t("Keyword & rank tracking", "Where the client ranks for a keyword on Google.", ["website"], { manual: "Cannot fully copy in-house: needs Google results (scraping breaks their terms). Connect the client's own Search Console instead." });
-t("AI answer visibility tracking", "Whether ChatGPT/Gemini/Perplexity mention the client.", ["website"], { manual: "Needs those AI services' API keys, so outside the in-house rule unless the client provides keys. On-page AI readiness is covered by GEO." });
-t("Windows-only browsers & fonts", "Edge on Windows and Windows font rendering.", ["website", "app"], { manual: "Needs a Windows VM on GLV hardware with a Mac-helper-style agent (infrastructure, not code)." });
-t("Wear, watch, TV & Auto", "Wear OS, watchOS, Android TV, Android Auto.", ["mobile"], { manual: "Deferred: needs the matching emulators + Appium; rare for GLV today." });
-t("Smart TV, kiosk, POS, IoT, games", "Other device classes.", ["mobile"], { manual: "Deferred: niche for GLV (Tizen/webOS emulators, MQTT brokers); games are out of scope." });
-t("Push notifications end to end", "Send a test push and confirm it opens the right screen.", ["mobile"], { manual: "Needs the client's FCM/APNs keys and a live device; run as a manual send with the client's keys." });
-t("Jira / Linear export", "Push findings into the client's tracker.", RUN, { manual: "On the later list: needs the client's tracker token; export findings as CSV meanwhile." });
+s("2026 gap report (wave 4)");
+t("IAST (interactive app testing)", "Taint scan of request input into dangerous sinks, plus a runtime hook for the client's tests.", ["code"], { tools: ["iast"], rules: ["iast:*"] });
+t("Keyword & rank tracking", "Where the client ranks for a keyword, via self-hosted SearXNG or the client's own free Google key.", ["website", "app"], { tools: ["rank-tracking"], rules: ["rank:*"] });
+t("AI answer visibility tracking", "Whether an LLM answer mentions the client, via a local model or the client's own key.", ["website", "app"], { tools: ["ai-visibility"], rules: ["aivis:*"] });
+t("Windows-only browsers & fonts", "Real Edge on a self-hosted Windows VM (W3C WebDriver) + font availability.", ["website", "app"], { tools: ["windows-browser"], rules: ["winbrowser:*", "winfont:*"] });
+t("Wear, watch, TV & Auto", "Watch/TV/Auto screen profiles in bundled Chromium: fit, targets, remote focus.", ["website", "app"], { tools: ["device-matrix"], rules: ["device:*"] });
+t("Smart TV, kiosk, POS, IoT, games", "Kiosk/POS/IoT screen profiles + an HTML5 game FPS/WebGL check.", ["website", "app"], { tools: ["device-matrix", "game-test"], rules: ["device:*", "game:*"] });
+t("Push notifications end to end", "Sends a test push through the client's own FCM/APNs and checks the deep link.", ["mobile"], { tools: ["push-send"], rules: ["push:*"] });
+t("Jira / Linear export", "Pushes a findings file into the client's own Jira/Linear, or a CSV.", RUN, { tools: ["tracker-export"], rules: ["tracker:*"] });
+t("Voice-bot / IVR testing", "Speaks prompts (Piper) and transcribes replies (Whisper) to check a voice flow.", ["website", "app", "api"], { tools: ["voice-bot"], rules: ["voice:*"] });
 t("Test management & traceability", "Requirements → test cases → results, release sign-off.", ALL, { manual: "Covered by the manual checklists and the master-control pass/fail gate; extend per enterprise client." });
 
 export const HANDBOOK: HandbookType[] = T;

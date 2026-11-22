@@ -139,6 +139,18 @@ RUN if [ "${WITH_WAVE3_PY}" = "1" ]; then \
       (python3 -m venv /opt/modelscan && /opt/modelscan/bin/pip install --no-cache-dir "modelscan==${MODELSCAN_VERSION}" && ln -s /opt/modelscan/bin/modelscan /usr/local/bin/modelscan || echo "ModelScan not installed: the model-security tool uses GLV's own pickle-format check"); \
       (python3 -m venv /opt/checkov && /opt/checkov/bin/pip install --no-cache-dir "checkov==${CHECKOV_VERSION}" && ln -s /opt/checkov/bin/checkov /usr/local/bin/checkov || echo "Checkov not installed: the IaC tool uses GLV's own rules"); \
     else echo "Wave-3 Python tools skipped (WITH_WAVE3_PY=0)"; fi || true
+# Wave 4 (previously-deferred tail). The only in-image dependency is open-source speech for the
+# voice-bot tool (Whisper STT + Piper TTS). It is OPT-IN and off by default because Whisper pulls
+# PyTorch (large); turn it on with --build-arg WITH_WAVE4_SPEECH=1. The voice-bot tool reports that
+# it needs Whisper/Piper until they are present (or WHISPER_PATH/PIPER_PATH are set). Everything else
+# in wave 4 is external and free: SearXNG/Ollama, a Windows eval VM + msedgedriver, and the client's
+# own FCM/APNs, Google, tracker and LLM keys — nothing to install here.
+ARG WHISPER_VERSION=20240930 WITH_WAVE4_SPEECH=0
+RUN if [ "${WITH_WAVE4_SPEECH}" = "1" ]; then \
+      (python3 -m venv /opt/whisper && /opt/whisper/bin/pip install --no-cache-dir "openai-whisper==${WHISPER_VERSION}" && ln -s /opt/whisper/bin/whisper /usr/local/bin/whisper || echo "Whisper not installed: the voice-bot tool reports it needs speech-to-text"); \
+      (apt-get update && apt-get install -y --no-install-recommends piper || echo "Piper not installed via apt: install a Piper release binary and set PIPER_PATH for the voice-bot tool"); \
+      rm -rf /var/lib/apt/lists/*; \
+    else echo "Wave-4 speech skipped (WITH_WAVE4_SPEECH=0): the voice-bot tool reports it needs Whisper/Piper until installed"; fi || true
 # Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
 # when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
 ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home

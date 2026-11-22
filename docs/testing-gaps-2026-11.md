@@ -70,7 +70,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | AI regression and drift | **P2: Built (wave 2)** | A fixed question set runs on a schedule; alert when answers get worse after a model or prompt change | Model upgrades silently change behaviour | promptfoo eval + our scheduler and trends |
 | Cost and speed of AI calls | **P3: Built (wave 3)** | Tokens per answer, time to first word, timeouts | Runaway AI bills | own measurement in the harness |
 | Model file security | **P3: Built (wave 3)** | Unsafe pickles and backdoored model files in the repo | Clients downloading models from the internet | ModelScan (Apache-2.0), fickling (LGPL-3) |
-| Voice bot testing | **P3 (deferred: needs Whisper/Piper + audio infra)** | Speech in, speech out, accents, noise | Voice IVR/agents for clients | Whisper (MIT), Piper TTS (MIT) to generate test speech |
+| Voice bot testing | **P4: Built (wave 4)** — local Whisper STT + Piper TTS; client supplies the voice endpoint | Speech in, speech out, accents, noise | Voice IVR/agents for clients | Whisper (MIT), Piper TTS (MIT) to generate test speech |
 
 ### 3.2 Security (beyond what the attack agent does)
 
@@ -97,7 +97,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | SBOM and licence compliance | **P2: Built (wave 2)** (Partial: Trivy licences, mobile CycloneDX) | Full SBOM for any repo; flag GPL/AGPL in closed products | CRA requires SBOMs for products sold in EU; clients ship apps | Syft (Apache-2.0), ScanCode Toolkit (Apache-2.0), CycloneDX |
 | More SAST languages and engines | **P2: Built (wave 2)** | Deeper rules for Python, PHP, Go, Java, Kotlin, Swift, Dart/Flutter | GLV builds Flutter and React Native; no Dart rules today | Opengrep (more own rules), Bandit, gosec, SpotBugs + FindSecBugs, Joern (Apache-2.0). Avoid CodeQL (licence bars commercial closed-source use) and Brakeman (non-OSS licence) |
 | IaC deep checks | **P3: Built (wave 3)** | Terraform, CloudFormation, Helm, Dockerfile rules | DevOps clients | Checkov (Apache-2.0), KICS (Apache-2.0), Hadolint (GPL-3) |
-| IAST | **P3 (deferred: research-grade)** | An agent inside the app watches real data flow during tests | Handbook marks it manual | OpenTelemetry-based taint is research-grade; skip for now |
+| IAST | **P4: Built (wave 4)** — in-house taint scan (input→sink) + a runtime node --require hook | An agent inside the app watches real data flow during tests | Handbook marks it manual | OpenTelemetry-based taint is research-grade; skip for now |
 
 ### 3.3 Mobile apps
 
@@ -110,8 +110,8 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | Maestro / Detox flows | **P2: Built (wave 2)** | Simpler app journeys than Appium, readable YAML | Faster to write client app tests | Maestro (Apache-2.0), Detox (MIT) |
 | Deep links and app links | **P2: Built (wave 2)** (Partial: static) | Open every deep link, check it lands right and can't be hijacked | Marketing links and login links break | adb/simctl + own runner |
 | In-app purchases and subscriptions | **P3: Built (wave 3)** | Sandbox purchase, restore, cancel, refund | Subscription apps | Google Play test tracks, StoreKit test config via Mac helper |
-| Push notifications end to end | **P3 (deferred: needs client FCM/APNs keys + live device)** | Send a test push and confirm it arrives and opens the right screen | CRM apps live on push | own FCM/APNs test sender with client keys |
-| Wear OS / watchOS / Android TV / Android Auto | **P3 (deferred: emulators/infra, niche)** | Other device types | Few clients | emulators + Appium |
+| Push notifications end to end | **P4: Built (wave 4)** — test send via the client's own FCM/APNs, gated by 'changes' permission | Send a test push and confirm it arrives and opens the right screen | CRM apps live on push | own FCM/APNs test sender with client keys |
+| Wear OS / watchOS / Android TV / Android Auto | **P4: Built (wave 4)** — Wear/TV/Auto screen profiles in bundled Chromium (native via emulators + Appium) | Other device types | Few clients | emulators + Appium |
 | Store-listing checks | **P3: Built (wave 3)** | Screenshots sizes, privacy labels match the app, data safety form | Store rejections delay launches | own checks against the uploaded app |
 
 ### 3.4 Browsers, devices and visual (BrowserStack / Applitools equivalents)
@@ -120,7 +120,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 |-----|----------|-----------|----------------|----------------|
 | Browser version matrix | **P1: Built (wave 1)** | Test on older Chrome/Firefox/Edge versions, not only today's | Clients' customers use old phones and browsers | Selenium Grid 4 (Apache-2.0) with versioned browser images, Microsoft Edge for Linux, Playwright old builds |
 | Samsung Internet, Opera, UC, in-app browsers (WhatsApp, Instagram, Facebook webviews) | **P2: Built (wave 2)** | Browsers big in India that behave differently | Many Indian users open links inside WhatsApp | real phone farm (3.3), Android emulator with those apps |
-| Windows-only browsers and fonts | **P3 (deferred: needs a Windows VM on GLV hardware)** | Edge on Windows, Windows font rendering | Corporate clients | a Windows VM on GLV hardware with the Mac-helper style agent |
+| Windows-only browsers and fonts | **P4: Built (wave 4)** — real Edge on a self-hosted free Windows eval VM over W3C WebDriver | Edge on Windows, Windows font rendering | Corporate clients | a Windows VM on GLV hardware with the Mac-helper style agent |
 | Visual AI diff | **P2: Built (wave 2)** (Partial: pixel compare) | Ignore harmless shifts, catch real layout breaks; layout-aware compare | Fewer false alarms than pixel diff | own DOM-box compare, SSIM (open), odiff (MIT) |
 | Component/storybook visual tests | **P3 (deferred: needs a running Storybook; visual-compare covers it manually)** | Test each UI component in all states | Design-system clients | Storybook test runner (MIT) + our visual compare |
 | Colour-blind and low-vision simulation | **P2: Built (wave 2)** | Show pages as seen with deuteranopia, protanopia, blur | Easy demo value; finds colour-only meaning | own CSS/SVG filters in inspect screen |
@@ -143,9 +143,9 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
 | GEO / AI search readiness | **P1: Built (wave 1)** | llms.txt, AI crawler access (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) in robots.txt, answer-ready content, entity and author signals, schema for AI | AI answers now take clicks from Google; GLV sells SEO | own checks; many open GEO auditors exist to borrow ideas from |
-| AI answer visibility tracking | **P3 (deferred: needs AI service API keys (outside in-house rule))** | Does ChatGPT/Gemini/Perplexity mention the client for key questions | Clients ask "are we visible in AI?" | Needs those AI services; only possible with the client's own API keys, so outside the in-house rule unless Lucky approves |
+| AI answer visibility tracking | **P4: Built (wave 4)** — local LLM (Ollama) or the client's own key; directional | Does ChatGPT/Gemini/Perplexity mention the client for key questions | Clients ask "are we visible in AI?" | Needs those AI services; only possible with the client's own API keys, so outside the in-house rule unless Lucky approves |
 | Backlink index | **P3: Built (wave 3)** | Who links to the client | Ahrefs' core feature | Common Crawl's free web graph, loaded on GLV servers (large disk, monthly refresh). It is open data, not a service. Smaller than Ahrefs but real |
-| Keyword and rank tracking | **P3 (deferred: needs Google results; connect client Search Console)** | Where the client ranks for a keyword | Core SEO report | Needs Google results; scraping breaks Google's terms. Clients can connect their own Search Console. Mark "cannot fully copy" |
+| Keyword and rank tracking | **P4: Built (wave 4)** — self-hosted SearXNG or the client's own free Google key; directional | Where the client ranks for a keyword | Core SEO report | Needs Google results; scraping breaks Google's terms. Clients can connect their own Search Console. Mark "cannot fully copy" |
 | Local SEO | **P2: Built (wave 2)** | Name/address/phone same everywhere, LocalBusiness schema, map embed, Google Business info on site | Small-business clients | own checks |
 | hreflang and international SEO depth | **P2: Built (wave 2)** (Partial) | Return links, language codes, x-default | Multi-country clients | own checks extending seo-site |
 | Image, video and news SEO | **P3: Built (wave 3)** | Image sitemaps, video schema, Discover rules | Media clients | own checks |
@@ -184,7 +184,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | Email template testing | **P2: Built (wave 2)** | HTML email renders in Gmail/Outlook widths, dark mode, links, unsubscribe, spam score | CRM and store emails | Mailpit (have it) + SpamAssassin/rspamd (Apache-2.0) score + own render checks |
 | SMS / WhatsApp message tests | **P3: Built (wave 3)** | Template variables, length, DLT template IDs (India), opt-out words | WhatsApp CRM is GLV's own product | own checks on the webhook inbox |
 | Test management and traceability | **P3 (deferred: covered by manual checklists + master-control gate)** | Requirements to test cases to results; release sign-off | Enterprise clients ask for it | extend manual checklists; Kiwi TCMS (GPL-2) ideas |
-| Jira / Linear export | **P3 (deferred: needs client tracker tokens; on the later list)** | Push issues to client trackers | Already on the "later" list | own exporter with client tokens |
+| Jira / Linear export | **P4: Built (wave 4)** — export to the client's own Jira/Linear, or CSV | Push issues to client trackers | Already on the "later" list | own exporter with client tokens |
 
 ### 3.9 Data, databases and back-end systems
 
@@ -217,9 +217,9 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | Desktop apps (Electron, Tauri, Windows, macOS) | **P3: Built (wave 3)** | GLV or clients shipping desktop apps | Playwright Electron mode, tauri-driver, WinAppDriver/Appium Windows driver in a Windows VM, Mac helper |
 | Browser extensions | **P3: Built (wave 3)** | Manifest permissions, content-script risks | own static checks + Playwright with extension loaded |
 | WordPress/Shopify plugins and themes | **P2: Built (wave 2)** (Partial: wordpress agent) | Known-vulnerable plugin versions | Wordfence Intelligence free vulnerability feed (check its terms), WPScan open database is limited without its paid API |
-| Smart TV, kiosk, POS | **P3 (deferred: niche for GLV; emulators)** | Rare for GLV now | Tizen/webOS emulators |
-| IoT / BLE / MQTT | **P3 (deferred: niche for GLV; needs a broker)** | Rare for GLV now | own MQTT checks, Mosquitto test broker |
-| Games | **P3 (deferred: out of scope)** | Out of scope | none |
+| Smart TV, kiosk, POS | **P4: Built (wave 4)** — kiosk/POS/TV screen profiles (device-matrix) | Rare for GLV now | Tizen/webOS emulators |
+| IoT / BLE / MQTT | **P4: Built (wave 4, web/panel side)** — IoT dashboard screen profile; native MQTT/BLE still needs a broker | Rare for GLV now | own MQTT checks, Mosquitto test broker |
+| Games | **P4: Built (wave 4)** — HTML5/canvas/WebGL FPS + WebGL-health smoke test | Out of scope | none |
 
 ### 3.12 Reporting, CI and platform gaps
 
