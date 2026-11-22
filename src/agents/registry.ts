@@ -60,6 +60,7 @@ import { aaaAgent, colourVisionAgent } from "./web/a11y-more.js";
 import { visualLayoutAgent } from "./web/visual-layout.js";
 import { frontendProfileAgent } from "./web/frontend-profile.js";
 import { slowCallsAgent } from "./web/slow-calls.js";
+import { consentProofAgent, pciScriptAgent } from "./web/compliance.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -154,6 +155,8 @@ export const WEB_AGENTS: WebAgent[] = [
   aaaAgent,
   visualLayoutAgent,
   frontendProfileAgent,
+  consentProofAgent,
+  pciScriptAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
   ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
