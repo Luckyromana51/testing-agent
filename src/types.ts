@@ -128,6 +128,8 @@ export interface JourneyStepResult {
   calls?: { method: string; url: string; status: number; ms: number }[];
   /** A clean-up step. */
   cleanup?: boolean;
+  /** The step's button or field was not found as written; the closest match was used (self-healing). */
+  healed?: string;
 }
 
 export interface JourneyResult {

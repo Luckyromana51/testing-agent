@@ -114,3 +114,27 @@ export function wcagReport(result: ScanResult): WcagReport {
   for (const r of results) counts[r.status]++;
   return { results, counts, noFailuresFound: counts.fails === 0 };
 }
+
+/**
+ * India: IS 17802 (Part 1, 2021) is the Indian standard for ICT accessibility, built on EN 301 549,
+ * and GIGW 3.0 asks government sites to meet it. Its web clauses are numbered 9.<WCAG criterion> and
+ * follow WCAG 2.1 A and AA, so the criteria WCAG 2.2 added are not part of it (good practice still).
+ * Documents (PDF, Word) are clause 10.
+ */
+export const WCAG22_ONLY = new Set(["2.4.11", "2.4.12", "2.4.13", "2.5.7", "2.5.8", "3.2.6", "3.3.7", "3.3.8", "3.3.9"]);
+
+/** The IS 17802 clause for a WCAG criterion, or null when only WCAG 2.2 has it. Pure, for tests. */
+export function is17802Clause(id: string): string | null {
+  return WCAG22_ONLY.has(id) ? null : `9.${id}`;
+}
+
+/** The report as IS 17802 / GIGW 3.0 would read it: only the clauses the Indian standard has, plus its document clause. */
+export function is17802Report(result: ScanResult): { results: (CriterionResult & { clause: string })[]; counts: Record<CriterionStatus, number>; documents: { status: CriterionStatus; findings: number } } {
+  const base = wcagReport(result);
+  const results = base.results.filter((r) => is17802Clause(r.id)).map((r) => ({ ...r, clause: is17802Clause(r.id)! }));
+  const counts = { fails: 0, passes: 0, manual: 0, "not-tested": 0 } as Record<CriterionStatus, number>;
+  for (const r of results) counts[r.status]++;
+  const docHits = result.findings.filter((f) => f.severity !== "info" && /^(doc:(pdf|office|docx|pptx|xlsx)-|verapdf:)/.test(f.rule));
+  const docsRan = (result.agentStats ?? []).some((s) => s.id === "a11y.documents" && !s.untested && !s.skipped) || (result.tools ?? []).some((t) => t.id === "verapdf" && t.status === "done");
+  return { results, counts, documents: { status: docHits.length ? "fails" : docsRan ? "passes" : "not-tested", findings: docHits.reduce((n, f) => n + (f.count ?? 1), 0) } };
+}

@@ -369,6 +369,24 @@ Checks that change data (account lockout on a spare account you mark, file uploa
 - **Ask Claude to fix.** Save the site's repository (GitHub or GitLab, https) and a token in the project's vault. On an issue, **Ask Claude to fix** writes the smallest change and opens a pull request on a new `glv-fix/...` branch. Nothing is merged. Needs `ANTHROPIC_API_KEY`.
 - **Watch the sign-in live.** For a signed-in test, the live view shows the sign-in from **Start test**. When the sign-in gets stuck (a CAPTCHA, a code, a button that does nothing) and someone is watching, the screen is handed over: click and type on the picture, then press **Done**, and the test carries on.
 
+## Wave 1 testing types (2026 gap report)
+
+All in-house, with free or open-source tools in the Docker image. Attack-type checks keep the usual gates: the client's written permission with a proof file (or the owner's own-system unlock), started by hand, read-only, and never on other people's sites.
+
+- **AI chatbot red-team** (tool tab, attack permission naming the chatbot's host): about 30 GLV probes in 10 families (prompt injection, jailbreaks, system-prompt leaks, data leaks, indirect injection from a page GLV serves, unsafe output, excessive agency, made-up answers, endless output, harmful content), each mapped to the OWASP Top 10 for LLM apps 2025 and the OWASP Agentic Top 10 2026. Works on a chat API or the chat widget on the page. Probes that ask for refunds or admin changes run only when the permission allows changes. garak runs too when the image is built with `--build-arg WITH_GARAK=1`.
+- **Hacked site and malware**: hidden spam links, spam text, hidden iframes, skimmers, miners, defacement and cloaking (Googlebot sees other content, Google visitors redirected) on every test; the Malware scan tab runs YARA (GLV's rules in `rules/yara`) and ClamAV over the pages and scripts. An SSH connection also looks for web shells on the server.
+- **Email and DNS**: SPF (including the 10-lookup limit), DMARC, DKIM, MTA-STS, TLS-RPT, BIMI, DNSSEC and CAA for the site's domain, on every test.
+- **Attack surface** tab: subdomains from certificate logs and subfinder, subdomain takeover (26 services), forgotten staging and admin hosts. The **Open ports** tab needs attack permission and checks only the permitted hosts.
+- **Blind holes**: the attack agent's Blind family (blind SSRF and XSS, Log4Shell, header fetches), detected by a callback to `OOB_BASE_URL` or an Interactsh server.
+- **security.txt** (RFC 9116), **GEO / AI search readiness** (AI bots in robots.txt and the firewall, llms.txt, Organization markup, authors, dates, answer headings).
+- **Documents**: PDF and Office files linked from the site (tags, scanned pages, language, title, alt text, headings), and the veraPDF tab for full PDF/UA.
+- **India**: DPDP Rules 2025 (notice items, Board, grievance officer, languages, consent on forms), GIGW 3.0 (Owner can switch it on; off by default), IS 17802 view in the WCAG tab, and the 13 CCPA dark patterns (pre-ticked boxes, basket sneaking, confirm-shaming, false urgency, fake timers, drip pricing, trick questions).
+- **Browser version matrix** tab (profile `grid`): pages in Chrome 109 and 120, Firefox 115 and Edge 120.
+- **Phone farm** (Owner > Test phones > Phone farm): GLV's own Android rack (DeviceFarmer, profile `farm`) and iPhones on USB (go-ios). **MobSF** tab (profile `mobsf`) and **Mobile runtime security** tab (adb and Frida on a test phone).
+- **Journeys**: write a test in plain English and get the steps (Claude when the API key is set, else GLV's rules); steps heal themselves when a button's words or id change a little, and the report says so.
+- **Record and replay** tab (APIs): upload a HAR recording; every GET is replayed on each test and compared (status, JSON fields removed or changed type, speed). The recording also becomes WireMock mocks.
+- **Mutation testing** tab (code, started by hand): small changes to a copy of the code, the project's own tests run after each one, and the changes no test caught are listed.
+
 ## Client connections (SSH, Hostinger, MCP)
 
 Everything runs on GLV's own servers. A project's **Connections** tab is how they reach the client's own system. The owner adds a connection and presses **Test the connection**; from then on every test of the project (scheduled ones too) adds that connection's read-only checks to the report.
@@ -624,6 +642,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export
 - iOS traffic recording on the test phone (Android only for now), and Espresso or XCUITest suites the client wrote
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
-- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps
+- Wave 2 and 3 of the 2026 gap report (P2 and P3 items)
 - A local copy of the OSV database kept up to date on the server
 - SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export

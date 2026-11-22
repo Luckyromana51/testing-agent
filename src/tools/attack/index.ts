@@ -7,6 +7,7 @@ import { attackHttp } from "./http.js";
 import { commandFamily, nosqlFamily, sstiFamily } from "./inject.js";
 import { sessionFamily } from "./session.js";
 import { ssrfFamily } from "./ssrf.js";
+import { blindFamily } from "./blind.js";
 import { exposedFamily } from "./exposed.js";
 import { buildSurface } from "./surface.js";
 import type { AttackFinding, Family } from "./types.js";
@@ -25,6 +26,7 @@ export const FAMILIES: Family[] = [
   hostHeaderFamily,
   corsFamily,
   ssrfFamily,
+  blindFamily,
   nosqlFamily,
   accessFamily,
   commandFamily,
@@ -53,6 +55,7 @@ export const attackTool: Tool = {
     "CORS, CRLF/header and host-header injection, confirmed by the response itself",
     "Exposed .git/.env/backups and serialized-object (deserialization) surfaces",
     "Session-token (JWT) weaknesses: unsigned, guessable secret, never expiring — read offline",
+    "Blind SSRF, blind XSS and Log4Shell-style holes, proved by a call to GLV's own callback server",
     "Confirmed holes chained into one realistic attack path",
   ],
   products: [...WEB_PRODUCTS],

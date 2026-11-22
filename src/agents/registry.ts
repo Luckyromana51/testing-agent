@@ -46,6 +46,12 @@ import { speedAgent } from "./web/speed.js";
 import { consentGateAgent } from "./web/consent.js";
 import { coverAgent, cutTextAgent, overlapAgent, overlapPhoneAgent, readabilityAgent, tabletAgent } from "./web/ui.js";
 import { seoAuditAgent } from "../seo/audit.js";
+import { geoAgent, securityTxtAgent } from "./web/geo.js";
+import { cloakingAgent, hackedAgent } from "./web/hacked.js";
+import { emailDnsAgent } from "./web/email-dns.js";
+import { darkPatternsAgent, fakeTimerAgent } from "./web/dark-patterns.js";
+import { dpdpAgent, dpdpFormsAgent, gigwAgent } from "./web/india.js";
+import { documentsAgent } from "./web/documents.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -115,6 +121,19 @@ export const WEB_AGENTS: WebAgent[] = [
   orphanPagesAgent,
   corsAgent,
   cspAgent,
+  // Wave 1 of the 2026 gap report: AI search, disclosure, hacked sites, email and DNS, dark
+  // patterns, the India pack (DPDP, GIGW 3.0) and documents.
+  geoAgent,
+  securityTxtAgent,
+  hackedAgent,
+  cloakingAgent,
+  emailDnsAgent,
+  darkPatternsAgent,
+  fakeTimerAgent,
+  dpdpAgent,
+  dpdpFormsAgent,
+  gigwAgent,
+  documentsAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
   ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.

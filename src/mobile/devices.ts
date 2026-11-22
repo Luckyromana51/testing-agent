@@ -26,6 +26,8 @@ export interface AppDevice {
   serverAddress?: string;
   /** From the server's .env (the Docker emulator): shown, not editable. */
   builtIn?: boolean;
+  /** Taken from GLV's phone farm (Owner panel > Test phones > Phone farm); given back when removed. */
+  farm?: { source: "stf" | "go-ios"; serial: string };
 }
 
 let saved: AppDevice[] = [];

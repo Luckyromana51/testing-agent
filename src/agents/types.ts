@@ -90,6 +90,8 @@ export interface SiteState {
   uploadsDir?: string;
   /** Real visitors' speed. */
   rum?: RumSummary;
+  /** Pages where the dark-pattern check saw a countdown (the fake-timer check opens them again). */
+  timerPages?: string[];
 }
 
 /** One app call with its answer, kept in memory while the test runs. */

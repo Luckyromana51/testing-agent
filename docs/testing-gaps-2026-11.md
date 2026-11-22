@@ -6,7 +6,7 @@ This report lists every kind of software testing, tool or capability we found in
 
 How to read it:
 
-- **P1** = build next. Clients ask for it, it is cheap to add, or a law now requires it.
+- **P1** = build next. All 21 P1 rows were built in wave 1 (2026-11-22) and are marked "Built (wave 1)". Clients ask for it, it is cheap to add, or a law now requires it.
 - **P2** = strong value, more work.
 - **P3** = niche, or only for certain clients.
 - **Partial** = we have some of it; the gap is the missing part.
@@ -60,9 +60,9 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters for GLV clients | In-house tools |
 |-----|----------|-----------|-------------------------------|----------------|
-| Live chatbot red-teaming | **P1** | Send thousands of attack prompts (jailbreaks, prompt injection, data leaks, system-prompt theft) to the client's real chatbot | AI chat on websites and CRMs is now common; a leaking bot is a headline risk | garak (Apache-2.0), promptfoo (MIT), PyRIT (MIT), DeepTeam (Apache-2.0) |
-| OWASP LLM Top 10 (2025) and OWASP Agentic Top 10 (2026) reports | **P1** | Map every AI finding to those lists, like we do for OWASP Top 10 | Clients and auditors ask for this mapping | own mapping on top of the red-team results |
-| Indirect prompt injection | **P1** | Plant hidden instructions in a page, PDF, email or CRM record the AI reads, and see if it obeys | Agents that read customer data are the main attack path in 2026 | garak / promptfoo plugins, own planted fixtures |
+| Live chatbot red-teaming | **P1: Built (wave 1)** | Send thousands of attack prompts (jailbreaks, prompt injection, data leaks, system-prompt theft) to the client's real chatbot | AI chat on websites and CRMs is now common; a leaking bot is a headline risk | garak (Apache-2.0), promptfoo (MIT), PyRIT (MIT), DeepTeam (Apache-2.0) |
+| OWASP LLM Top 10 (2025) and OWASP Agentic Top 10 (2026) reports | **P1: Built (wave 1)** | Map every AI finding to those lists, like we do for OWASP Top 10 | Clients and auditors ask for this mapping | own mapping on top of the red-team results |
+| Indirect prompt injection | **P1: Built (wave 1)** | Plant hidden instructions in a page, PDF, email or CRM record the AI reads, and see if it obeys | Agents that read customer data are the main attack path in 2026 | garak / promptfoo plugins, own planted fixtures |
 | Agent and tool-use safety | P2 | Check an AI agent cannot run tools, send email or change data beyond what it should (excessive agency, tool misuse) | WhatsApp CRM bots and booking bots act on real data | promptfoo agent plugins, own harness in a test copy |
 | MCP server security | P2 (Partial) | Tool poisoning, over-broad tools, missing auth on MCP servers | We already check MCP connections; add attack tests | own checks, mcp-scan style rules |
 | RAG answer quality | P2 | Correct answers from the client's documents, with sources, no made-up facts | Support bots that make things up cost clients money | Ragas (Apache-2.0), DeepEval (Apache-2.0) |
@@ -76,12 +76,12 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| Hacked site / malware / SEO spam | **P1** | Find injected scripts, hidden casino/pharma links, cloaking (different page for Googlebot), web shells, defacement | Very common on WordPress/Hostinger; clients lose Google ranking overnight | ClamAV (GPL-2), YARA (BSD-3) with open rule sets, own Googlebot-vs-browser compare, PHP web-shell rules via SSH |
-| DNS and email security for any domain | **P1** (Partial: Hostinger only) | SPF, DKIM, DMARC, MTA-STS, TLS-RPT, BIMI, DNSSEC, CAA, dangling records | Fake emails in the client's name; works for every client, not only Hostinger | checkdmarc (Apache-2.0), dnsx (MIT), own checks |
+| Hacked site / malware / SEO spam | **P1: Built (wave 1)** | Find injected scripts, hidden casino/pharma links, cloaking (different page for Googlebot), web shells, defacement | Very common on WordPress/Hostinger; clients lose Google ranking overnight | ClamAV (GPL-2), YARA (BSD-3) with open rule sets, own Googlebot-vs-browser compare, PHP web-shell rules via SSH |
+| DNS and email security for any domain | **P1: Built (wave 1)** | SPF, DKIM, DMARC, MTA-STS, TLS-RPT, BIMI, DNSSEC, CAA, dangling records | Fake emails in the client's name; works for every client, not only Hostinger | checkdmarc (Apache-2.0), dnsx (MIT), own checks |
 | Lookalike domains | P2 | Typo domains registered by phishers (glvinfotech-solutions.com etc.) | Brand protection service GLV can sell | dnstwist (Apache-2.0) |
-| Subdomain takeover | **P1** | A subdomain still points to a deleted GitHub Pages/Heroku/S3 site anyone can claim | Real break-ins; easy to find | subfinder (MIT), dnsx, own fingerprint list (like can-i-take-over-xyz) |
-| Attack surface discovery | **P1** | Find all subdomains, open ports and forgotten servers of a client | You can't test what you don't know exists | subfinder, naabu (MIT), httpx (MIT), katana (MIT). Avoid bundling nmap: its licence limits commercial redistribution |
-| Out-of-band (blind) detection | **P1** | A GLV callback server catches blind SSRF, XXE, blind XSS, log4shell-type hits | Many real holes only show this way; ZAP and Nuclei can use it | Interactsh server (MIT), self-hosted on a GLV domain |
+| Subdomain takeover | **P1: Built (wave 1)** | A subdomain still points to a deleted GitHub Pages/Heroku/S3 site anyone can claim | Real break-ins; easy to find | subfinder (MIT), dnsx, own fingerprint list (like can-i-take-over-xyz) |
+| Attack surface discovery | **P1: Built (wave 1)** | Find all subdomains, open ports and forgotten servers of a client | You can't test what you don't know exists | subfinder, naabu (MIT), httpx (MIT), katana (MIT). Avoid bundling nmap: its licence limits commercial redistribution |
+| Out-of-band (blind) detection | **P1: Built (wave 1)** | A GLV callback server catches blind SSRF, XXE, blind XSS, log4shell-type hits | Many real holes only show this way; ZAP and Nuclei can use it | Interactsh server (MIT), self-hosted on a GLV domain |
 | Race conditions | P2 | Send the same coupon/withdrawal/vote at the exact same moment | Stores and wallets lose money; handbook lists it but no check | own single-packet sender (HTTP/2) in a test copy |
 | HTTP request smuggling, cache poisoning, host-header attacks | P2 | Front-end and back-end servers read a request differently | Affects sites behind CDNs and load balancers | own probes (like smuggler, MIT) under permission |
 | OAuth / OpenID / SAML flaws | P2 | Redirect URI tricks, missing state/PKCE, SAML signature wrapping | "Sign in with Google" and SSO in SaaS/CRM | own checks, ZAP add-ons |
@@ -92,7 +92,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 | Kubernetes and Docker host checks | P3 | CIS benchmarks, risky pods, runtime alerts | Larger clients | kube-bench (Apache-2.0), Kubescape (Apache-2.0), Dockle (Apache-2.0), Falco (Apache-2.0) |
 | Server hardening score | P2 (Partial via SSH) | Full CIS-style audit of Linux servers | Our SSH checks cover basics only | Lynis (GPL-3), OpenSCAP (LGPL) |
 | Post-quantum readiness | P3 | Does the server's TLS offer ML-KEM hybrid key exchange; crypto inventory in code | Banks and governments now ask for PQC plans | OpenSSL 3.5+ `-groups X25519MLKEM768` probe, own code rules for weak crypto |
-| security.txt and vulnerability disclosure | **P1** | `/.well-known/security.txt` present and valid; a way to report holes | EU Cyber Resilience Act reporting started 11 Sept 2026; cheap check | own check |
+| security.txt and vulnerability disclosure | **P1: Built (wave 1)** | `/.well-known/security.txt` present and valid; a way to report holes | EU Cyber Resilience Act reporting started 11 Sept 2026; cheap check | own check |
 | Supply chain depth | P2 (Partial: OSV includes malicious packages) | Reachability (is the vulnerable function actually used), typosquat names, install scripts, unpinned GitHub Actions | Cuts false alarms; catches poisoned packages | OSV-Scanner call analysis, zizmor (MIT) for GitHub Actions, own install-script rules |
 | SBOM and licence compliance | P2 (Partial: Trivy licences, mobile CycloneDX) | Full SBOM for any repo; flag GPL/AGPL in closed products | CRA requires SBOMs for products sold in EU; clients ship apps | Syft (Apache-2.0), ScanCode Toolkit (Apache-2.0), CycloneDX |
 | More SAST languages and engines | P2 | Deeper rules for Python, PHP, Go, Java, Kotlin, Swift, Dart/Flutter | GLV builds Flutter and React Native; no Dart rules today | Opengrep (more own rules), Bandit, gosec, SpotBugs + FindSecBugs, Joern (Apache-2.0). Avoid CodeQL (licence bars commercial closed-source use) and Brakeman (non-OSS licence) |
@@ -103,8 +103,8 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| Real phone farm | **P1** | GLV's own rack of real Android phones and iPhones, used remotely from the tool | BrowserStack/Sauce replacement; real cameras, GPUs, OEM skins (Xiaomi, Samsung, Vivo are big in India) | DeviceFarmer/STF (Apache-2.0), go-ios (MIT) for iPhones on Linux, Appium |
-| Dynamic security (OWASP MASVS/MASTG) | **P1** | Run the app and check data at rest, SSL pinning, root/jailbreak detection, keystore use, logs, clipboard | Static checks miss most real mobile holes | Frida (wxWindows licence), objection (GPL-3), MobSF dynamic (GPL-3), mitmproxy (MIT) |
+| Real phone farm | **P1: Built (wave 1)** | GLV's own rack of real Android phones and iPhones, used remotely from the tool | BrowserStack/Sauce replacement; real cameras, GPUs, OEM skins (Xiaomi, Samsung, Vivo are big in India) | DeviceFarmer/STF (Apache-2.0), go-ios (MIT) for iPhones on Linux, Appium |
+| Dynamic security (OWASP MASVS/MASTG) | **P1: Built (wave 1)** | Run the app and check data at rest, SSL pinning, root/jailbreak detection, keystore use, logs, clipboard | Static checks miss most real mobile holes | Frida (wxWindows licence), objection (GPL-3), MobSF dynamic (GPL-3), mitmproxy (MIT) |
 | Flutter and React Native specifics | P2 | Dart snapshot secrets, JS bundle secrets, Hermes bytecode, OTA update (CodePush/Expo) safety | GLV builds in both | blutter/reFlutter for Dart, hermes-dec, own rules |
 | App performance on device | P2 | Start time, frame drops (jank), memory, battery drain, app size over releases | Users uninstall slow apps | Android `dumpsys gfxinfo`/Perfetto (Apache-2.0), Xcode Instruments via Mac helper |
 | Maestro / Detox flows | P2 | Simpler app journeys than Appium, readable YAML | Faster to write client app tests | Maestro (Apache-2.0), Detox (MIT) |
@@ -118,7 +118,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| Browser version matrix | **P1** | Test on older Chrome/Firefox/Edge versions, not only today's | Clients' customers use old phones and browsers | Selenium Grid 4 (Apache-2.0) with versioned browser images, Microsoft Edge for Linux, Playwright old builds |
+| Browser version matrix | **P1: Built (wave 1)** | Test on older Chrome/Firefox/Edge versions, not only today's | Clients' customers use old phones and browsers | Selenium Grid 4 (Apache-2.0) with versioned browser images, Microsoft Edge for Linux, Playwright old builds |
 | Samsung Internet, Opera, UC, in-app browsers (WhatsApp, Instagram, Facebook webviews) | P2 | Browsers big in India that behave differently | Many Indian users open links inside WhatsApp | real phone farm (3.3), Android emulator with those apps |
 | Windows-only browsers and fonts | P3 | Edge on Windows, Windows font rendering | Corporate clients | a Windows VM on GLV hardware with the Mac-helper style agent |
 | Visual AI diff | P2 (Partial: pixel compare) | Ignore harmless shifts, catch real layout breaks; layout-aware compare | Fewer false alarms than pixel diff | own DOM-box compare, SSIM (open), odiff (MIT) |
@@ -130,8 +130,8 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| PDF / document accessibility | **P1** | Tagged PDF, reading order, alt text, PDF/UA; Word/Excel files too | European Accessibility Act (in force since June 2025) and EN 301 549 cover documents; GIGW 3.0 in India | veraPDF (GPL/MPL) for PDF/UA, own checks |
-| India standards: GIGW 3.0 and IS 17802 | **P1** | Indian government and public-sector accessibility rules | GLV can sell to Indian government/PSU projects | own mapping on top of WCAG results |
+| PDF / document accessibility | **P1: Built (wave 1)** | Tagged PDF, reading order, alt text, PDF/UA; Word/Excel files too | European Accessibility Act (in force since June 2025) and EN 301 549 cover documents; GIGW 3.0 in India | veraPDF (GPL/MPL) for PDF/UA, own checks |
+| India standards: GIGW 3.0 and IS 17802 | **P1: Built (wave 1)** | Indian government and public-sector accessibility rules | GLV can sell to Indian government/PSU projects | own mapping on top of WCAG results |
 | EN 301 549 / EAA report and VPAT/ACR | P2 | Report formatted as an EU conformance or US VPAT document | Clients selling to EU/US need it | own report template from WCAG tab |
 | WCAG AAA and cognitive accessibility | P2 (Partial: readability) | Plain language, consistent help, no time limits, COGA patterns | Wider audience; WCAG 3 direction | own checks, readability formulas for Hindi and English |
 | Real NVDA / TalkBack runs | P2 (Partial: VoiceOver via Mac) | Real screen readers, not only the accessibility tree | Most blind users on Windows use NVDA; Android uses TalkBack | NVDA (GPL-2) in a Windows VM, TalkBack on emulator/phone farm |
@@ -142,7 +142,7 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| GEO / AI search readiness | **P1** | llms.txt, AI crawler access (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) in robots.txt, answer-ready content, entity and author signals, schema for AI | AI answers now take clicks from Google; GLV sells SEO | own checks; many open GEO auditors exist to borrow ideas from |
+| GEO / AI search readiness | **P1: Built (wave 1)** | llms.txt, AI crawler access (GPTBot, ClaudeBot, PerplexityBot, Google-Extended) in robots.txt, answer-ready content, entity and author signals, schema for AI | AI answers now take clicks from Google; GLV sells SEO | own checks; many open GEO auditors exist to borrow ideas from |
 | AI answer visibility tracking | P3 | Does ChatGPT/Gemini/Perplexity mention the client for key questions | Clients ask "are we visible in AI?" | Needs those AI services; only possible with the client's own API keys, so outside the in-house rule unless Lucky approves |
 | Backlink index | P3 | Who links to the client | Ahrefs' core feature | Common Crawl's free web graph, loaded on GLV servers (large disk, monthly refresh). It is open data, not a service. Smaller than Ahrefs but real |
 | Keyword and rank tracking | P3 | Where the client ranks for a keyword | Core SEO report | Needs Google results; scraping breaks Google's terms. Clients can connect their own Search Console. Mark "cannot fully copy" |
@@ -170,12 +170,12 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| Plain-English test writing | **P1** | "Log in, add a red shirt to cart, check total" becomes a saved journey | What Mabl, Testim, QA Wolf, Momentic sell; huge time saver | Claude + Playwright codegen + our journeys |
-| Self-healing steps | **P1** | When a button's id changes, the step finds it by text/role instead of failing | Fewer broken tests after each client release | own locator fallback chain in journeys |
+| Plain-English test writing | **P1: Built (wave 1)** | "Log in, add a red shirt to cart, check total" becomes a saved journey | What Mabl, Testim, QA Wolf, Momentic sell; huge time saver | Claude + Playwright codegen + our journeys |
+| Self-healing steps | **P1: Built (wave 1)** | When a button's id changes, the step finds it by text/role instead of failing | Fewer broken tests after each client release | own locator fallback chain in journeys |
 | Export tests as code | P2 | Download journeys as Playwright/Appium test files the client can keep | Clients want to own their tests | own exporter |
-| Record-and-replay API tests | **P1** | Record real API traffic once, replay it as regression tests with mocks | Fast API coverage for CRMs | Keploy (Apache-2.0), GoReplay, mitmproxy (MIT) |
+| Record-and-replay API tests | **P1: Built (wave 1)** | Record real API traffic once, replay it as regression tests with mocks | Fast API coverage for CRMs | Keploy (Apache-2.0), GoReplay, mitmproxy (MIT) |
 | Pairwise and combinatorial for forms | P2 (Manual) | Pick the smallest set of input combinations that covers all pairs | Handbook marks pairwise manual | PICT (MIT), allpairspy (MIT) |
-| Mutation testing | **P1** (Manual) | Change the code slightly and check the client's tests notice | Shows if the client's tests are real | Stryker (Apache-2.0), PIT (Apache-2.0), Infection (BSD-3), mutmut (BSD) |
+| Mutation testing | **P1: Built (wave 1)** | Change the code slightly and check the client's tests notice | Shows if the client's tests are real | Stryker (Apache-2.0), PIT (Apache-2.0), Infection (BSD-3), mutmut (BSD) |
 | Running the client's own unit tests and coverage | P2 (Partial: BYO Playwright) | Run `npm test`, `pytest`, `phpunit`, `flutter test` in a sandbox, read coverage | Turns "code has tests" into "tests pass, 64% covered" | the existing code engine + language images, lcov/cobertura readers |
 | Property-based and coverage-guided fuzzing of code | P3 (API only today) | Generate inputs to crash parsers and functions | Finds crashes in core libraries | fast-check (MIT), Hypothesis (MPL-2.0), Jazzer (Apache-2.0), AFL++ (Apache-2.0) |
 | API mocks and service virtualisation | P2 | Fake a payment gateway or third-party API for tests | Test checkout without real money | WireMock (Apache-2.0), Prism (Apache-2.0), Microcks (Apache-2.0) |
@@ -200,9 +200,9 @@ Today: static code rules only (`code.ai`, rules like `ai:prompt-injection`). Not
 
 | Gap | Priority | What it is | Why it matters | In-house tools |
 |-----|----------|-----------|----------------|----------------|
-| India DPDP Rules pack | **P1** (Partial: privacy, id-numbers) | Consent notice in plain language and Indian languages, consent withdrawal as easy as giving, children's data, data-breach contact, grievance officer | DPDP Rules notified Nov 2025, phased in by 2027; every Indian client | own rules on existing privacy/consent agents |
+| India DPDP Rules pack | **P1: Built (wave 1)** | Consent notice in plain language and Indian languages, consent withdrawal as easy as giving, children's data, data-breach contact, grievance officer | DPDP Rules notified Nov 2025, phased in by 2027; every Indian client | own rules on existing privacy/consent agents |
 | CERT-In / RBI / SEBI pack | P2 | Log retention, NTP time sync, incident contact, payment data stored in India | Fintech and regulated clients | SSH checks + web checks |
-| Dark patterns | **P1** | Fake timers, pre-ticked boxes, hidden costs added at checkout, hard-to-cancel subscriptions, confirm-shaming | India's 2023 dark-pattern guidelines list 13 patterns; EU DSA | own detectors on store and SaaS flows |
+| Dark patterns | **P1: Built (wave 1)** | Fake timers, pre-ticked boxes, hidden costs added at checkout, hard-to-cancel subscriptions, confirm-shaming | India's 2023 dark-pattern guidelines list 13 patterns; EU DSA | own detectors on store and SaaS flows |
 | GDPR cookie consent proof | P2 (Partial: cookies, consent) | Do tags/trackers fire *before* consent; does "Reject" really reject | Most common GDPR fine | extend cookies agent: compare network before/after reject |
 | PCI DSS 4.0 script controls | P2 (Partial: checkout scripts) | Inventory and change alerts for every script on payment pages (req. 6.4.3, 11.6.1) | Required since March 2025 for stores | extend store.checkout + journey watch to alert on new scripts |
 | HIPAA / health data | P3 | PHI in URLs, logs, analytics tags | Health clients | own rules |

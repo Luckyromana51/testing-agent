@@ -5,6 +5,7 @@ import type { ProductInfo } from "../../src/products.ts";
 import type { ToolChoice, ToolInfo } from "../../src/tools/types.ts";
 import type { HelperInfo } from "../../src/helpers.ts";
 import type { AppDevice } from "../../src/mobile/devices.ts";
+import type { FarmPhone } from "../../src/mobile/farm.ts";
 import type { ModuleInfo } from "../../src/modules.ts";
 import type { FlakyIssue, TrendPoint } from "../../src/trends.ts";
 import type { Alert, Incident, WatchSummary } from "../../src/watch.ts";
@@ -341,6 +342,7 @@ export interface ConnectionDraft {
 }
 
 export const api = {
+  draftJourney: (text: string, startUrl?: string) => call<{ steps: string; by: "claude" | "rules"; notes: string[] }>("POST", "/api/journeys/draft", { text, startUrl }),
   connections: (id: string) => call<ConnectionsInfo>("GET", `/api/projects/${id}/connections`),
   addConnection: (id: string, b: ConnectionDraft) => call<ConnectionsInfo & { id: string }>("POST", `/api/projects/${id}/connections`, b),
   updateConnection: (id: string, cid: string, b: ConnectionDraft) => call<ConnectionsInfo>("PATCH", `/api/projects/${id}/connections/${cid}`, b),
@@ -436,6 +438,9 @@ export const api = {
   addDevice: (d: Partial<AppDevice>) => call<{ device: AppDevice }>("POST", "/api/owner/devices", d),
   updateDevice: (id: string, d: Partial<AppDevice>) => call<{ device: AppDevice }>("PUT", `/api/owner/devices/${id}`, d),
   removeDevice: (id: string) => call("DELETE", `/api/owner/devices/${id}`),
+  farm: () => call<{ phones: FarmPhone[]; notes: string[] }>("GET", "/api/owner/farm"),
+  useFarmPhone: (source: FarmPhone["source"], serial: string) => call<{ device: AppDevice }>("POST", "/api/owner/farm/use", { source, serial }),
+  releaseFarmPhone: (id: string) => call("POST", `/api/owner/farm/release/${id}`),
 
   /** API projects: approve a test's API file as the new version, the Postman file, and the mock server. */
   approveApiFile: (runId: string) => call<{ ok: true }>("POST", `/api/runs/${runId}/api-baseline`, {}),

@@ -1,4 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { lateHits, oobBase, recordOobHit } from "./oob.js";
+import { draftJourney } from "./runner/plain.js";
+import { PLANTED } from "./tools/ai-redteam/index.js";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
@@ -294,6 +297,35 @@ export async function createApp(opts: AppOptions) {
 
   // ---- Auth -----------------------------------------------------------------------------------
   app.get("/api/health", async () => ({ ok: true, ai: aiEnabled() }));
+
+  // GLV's out-of-band callback inbox (see src/oob.ts): the client's server calls these addresses when a
+  // blind hole fires. Public on purpose (the client's server has no login); only known tokens count.
+  const oobHandler = async (req: FastifyRequest<{ Params: { token: string; "*"?: string } }>, reply: FastifyReply) => {
+    const { token } = req.params;
+    const label = (req.params["*"] ?? "").split("/")[0] ?? "";
+    const known = /^[0-9a-f]{20}$/.test(token) && recordOobHit(token, label, req.ip, `${req.method} ${req.url}`);
+    if (!known) return reply.code(404).send("Not found");
+    // The AI red team's planted page (indirect prompt injection): the client's chatbot is asked to read it.
+    const planted = label === "faq.html" ? PLANTED.get(token) : undefined;
+    if (planted) return reply.header("content-type", "text/html; charset=utf-8").header("cache-control", "no-store").send(planted);
+    // A blind XSS payload loads it as a script: answer with harmless JavaScript.
+    return reply.header("content-type", label.endsWith(".js") ? "application/javascript" : "text/plain").header("cache-control", "no-store").send(label.endsWith(".js") ? "/* GLV testing callback */" : "ok");
+  };
+  app.route({ method: ["GET", "POST", "HEAD", "PUT", "OPTIONS"], url: "/oob/:token", handler: oobHandler });
+  app.route({ method: ["GET", "POST", "HEAD", "PUT", "OPTIONS"], url: "/oob/:token/*", handler: oobHandler });
+  // Plain-English test writing: words in, journey steps out (the tester saves them on the project).
+  app.post("/api/journeys/draft", async (req) => {
+    const b = (req.body ?? {}) as { text?: unknown; startUrl?: unknown };
+    try {
+      return await draftJourney(String(b.text ?? ""), typeof b.startUrl === "string" ? b.startUrl : undefined);
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+  });
+  app.get("/api/oob", async (req) => {
+    ownerOnly(req);
+    return { base: oobBase(), interactsh: process.env.INTERACTSH_SERVER ?? null, hits: lateHits().slice(-200).reverse() };
+  });
 
   app.get("/api/auth/state", async (req) => ({
     setupNeeded: !loginOff && auth.setupNeeded(),

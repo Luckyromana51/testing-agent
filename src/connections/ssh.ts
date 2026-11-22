@@ -137,6 +137,13 @@ export async function sshRun(session: SshSession, command: string, signal?: Abor
 }
 
 /** The fixed, read-only commands of the server checks, with a marker before each answer. */
+/**
+ * What web shells and injected PHP look like (WSO, c99, r57, b374k, FilesMan, eval of decoded text,
+ * commands run from request data). Kept to a grep pattern so the server needs nothing installed.
+ */
+export const WEBSHELL_GREP =
+  "eval[[:space:]]*\\([[:space:]]*(base64_decode|gzinflate|gzuncompress|str_rot13)[[:space:]]*\\(|assert[[:space:]]*\\([[:space:]]*[$]_(POST|GET|REQUEST)|(system|shell_exec|passthru|popen|proc_open)[[:space:]]*\\([[:space:]]*[$]_(GET|POST|REQUEST|COOKIE)|FilesMan|WSO [0-9]|c99shell|r57shell|b374k|[$]_(POST|REQUEST)\\[[^]]+\\][[:space:]]*\\([[:space:]]*[$]_(POST|REQUEST)";
+
 export const SERVER_SCRIPT = [
   "echo '##os'; cat /etc/os-release 2>/dev/null",
   "echo '##uname'; uname -srm 2>/dev/null",
@@ -149,6 +156,8 @@ export const SERVER_SCRIPT = [
   "echo '##updates'; if command -v apt >/dev/null 2>&1; then apt list --upgradable 2>/dev/null | grep -ci -- '-security'; elif command -v dnf >/dev/null 2>&1; then dnf -q updateinfo list --security 2>/dev/null | wc -l; else echo unknown; fi",
   "echo '##reboot'; test -f /var/run/reboot-required && echo yes || echo no",
   "echo '##web'; (nginx -v 2>&1; apache2 -v 2>/dev/null | head -1; httpd -v 2>/dev/null | head -1; php -v 2>/dev/null | head -1; node -v 2>/dev/null) | grep -v 'not found'",
+  // Web shells and injected PHP in the usual web roots (Hostinger, cPanel, plain Linux): file names only, read-only.
+  `echo '##webshells'; for d in /var/www /home/*/public_html /home/*/domains/*/public_html /usr/share/nginx/html; do [ -d "$d" ] && timeout 60 grep -rlEI --include='*.php' --include='*.phtml' --include='*.php5' --include='*.phar' -m1 ${JSON.stringify(WEBSHELL_GREP)} "$d" 2>/dev/null | head -n 20; done`,
   "echo '##end'",
 ].join("; ");
 
@@ -282,6 +291,18 @@ export function serverFindings(out: string, where: string, now = Date.now()): { 
   const remote = Number((s.time ?? [])[0]?.trim());
   if (Number.isFinite(remote) && remote > 0 && Math.abs(remote - now / 1000) > 120) {
     add({ category: "functional", severity: "low", rule: "server:clock", title: `The server's clock is ${Math.round(Math.abs(remote - now / 1000) / 60)} minutes off`, detail: "A wrong clock breaks sign-in codes, certificates and the order of records. Turn on time sync (timedatectl set-ntp true).", evidence: new Date(remote * 1000).toISOString() });
+  }
+
+  const shells = (s.webshells ?? []).map((l) => l.trim()).filter((l) => l.startsWith("/"));
+  if (shells.length) {
+    add({
+      category: "security",
+      severity: "critical",
+      rule: "server:webshell",
+      title: `${shells.length} PHP file${shells.length === 1 ? " looks" : "s look"} like a web shell or injected code`,
+      detail: "These files hold code attackers plant to control a hacked site (eval of hidden code, running commands sent in a request, known web shells such as WSO or c99). Compare them with a clean copy of the site or plugin, remove what was planted, change every password (hosting, FTP, database, admin), and update the CMS and plugins.",
+      evidence: shells.slice(0, 20).join("\n"),
+    });
   }
 
   const php = facts.web.find((l) => /^PHP \d/.test(l));

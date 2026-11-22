@@ -12,7 +12,7 @@ import { LiveView } from "./LiveView.tsx";
 import { ControlCard, LiveControlBar } from "./MasterControl.tsx";
 import { RunCode } from "./LiveCode.tsx";
 import { Inspect, VisualCompare } from "./Inspect.tsx";
-import { wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
+import { is17802Clause, is17802Report, wcagReport, type CriterionStatus } from "../../../src/wcag.ts";
 import { handbookReport, type HandbookStatus } from "../../../src/handbook.ts";
 import { setView, useSimple } from "../view.ts";
 
@@ -790,6 +790,7 @@ function Journeys({ run }: { run: Run }) {
                       </details>
                     )}
                     {s.blocked && <div className="muted small">Stopped (could change data): {s.blocked.join(", ")}</div>}
+                    {s.healed && <div className="warn small">Self-healed: {s.healed}. Update the step's words.</div>}
                     {s.url && <div className="muted small">{s.url}</div>}
                   </div>
                 </li>
@@ -831,13 +832,16 @@ function WcagTab({ run }: { run: Run }) {
   const report = useMemo(() => wcagReport(run.result!), [run.result]);
   const [show, setShow] = useState<CriterionStatus | "all">("all");
   const [level, setLevel] = useState<"A" | "AA" | "all">("all");
-  const rows = report.results.filter((r) => (show === "all" || r.status === show) && (level === "all" || r.level === level));
+  const [standard, setStandard] = useState<"wcag" | "india">("wcag");
+  const india = useMemo(() => is17802Report(run.result!), [run.result]);
+  const counts = standard === "india" ? india.counts : report.counts;
+  const rows = report.results.filter((r) => (standard === "wcag" || is17802Clause(r.id)) && (show === "all" || r.status === show) && (level === "all" || r.level === level));
   return (
     <div>
       <div className="wcag-summary">
         {(["fails", "passes", "manual", "not-tested"] as CriterionStatus[]).map((s) => (
           <button key={s} className={`card wcag-tile st-${s}${show === s ? " active" : ""}`} onClick={() => setShow(show === s ? "all" : s)}>
-            <b>{report.counts[s]}</b>
+            <b>{counts[s]}</b>
             <span>{WCAG_TEXT[s]}</span>
           </button>
         ))}
@@ -847,16 +851,31 @@ function WcagTab({ run }: { run: Run }) {
         criteria marked "Check by hand" need a person with a keyboard and a screen reader. The PDF report includes this table.
       </p>
       <div className="pills">
+        <button className={`pill${standard === "wcag" ? " active" : ""}`} onClick={() => setStandard("wcag")}>
+          WCAG 2.2
+        </button>
+        <button className={`pill${standard === "india" ? " active" : ""}`} onClick={() => setStandard("india")}>
+          India: IS 17802 / GIGW 3.0
+        </button>
+        <span className="muted small"> · </span>
         {(["all", "A", "AA"] as const).map((l) => (
           <button key={l} className={`pill${level === l ? " active" : ""}`} onClick={() => setLevel(l)}>
             {l === "all" ? "A and AA" : `Level ${l}`}
           </button>
         ))}
       </div>
+      {standard === "india" && (
+        <p className="muted small">
+          IS 17802 (Part 1) follows WCAG 2.1 A and AA, numbered 9.x for web pages; GIGW 3.0 asks government sites to meet it. Documents
+          (clause 10, PDF and Office files): <b className={`st-${india.documents.status}`}>{WCAG_TEXT[india.documents.status]}</b>
+          {india.documents.findings > 0 && ` (${plural(india.documents.findings, "problem")})`}.
+        </p>
+      )}
       <div className="card table-card">
         <table className="table wcag-table">
           <thead>
             <tr>
+              {standard === "india" && <th>IS 17802</th>}
               <th>Criterion</th>
               <th>Level</th>
               <th>Result</th>
@@ -866,6 +885,7 @@ function WcagTab({ run }: { run: Run }) {
           <tbody>
             {rows.map((c) => (
               <tr key={c.id}>
+                {standard === "india" && <td>{is17802Clause(c.id)}</td>}
                 <td>
                   <a href={`https://www.w3.org/WAI/WCAG22/Understanding/${c.id}`} target="_blank" rel="noreferrer">
                     {c.id}

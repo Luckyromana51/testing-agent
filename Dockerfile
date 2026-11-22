@@ -24,6 +24,21 @@ RUN mkdir -p /tools \
     done \
  && for b in nuclei gitleaks osv-scanner trivy k6; do cp "$(find /go/bin -name "$b" -type f | head -n 1)" /tools/; done \
  && go clean -modcache
+# Wave 1 (2026 gap report): subfinder (attack surface: subdomains from public sources), the Interactsh
+# client (blind, out-of-band holes) and go-ios (iPhones on USB for the phone farm, no Mac needed).
+# Built the same checked way; each is optional, so one that fails to build is left out and its
+# feature says "not installed" instead of breaking the image.
+ARG SUBFINDER_VERSION=v2.9.0 INTERACTSH_VERSION=v1.2.4 GO_IOS_VERSION=v1.0.182
+RUN for pkg in \
+      github.com/projectdiscovery/subfinder/v2/cmd/subfinder@${SUBFINDER_VERSION} \
+      github.com/projectdiscovery/interactsh/cmd/interactsh-client@${INTERACTSH_VERSION} \
+      github.com/danielpaulus/go-ios@${GO_IOS_VERSION}; do \
+      CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath -ldflags="-s -w" "$pkg" || echo "Left out: $pkg"; \
+      go clean -cache; \
+    done \
+ && for b in subfinder interactsh-client; do f="$(find /go/bin -name "$b" -type f | head -n 1)"; [ -n "$f" ] && cp "$f" /tools/ || true; done \
+ && f="$(find /go/bin -name go-ios -type f | head -n 1)"; [ -n "$f" ] && cp "$f" /tools/ios || true; \
+    go clean -modcache
 # Opengrep is not written in Go: its release binary is downloaded and its signature checked with
 # cosign against Opengrep's own GitHub release workflow. If it cannot be verified, it is left out
 # and the Opengrep tab shows "not installed" (the image still builds).
@@ -76,6 +91,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends git openssh-cli
 COPY --from=gotools /tools/ /usr/local/bin/
 COPY --from=jmeter /opt/jmeter /opt/jmeter
 RUN ln -s /opt/jmeter/bin/jmeter /usr/local/bin/jmeter
+# Hacked-site checks: YARA (GLV's own rules in rules/yara) and ClamAV, from Ubuntu's own packages.
+# ClamAV's signatures are downloaded when the image is built (rebuild to refresh them, or run
+# freshclam in the container); without them ClamAV is skipped and YARA still runs.
+RUN apt-get update && apt-get install -y --no-install-recommends yara clamav clamav-freshclam \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /var/lib/clamav && chown -R pwuser /var/lib/clamav \
+ && (freshclam --quiet --stdout || echo "ClamAV signatures were not downloaded: ClamAV is skipped until they are")
+# veraPDF (PDF/UA checks for the PDF accessibility tool), installed with its own unattended installer.
+# Optional: if the download fails it is left out and the tab says so.
+RUN mkdir -p /tmp/vera && cd /tmp/vera \
+ && if curl -fsSL --retry 3 -o vera.zip https://software.verapdf.org/releases/verapdf-installer.zip \
+      && python3 -c "import zipfile;zipfile.ZipFile('vera.zip').extractall('.')" \
+      && printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<AutomatedInstallation langpack="eng">\n<com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>\n<com.izforge.izpack.panels.target.TargetPanel id="install_dir"><installpath>/opt/verapdf</installpath></com.izforge.izpack.panels.target.TargetPanel>\n<com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select"><pack index="0" name="veraPDF GUI" selected="true"/><pack index="1" name="veraPDF Batch files" selected="true"/><pack index="2" name="veraPDF Validation model" selected="false"/><pack index="3" name="veraPDF Documentation" selected="false"/><pack index="4" name="veraPDF Sample Plugins" selected="false"/></com.izforge.izpack.panels.packs.PacksPanel>\n<com.izforge.izpack.panels.install.InstallPanel id="install"/>\n<com.izforge.izpack.panels.finish.FinishPanel id="finish"/>\n</AutomatedInstallation>\n' > auto.xml \
+      && java -jar verapdf-*/verapdf-izpack-installer-*.jar auto.xml >/dev/null; then \
+      ln -sf /opt/verapdf/verapdf /usr/local/bin/verapdf; \
+    else echo "veraPDF was not installed: the PDF/UA tab shows not installed"; fi \
+ && rm -rf /tmp/vera
 # Schemathesis (Python) and Newman (Node) each live in their own folder, away from the app's own
 # packages: Newman brings old dependencies of its own, which never load into the app.
 RUN python3 -m venv /opt/schemathesis \
@@ -83,6 +115,14 @@ RUN python3 -m venv /opt/schemathesis \
  && ln -s /opt/schemathesis/bin/st /usr/local/bin/st \
  && npm install -g --prefix /opt/newman --ignore-scripts --no-audit --no-fund "newman@${NEWMAN_VERSION}" \
  && ln -s /opt/newman/bin/newman /usr/local/bin/newman
+# Frida (mobile runtime security on a test phone) in its own folder. garak (NVIDIA's open-source LLM
+# scanner, for the chatbot red-team tab) is large (it brings PyTorch), so it is added only when the
+# image is built with --build-arg WITH_GARAK=1; GLV's own probes run either way.
+ARG FRIDA_TOOLS_VERSION=14.4.5 WITH_GARAK=0 GARAK_VERSION=0.13.1
+RUN python3 -m venv /opt/frida \
+ && (/opt/frida/bin/pip install --no-cache-dir "frida-tools==${FRIDA_TOOLS_VERSION}" && ln -s /opt/frida/bin/frida /usr/local/bin/frida || echo "Frida was not installed") \
+ && if [ "$WITH_GARAK" = "1" ]; then python3 -m venv /opt/garak \
+      && (/opt/garak/bin/pip install --no-cache-dir "garak==${GARAK_VERSION}" && ln -s /opt/garak/bin/garak /usr/local/bin/garak || echo "garak was not installed"); fi
 # Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
 # when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
 ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home

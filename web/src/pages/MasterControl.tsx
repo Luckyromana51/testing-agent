@@ -406,7 +406,13 @@ function Scope({ meta, detail, draft, onChange }: { meta: Meta; detail: ProjectD
                       <div className="mc-tool-options">
                         {(t.options ?? [])
                           .filter((o) => o.kind !== "file")
-                          .map((o) => (
+                          .map((o) =>
+                            o.kind === "text" ? (
+                              <label key={o.id} className="small">
+                                {o.label}
+                                <input className="input" value={d.options[o.id] ?? o.default} placeholder={o.placeholder} maxLength={o.maxLength ?? 500} onChange={(e) => setTools({ ...tdraft, [t.id]: { ...d, options: { ...d.options, [o.id]: e.target.value } } })} />
+                              </label>
+                            ) : (
                             <label key={o.id} className="small">
                               {o.label}
                               <select className="select" value={d.options[o.id] ?? o.default} onChange={(e) => setTools({ ...tdraft, [t.id]: { ...d, options: { ...d.options, [o.id]: e.target.value } } })}>
@@ -421,7 +427,8 @@ function Scope({ meta, detail, draft, onChange }: { meta: Meta; detail: ProjectD
                                 })}
                               </select>
                             </label>
-                          ))}
+                            ),
+                          )}
                       </div>
                     )}
                   </div>

@@ -27,6 +27,14 @@ import { iosSimulatorTool, safariTool, voiceOverTool } from "./mac.js";
 import { appiumTool } from "./appium.js";
 import { zapActiveTool, zapTool } from "./zap.js";
 import { attackTool } from "./attack/index.js";
+import { portsTool, surfaceTool } from "./surface.js";
+import { malwareTool } from "./malware.js";
+import { verapdfTool } from "./verapdf.js";
+import { aiRedTeamTool } from "./ai-redteam/index.js";
+import { browserMatrixTool } from "./browser-matrix.js";
+import { mobileRuntimeTool, mobsfTool } from "./mobile-security.js";
+import { replayTool } from "./replay.js";
+import { mutationTool } from "./mutation.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -38,29 +46,40 @@ export const TOOLS: Tool[] = [
   zapTool,
   nucleiTool,
   testsslTool,
+  // Hacked sites, the client's other servers, and documents (2026 gap report, wave 1).
+  malwareTool,
+  surfaceTool,
+  verapdfTool,
+  browserMatrixTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
   // copies of the same holes fold into them). The attack agent runs the deeper, orchestrated pen test.
   probesTool,
   attackTool,
+  aiRedTeamTool,
+  portsTool,
   zapActiveTool,
   k6Tool,
   jmeterTool,
   // APIs
   schemathesisTool,
   newmanTool,
+  replayTool,
   // Source code
   gitleaksTool,
   opengrepTool,
   osvTool,
   trivyTool,
+  mutationTool,
   // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
   safariTool,
   voiceOverTool,
   iosSimulatorTool,
-  // Mobile apps on a test phone (Appium).
+  // Mobile apps on a test phone (Appium), GLV's MobSF server, and runtime security on a test phone.
   appiumTool,
+  mobsfTool,
+  mobileRuntimeTool,
   // Client connections (Connections tab): the client's server over SSH, their Hostinger account, their MCP server.
   ...CONNECTION_TOOLS,
 ];
@@ -131,7 +150,15 @@ export function cleanChoices(product: ProductType, input: unknown, permissions?:
         }
         continue;
       }
+      if (opt.kind === "text" && opt.required && !String(v ?? "").trim()) throw new Error(`${tool.name}: fill in ${opt.label}, or turn ${tool.name} off.`);
       if (v === undefined) continue;
+      if (opt.kind === "text") {
+        const text = String(v).replace(/[\u0000-\u001f]/g, " ").trim();
+        if (text.length > (opt.maxLength ?? 500)) throw new Error(`${tool.name}: ${opt.label} is too long.`);
+        if (text && opt.pattern && !new RegExp(opt.pattern).test(text)) throw new Error(`${tool.name}: ${opt.label} does not look right${opt.placeholder ? ` (like ${opt.placeholder})` : ""}.`);
+        if (text) options[opt.id] = text;
+        continue;
+      }
       if (opt.kind === "toggles") {
         // A set of switched-on values, joined by commas; each must be one of the option's choices.
         const picked = v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -160,7 +187,7 @@ export async function defaultChoices(product: ProductType): Promise<ToolChoice[]
   if (process.env.DEFAULT_TOOLS === "none") return [];
   const status = await toolStatus();
   return toolsFor(product)
-    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && !t.needsConnection && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
+    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && !t.needsConnection && status[t.id] === null && !t.manual && !(t.options ?? []).some((o) => o.required))
     .map((t) => ({ id: t.id }));
 }
 
