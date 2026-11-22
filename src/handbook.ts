@@ -375,6 +375,52 @@ t("GEO / AI search readiness", "Can AI search find, read and quote the site.", [
 t("PCI DSS", "Card data security.", ["website", "code"], { agents: ["store.checkout", "code.database", "web.https"], rules: ["db:stores-cvv", "db:sensitive-column"] });
 t("ISO/IEC 25010", "Software quality model.", ALL, { platform: "The report's categories (functional, performance, security, accessibility, compatibility) follow its quality attributes." });
 
+s("2026 gap report (wave 2)");
+t("RAG answer quality", "Correct, sourced answers from the client's own documents, with no made-up facts.", ["website", "app"], { tools: ["ai-eval"], rules: ["aieval:*"] });
+t("AI agent and tool-use safety", "An AI agent cannot run tools, send email or change data beyond what it should.", ["website", "app"], { tools: ["ai-redteam"], rules: ["ai:agency-*"] });
+t("AI regression and drift", "A fixed question set, run over time; alert when answers get worse after a model or prompt change.", ["website", "app"], { tools: ["ai-eval"], rules: ["aieval:regression", "aieval:low-score"] });
+t("MCP server security", "Tool poisoning, over-broad tools and missing auth on MCP servers.", ["api"], { tools: ["mcp-attack"], rules: ["mcp:*"] });
+t("Lookalike / typosquat domains", "Typo domains a phisher could register in your name.", ["website", "app"], { tools: ["lookalike"], rules: ["lookalike:*"] });
+t("Race conditions", "The same once-only action sent at the exact same instant.", ["website", "app", "api"], { tools: ["race"], rules: ["race:*"] });
+t("HTTP smuggling, cache poisoning, host header", "Front-end and back-end read a request differently.", ["website", "app"], { tools: ["glv-attack"], rules: ["attack:request-smuggling", "attack:cache-poisoning", "sec:host-header-*"] });
+t("OAuth / OpenID / SAML flaws", "Redirect tricks, missing state/PKCE, unsigned SAML.", ["website", "app"], { agents: ["sec.oauth"], rules: ["oauth:*", "saml:*"] });
+t("File upload attacks", "Web shells, script in SVG, huge files, EXIF location in photos.", ["website", "app"], { agents: ["app.file-upload", "privacy.photo-exif"], rules: ["app:upload-runs-code", "privacy:photo-*"] });
+t("Business logic (stores)", "Negative prices, fractional or huge quantities, coupon stacking.", ["website"], { tools: ["glv-attack"], rules: ["logic:*"] });
+t("Network vulnerability scan", "Known CVEs on every open service of the client's servers.", ["website", "app", "api"], { tools: ["ports"], rules: ["netscan:*"] });
+t("Cloud account posture", "Public buckets, open security groups, no MFA, logging off (AWS/GCP/Azure).", ["website", "app", "api", "code"], { tools: ["cloud"], rules: ["cloud:*"] });
+t("Server hardening score", "CIS-style audit of Linux servers (firewall, updates, kernel, SSH).", ["website", "app"], { tools: ["conn-ssh"], rules: ["server:*", "certin:*"] });
+t("Database health (read-only)", "Missing indexes, no foreign keys, plain-text passwords, slow queries, backups.", ["website", "app"], { tools: ["conn-ssh"], rules: ["db:*"] });
+t("Chaos testing", "Kill a service, add network delay, and see if the app survives and recovers.", ["website", "app"], { tools: ["chaos"], rules: ["chaos:*"] });
+t("Supply chain depth", "Typosquats, install scripts, unpinned GitHub Actions, risky CI.", ["code"], { agents: ["code.supply-chain"], rules: ["deps:*", "ci:*"] });
+t("SAST (more languages)", "Deeper rules for Python, PHP, Go, Java, Kotlin, Swift, Dart.", ["code"], { agents: ["code.sast-languages"], rules: ["sast:*"] });
+t("SBOM and licence compliance", "A full SBOM; flag GPL/AGPL in a closed product.", ["code"], { tools: ["sbom"], rules: ["sbom:*"] });
+t("Run the client's tests and coverage", "npm test / pytest / phpunit / flutter test in a sandbox, with coverage.", ["code"], { tools: ["unit-tests"], rules: ["tests:*"] });
+t("API breaking-change and lint", "Diff two OpenAPI files for breaking changes; style rules.", ["api"], { tools: ["openapi-diff"], rules: ["apidiff:*", "apilint:*"] });
+t("API mocks / service virtualisation", "Fake a payment gateway or third-party API for tests.", ["api"], { tools: ["api-mock"] });
+t("Payment gateway test flows", "Razorpay, Stripe, PayU, PayPal, UPI test-mode payment, failure and refund.", ["website", "api"], { tools: ["payments"], rules: ["payments:*"] });
+t("Email template testing", "HTML email in Gmail/Outlook widths, dark mode, links, unsubscribe, spam score.", ["website", "app"], { tools: ["email-render"], rules: ["email:*"] });
+t("Pairwise / combinatorial for forms", "The smallest set of input combinations that covers all value pairs.", RUN, { tools: ["pairwise"], rules: ["pairwise:*"] });
+t("Export tests as code", "Download journeys as Playwright / Appium files the client keeps.", RUN, { tools: ["export-code"] });
+t("Local SEO", "Consistent name/address/phone, LocalBusiness schema, map, Google Business.", ["website"], { agents: ["seo.local"], rules: ["seo:no-localbusiness-schema", "seo:nap-*", "seo:no-map", "seo:no-gbp-link"] });
+t("hreflang / international SEO", "Return links, valid language codes, x-default.", ["website"], { agents: ["seo.hreflang"], rules: ["seo:hreflang-*"] });
+t("JavaScript SEO render diff", "What Google sees before vs after JavaScript runs.", ["website"], { agents: ["seo.js-render"], rules: ["seo:content-needs-js", "seo:links-need-js"] });
+t("Social preview", "Open Graph / Twitter cards and image for shared links.", ["website"], { agents: ["seo.social"], rules: ["seo:no-og-*", "seo:no-twitter-card"] });
+t("Colour-blind and low-vision", "Information shown by colour alone (WCAG 1.4.1).", ["website", "app"], { agents: ["a11y.colour-vision"], rules: ["a11y:links-colour-only"] });
+t("WCAG AAA and cognitive", "Reading level, timed refresh, consistent help (COGA).", ["website", "app"], { agents: ["a11y.aaa"], rules: ["a11y:reading-level", "a11y:time-limit", "a11y:inconsistent-help"] });
+t("EN 301 549 / VPAT report", "An EU conformance / US VPAT accessibility report.", ["website", "app"], { tools: ["vpat"] });
+t("Real screen-reader runs", "VoiceOver (Mac helper) and TalkBack labels on a phone.", ["website", "app", "mobile"], { tools: ["mac-voiceover", "talkback"], rules: ["a11y:app-unlabelled-controls"] });
+t("Visual layout breaks", "Layout-aware check for phone side-scroll and off-canvas content.", ["website", "app"], { agents: ["ui.visual-layout"], rules: ["layout:*"] });
+t("Testing from other regions", "Speed from Mumbai, Singapore, Frankfurt, US.", RUN, { tools: ["region-speed"], rules: ["region:*"] });
+t("Frontend profiling", "Long tasks (INP), JavaScript size, DOM size, layout shift.", ["website", "app"], { agents: ["perf.frontend"], rules: ["perf:long-tasks", "perf:too-much-js", "perf:huge-dom", "perf:layout-shift"] });
+t("Backend profiling / slow queries", "The slowest API calls and N+1 patterns while signed in.", ["app"], { agents: ["perf.backend"], rules: ["perf:slow-backend-call", "perf:n-plus-one"] });
+t("Flutter / React Native specifics", "Dart/JS bundle secrets, Hermes, OTA (CodePush/Expo) update safety.", ["mobile"], { agents: ["android.ota", "ios.ota"], rules: ["mobile:codepush-unsigned", "mobile:expo-updates-unsigned", "mobile:ota-http"] });
+t("App performance on device", "Start time, janky frames, memory, installed size.", ["mobile"], { tools: ["app-perf"], rules: ["appperf:*"] });
+t("Maestro flows", "Simple, readable YAML app journeys on a phone.", ["mobile"], { tools: ["maestro"], rules: ["maestro:*"] });
+t("Deep links and app links", "Every deep link opens the app, and cannot be hijacked.", ["mobile"], { tools: ["deeplink-run"], agents: ["android.links"], rules: ["deeplink:*"] });
+t("In-app and India browsers", "WhatsApp/Instagram/Facebook webviews, Samsung, Opera, UC.", ["website", "app"], { tools: ["inapp-browser"], rules: ["inapp:*"] });
+t("Consent proof (GDPR/DPDP)", "Trackers before consent, a real Reject button, Reject actually rejects.", ["website", "app"], { agents: ["privacy.consent-proof"], rules: ["privacy:tracker-before-consent", "privacy:reject-not-honoured", "privacy:no-reject-button"] });
+t("PCI DSS 4.0 script controls", "Script inventory and integrity on payment pages (6.4.3, 11.6.1).", ["website"], { agents: ["sec.pci-scripts"], rules: ["pci:*"] });
+
 export const HANDBOOK: HandbookType[] = T;
 
 /** Which handbook modules a product type belongs to. */

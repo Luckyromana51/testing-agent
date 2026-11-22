@@ -387,6 +387,20 @@ All in-house, with free or open-source tools in the Docker image. Attack-type ch
 - **Record and replay** tab (APIs): upload a HAR recording; every GET is replayed on each test and compared (status, JSON fields removed or changed type, speed). The recording also becomes WireMock mocks.
 - **Mutation testing** tab (code, started by hand): small changes to a copy of the code, the project's own tests run after each one, and the changes no test caught are listed.
 
+## Wave 2 testing types (2026 gap report)
+
+Same rule as wave 1: in-house, free or open-source tools in the image, attack and load checks keep the written-permission/own-system gates, started by hand, read-only. Each optional tool below works from its tab only when it is installed; GLV's own fallback runs otherwise.
+
+- **AI**: RAG answer quality and regression (`AI answer quality` tab — grades answers against a question set, checks sources and consistency, keeps a score history), AI agent/tool-use safety (in the red-team tab), and **MCP attack** tab (path, SQL, SSRF, command injection, calls without a token).
+- **Attacks** (attack permission): **Race conditions** tab (one action sent many times at the same instant), HTTP request smuggling / cache poisoning / host-header (attack agent), OAuth/OpenID/SAML flaws, store business logic (negative/fractional/huge quantities), file-upload code execution and photo EXIF location.
+- **Lookalike domains** tab: typosquat domains a phisher could register.
+- **Servers** (SSH / cloud): hardening score (CIS-style), CERT-In log retention and time sync, read-only database health (indexes, foreign keys, plain-text passwords, slow queries, backups), **network CVE scan** of open ports (nuclei), **Cloud posture** tab (Prowler, read-only keys), and **Chaos** tab (restart/stop/delay a service, each self-undoing).
+- **Code / API**: supply-chain depth (typosquats, install scripts, unpinned Actions, risky CI) and more-language SAST (Python, PHP, Go, Java, Kotlin, Swift, Dart), **SBOM** tab (CycloneDX + copyleft licences), **Run the client's tests** tab (npm/pytest/phpunit/flutter + coverage), **OpenAPI diff** tab (breaking changes + lint), **API mocks** tab, **Payment flows** tab (Stripe/Razorpay sandbox), **Email template** tab, **Pairwise** tab, **Export as code** tab (Playwright/Appium).
+- **Web quality**: local SEO, hreflang, social previews, JavaScript render diff, colour-blind / low-vision, WCAG AAA + cognitive, phone layout breaks, **VPAT / EN 301 549** report tab.
+- **Speed**: frontend profiling (INP/CLS/JS size), backend slow calls and N+1 (signed in), **Region speed** tab (proxies in other regions).
+- **Mobile**: OTA update safety (CodePush/Expo), **App performance** tab (start time, jank, memory, size), **Maestro** tab, **Deep-link runner** tab, **TalkBack labels** tab, **In-app / India browsers** tab (WhatsApp/Instagram/Facebook webviews, Samsung, Opera, UC).
+- **Compliance**: GDPR/DPDP consent proof (trackers before consent, a real Reject that works) and PCI DSS 4.0 payment-page script controls (SRI, CSP).
+
 ## Client connections (SSH, Hostinger, MCP)
 
 Everything runs on GLV's own servers. A project's **Connections** tab is how they reach the client's own system. The owner adds a connection and presses **Test the connection**; from then on every test of the project (scheduled ones too) adds that connection's read-only checks to the report.
@@ -642,6 +656,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export
 - iOS traffic recording on the test phone (Android only for now), and Espresso or XCUITest suites the client wrote
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
-- Wave 2 and 3 of the 2026 gap report (P2 and P3 items)
+- Wave 3 of the 2026 gap report (P3 items); wave 2 (P2) is built, except the white-label client portal, which is a platform/product feature (tenant login and branding) rather than a test and is left for a separate decision
 - A local copy of the OSV database kept up to date on the server
 - SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export

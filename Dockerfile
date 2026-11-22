@@ -123,6 +123,14 @@ RUN python3 -m venv /opt/frida \
  && (/opt/frida/bin/pip install --no-cache-dir "frida-tools==${FRIDA_TOOLS_VERSION}" && ln -s /opt/frida/bin/frida /usr/local/bin/frida || echo "Frida was not installed") \
  && if [ "$WITH_GARAK" = "1" ]; then python3 -m venv /opt/garak \
       && (/opt/garak/bin/pip install --no-cache-dir "garak==${GARAK_VERSION}" && ln -s /opt/garak/bin/garak /usr/local/bin/garak || echo "garak was not installed"); fi
+# Wave 2 (2026 gap report), all optional and best-effort — each tool works from its tab only when it
+# installed. Syft: fuller SBOMs. Prowler: cloud account posture (read-only). Prism: richer API mocks.
+# GLV's own lockfile reader, CycloneDX output and Node mock server work without any of them.
+ARG SYFT_VERSION=1.18.1 PROWLER_VERSION=5.14.0 PRISM_VERSION=5.14.2
+RUN (curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}" || echo "Syft was not installed: the SBOM tool uses GLV's own reader") \
+ && (python3 -m venv /opt/prowler && /opt/prowler/bin/pip install --no-cache-dir "prowler==${PROWLER_VERSION}" && ln -s /opt/prowler/bin/prowler /usr/local/bin/prowler || echo "Prowler was not installed: the cloud posture tab shows not installed") \
+ && (npm install -g --prefix /opt/prism --no-audit --no-fund "@stoplight/prism-cli@${PRISM_VERSION}" && ln -s /opt/prism/bin/prism /usr/local/bin/prism || echo "Prism was not installed: API mocks use GLV's own mock server") \
+ && npm cache clean --force || true
 # Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
 # when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
 ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home
