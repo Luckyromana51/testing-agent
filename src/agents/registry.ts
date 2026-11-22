@@ -58,6 +58,8 @@ import { hreflangAgent, localSeoAgent, socialPreviewAgent } from "./web/seo-more
 import { jsRenderAgent } from "./web/js-render.js";
 import { aaaAgent, colourVisionAgent } from "./web/a11y-more.js";
 import { visualLayoutAgent } from "./web/visual-layout.js";
+import { frontendProfileAgent } from "./web/frontend-profile.js";
+import { slowCallsAgent } from "./web/slow-calls.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -151,6 +153,7 @@ export const WEB_AGENTS: WebAgent[] = [
   colourVisionAgent,
   aaaAgent,
   visualLayoutAgent,
+  frontendProfileAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
   ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
@@ -158,6 +161,7 @@ export const WEB_AGENTS: WebAgent[] = [
   // Signed-in apps (CRM, ERP, SaaS...): app calls, lists and tables, ID numbers, CSRF, tokens, and
   // the checks that sign in again in their own browser: who can see what, then the session.
   appCallsAgent,
+  slowCallsAgent,
   exposedAgent,
   tablesAgent,
   idNumbersAgent,
