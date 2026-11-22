@@ -56,6 +56,11 @@ import { appPerfTool } from "./app-perf.js";
 import { deeplinkRunTool } from "./deeplink-run.js";
 import { maestroTool } from "./maestro.js";
 import { talkbackTool } from "./talkback.js";
+import { browserExtTool, codeFuzzTool, desktopAppTool, iacTool, modelSecurityTool } from "./p3-code.js";
+import { pageWatchTool, printLayoutTool, webrtcTool } from "./p3-web.js";
+import { dataQualityTool, queuesTool, reconciliationTool, tracingTool } from "./p3-api.js";
+import { dbCodeTool, drDrillTool, k8sTool, logSeoTool } from "./p3-ops.js";
+import { aiCostTool, backlinksTool, iapTool, messagingTool, pqcTool, soc2Tool, storeListingTool } from "./p3-misc.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -80,6 +85,15 @@ export const TOOLS: Tool[] = [
   vpatTool,
   regionSpeedTool,
   inAppBrowserTool,
+  // 2026 gap report, wave 3 (P3) web checks.
+  printLayoutTool,
+  webrtcTool,
+  pageWatchTool,
+  aiCostTool,
+  messagingTool,
+  pqcTool,
+  soc2Tool,
+  backlinksTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
@@ -101,6 +115,11 @@ export const TOOLS: Tool[] = [
   openapiDiffTool,
   apiMockTool,
   paymentsTool,
+  // 2026 gap report, wave 3 (P3) API/data checks.
+  reconciliationTool,
+  dataQualityTool,
+  queuesTool,
+  tracingTool,
   // Source code
   gitleaksTool,
   opengrepTool,
@@ -110,6 +129,12 @@ export const TOOLS: Tool[] = [
   cloudTool,
   sbomTool,
   unitTestsTool,
+  // 2026 gap report, wave 3 (P3) code checks.
+  modelSecurityTool,
+  iacTool,
+  codeFuzzTool,
+  browserExtTool,
+  desktopAppTool,
   // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
   safariTool,
   voiceOverTool,
@@ -122,8 +147,15 @@ export const TOOLS: Tool[] = [
   deeplinkRunTool,
   maestroTool,
   talkbackTool,
+  storeListingTool,
+  iapTool,
   // Client connections (Connections tab): the client's server over SSH, their Hostinger account, their MCP server.
   ...CONNECTION_TOOLS,
+  // 2026 gap report, wave 3 (P3) ops checks over the client's SSH connection.
+  k8sTool,
+  logSeoTool,
+  drDrillTool,
+  dbCodeTool,
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);

@@ -60,6 +60,7 @@ import { aaaAgent, colourVisionAgent } from "./web/a11y-more.js";
 import { visualLayoutAgent } from "./web/visual-layout.js";
 import { frontendProfileAgent } from "./web/frontend-profile.js";
 import { slowCallsAgent } from "./web/slow-calls.js";
+import { a11yEngine2Agent, carbonAgent, hipaaAgent, imageVideoSeoAgent, mediaA11yAgent } from "./web/p3-agents.js";
 import { consentProofAgent, pciScriptAgent } from "./web/compliance.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
@@ -155,6 +156,11 @@ export const WEB_AGENTS: WebAgent[] = [
   aaaAgent,
   visualLayoutAgent,
   frontendProfileAgent,
+  carbonAgent,
+  imageVideoSeoAgent,
+  mediaA11yAgent,
+  a11yEngine2Agent,
+  hipaaAgent,
   consentProofAgent,
   pciScriptAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
