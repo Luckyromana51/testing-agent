@@ -30,7 +30,7 @@ export function popupLoginRisk(html: string): boolean {
 
 /** Whether the page tells the visitor to open it in a real browser. Pure, for tests. */
 export function blocksInApp(text: string): boolean {
-  return /open (this|in) (your )?(default |external )?browser|not supported in this browser|please open in chrome|unsupported browser/i.test(text);
+  return /open\b[^.]{0,30}\bbrowser|not supported in this browser|please open in chrome|unsupported browser|open in (chrome|safari|your browser)/i.test(text);
 }
 
 export const inAppBrowserTool: Tool = {

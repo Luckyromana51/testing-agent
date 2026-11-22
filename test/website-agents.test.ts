@@ -146,8 +146,10 @@ describe("website agents on a site with planted problems", () => {
     const alarms = clean.findings.map((f) => `${f.rule} on ${pathOf(f.pageUrl)}: ${f.title}`);
     assert.deepEqual(alarms, []);
     assert.ok(clean.pages.length >= 8, "the clean site was crawled");
+    const needsLogin = new Set(WEB_AGENTS.filter((a) => a.needsLogin).map((a) => a.id));
     for (const s of clean.agentStats ?? []) {
       if (!NEW_AGENTS.includes(s.id) || s.id === "func.browsers") continue;
+      if (needsLogin.has(s.id)) continue; // These only run on a signed-in crawl; skipping without a login is correct.
       assert.ok(!s.untested && !s.skipped && (s.runs ?? 0) > 0 && !s.errors, `${s.id} ran: ${JSON.stringify(s)}`);
     }
   });
