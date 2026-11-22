@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Severity } from "../types.js";
+import type { Category, Severity } from "../types.js";
 import { lastLine, runProcess, which } from "./process.js";
 import { readSmall, walk } from "./p3-code.js";
 import type { Tool, ToolContext, ToolFinding, ToolOutput } from "./types.js";
@@ -67,24 +67,37 @@ export const aiCostTool: Tool = {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (ctx.login?.token) headers.authorization = `Bearer ${ctx.login.token}`;
     const stat: AiCostStat = { latencyMs: [], tokens: [], timeouts: 0 };
+    let errors = 0;
+    let firstErr = "";
     for (let i = 0; i < runs; i++) {
       if (ctx.signal.aborted) break;
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 20_000);
+      const timeout = AbortSignal.timeout(20_000);
       const t0 = Date.now();
       try {
-        const res = await fetch(url, { method: "POST", headers, body: ctx.options.body || "{}", signal: ac.signal });
+        // Link to the run-wide signal so a cancelled run really stops, plus our own 20s per-call timeout.
+        const res = await fetch(url, { method: "POST", headers, body: ctx.options.body || "{}", signal: AbortSignal.any([ctx.signal, timeout]) });
+        if (!res.ok) {
+          errors++;
+          firstErr = firstErr || `HTTP ${res.status}`;
+          continue;
+        }
         const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         stat.latencyMs.push(Date.now() - t0);
         const usage = (json.usage ?? (json as { data?: { usage?: unknown } }).data?.usage) as Record<string, unknown> | undefined;
         const tok = Number(usage?.total_tokens ?? usage?.totalTokens ?? 0);
         if (tok) stat.tokens.push(tok);
-      } catch {
-        stat.timeouts++;
-      } finally {
-        clearTimeout(timer);
+      } catch (e) {
+        if (ctx.signal.aborted) throw ctx.signal.reason ?? e;
+        // A genuine per-call timeout (our 20s AbortSignal) counts as a timeout; anything else is an error.
+        if ((e as Error).name === "TimeoutError" || timeout.aborted) stat.timeouts++;
+        else {
+          errors++;
+          firstErr = firstErr || (e as Error).message;
+        }
       }
     }
+    // If nothing succeeded and the endpoint errored (auth, bad URL, 5xx), surface it as untested, not as a false "timeout".
+    if (!stat.latencyMs.length && !stat.timeouts && errors) throw new Error(`AI endpoint did not answer: ${firstErr}. Check the URL, the request body and the login token.`);
     const findings: ToolFinding[] = costProblems(stat).map((p) => ({ category: "performance", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: url, key: p.rule }));
     const avg = stat.latencyMs.length ? Math.round(stat.latencyMs.reduce((a, b) => a + b, 0) / stat.latencyMs.length) : 0;
     ctx.log(`AI cost: ${runs} run(s), avg ${avg}ms, ${stat.timeouts} timeout(s)`);
@@ -108,7 +121,9 @@ export function messageProblems(template: string, channel: "sms" | "whatsapp"): 
   // Variable placeholders: {{1}} / {name} that may be left unfilled.
   const vars = template.match(/\{\{?\s*\w+\s*\}?\}/g) ?? [];
   if (vars.length > 0 && !/DLT|template.?id/i.test(template) && channel === "sms") out.push({ rule: "msg:no-dlt", severity: "info", title: "No DLT template id noted", detail: "In India, templated SMS must be registered on the DLT platform and sent with the approved template id, or it is blocked. Register this template and record its DLT id." });
-  for (const v of vars) if (/\{\{?\s*\}?\}/.test(v)) out.push({ rule: "msg:empty-var", severity: "low", title: "Empty placeholder in template", detail: `The template has an empty placeholder (${v}). Give every variable a number/name so it is filled correctly.` });
+  // Empty placeholders like {{}} or {} (the var regex above requires a name, so scan the raw template).
+  const empties = template.match(/\{\{\s*\}\}|\{\s*\}/g) ?? [];
+  for (const v of empties) out.push({ rule: "msg:empty-var", severity: "low", title: "Empty placeholder in template", detail: `The template has an empty placeholder (${v}). Give every variable a number/name so it is filled correctly.` });
   return out;
 }
 
@@ -196,15 +211,28 @@ export const pqcTool: Tool = {
       }
     })();
     const openssl = await which("openssl");
-    if (host && openssl) {
-      try {
-        const r = await runProcess(openssl, ["s_client", "-groups", "X25519MLKEM768", "-connect", host.includes(":") ? host : `${host}:443`, "-servername", host.split(":")[0]], { signal: ctx.signal, timeoutMs: 20_000, env: { ...process.env } });
-        const out = `${r.stdout}\n${r.stderr}`;
-        if (pqcTlsProblem(out))
-          findings.push({ category: "security", rule: "pqc:no-hybrid-tls", severity: "low", title: "Server TLS has no post-quantum key exchange", detail: `${host} did not negotiate an ML-KEM hybrid group. Plan to enable X25519MLKEM768 (OpenSSL 3.5+, recent nginx/BoringSSL) so recorded traffic stays safe against future quantum computers ("harvest now, decrypt later").`, pageUrl: ctx.startUrl, key: "pqc:no-hybrid-tls" });
-        ctx.log("PQC TLS probe complete");
-      } catch (e) {
-        ctx.log(`PQC TLS probe skipped: ${lastLine((e as Error).message)}`);
+    // Only probe a real server (not a code project, whose startUrl is the repo URL), and only when the
+    // local OpenSSL is 3.5+ — older OpenSSL cannot offer the ML-KEM group, so a "no PQC" result would be
+    // about our own tool, not the client's server.
+    let tlsNote = "";
+    if (host && openssl && ctx.product !== "code") {
+      const ver = await runProcess(openssl, ["version"], { signal: ctx.signal, timeoutMs: 5_000, env: { ...process.env } }).catch(() => null);
+      const m = ver && /OpenSSL\s+(\d+)\.(\d+)/.exec(`${ver.stdout}`);
+      const newEnough = m ? Number(m[1]) > 3 || (Number(m[1]) === 3 && Number(m[2]) >= 5) : false;
+      if (!newEnough) {
+        tlsNote = "TLS post-quantum probe skipped: this server's OpenSSL is older than 3.5 (cannot offer ML-KEM). Run from a host with OpenSSL 3.5+.";
+        ctx.log(tlsNote);
+      } else {
+        try {
+          const r = await runProcess(openssl, ["s_client", "-groups", "X25519MLKEM768", "-connect", host.includes(":") ? host : `${host}:443`, "-servername", host.split(":")[0]], { signal: ctx.signal, timeoutMs: 20_000, env: { ...process.env } });
+          const out = `${r.stdout}\n${r.stderr}`;
+          // Only judge when a handshake actually negotiated a group; otherwise the probe failed, not the server.
+          if (/Negotiated group:/i.test(out) && pqcTlsProblem(out))
+            findings.push({ category: "security", rule: "pqc:no-hybrid-tls", severity: "low", title: "Server TLS has no post-quantum key exchange", detail: `${host} did not negotiate an ML-KEM hybrid group. Plan to enable X25519MLKEM768 (OpenSSL 3.5+, recent nginx/BoringSSL) so recorded traffic stays safe against future quantum computers ("harvest now, decrypt later").`, pageUrl: ctx.startUrl, key: "pqc:no-hybrid-tls" });
+          ctx.log("PQC TLS probe complete");
+        } catch (e) {
+          ctx.log(`PQC TLS probe skipped: ${lastLine((e as Error).message)}`);
+        }
       }
     }
     // Code scan for weak crypto.
@@ -218,11 +246,11 @@ export const pqcTool: Tool = {
           const key = `pqc:weak-crypto:${algo}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          findings.push({ category: "security", rule: "pqc:weak-crypto", severity: algo.startsWith("MD5") || algo.startsWith("SHA-1") ? "low" : "medium", title: `Weak cryptography in code: ${algo}`, detail: `Found ${algo} in ${rel}. Replace with modern algorithms: SHA-256/BLAKE2 for hashing, AES-GCM for encryption, RSA ≥3072 or ECDSA/Ed25519 for keys.`, pageUrl: rel, key });
+          findings.push({ category: "security", rule: "pqc:weak-crypto", severity: algo.startsWith("MD5") || algo.startsWith("SHA-1") ? "low" : "medium", title: `Weak cryptography in code: ${algo}`, detail: `Found ${algo} in ${rel}. First replace it with a modern classical algorithm (SHA-256/BLAKE2 for hashing, AES-GCM for encryption, RSA ≥3072 or ECDSA/Ed25519 for keys). Note: those classical key algorithms are good hygiene but are NOT themselves quantum-safe — post-quantum migration (ML-KEM/ML-DSA) is a separate, later step.`, pageUrl: rel, key });
         }
       }
     }
-    return { findings, summary: [`${findings.length} crypto issue(s)`], tested: host || ctx.sourceDir || "code" };
+    return { findings, summary: [`${findings.length} crypto issue(s)`, ...(tlsNote ? [tlsNote] : [])], tested: host || ctx.sourceDir || "code" };
   },
 };
 
@@ -335,14 +363,18 @@ export const backlinksTool: Tool = {
     let result = { count: 0, sample: [] as string[] };
     try {
       const api = `https://index.commoncrawl.org/${encodeURIComponent(index)}-index?url=${encodeURIComponent(`*.${host}`)}&output=json&limit=1000`;
-      const res = await fetch(api, { signal: ctx.signal });
+      const res = await fetch(api, { signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(60_000)]) });
+      if (!res.ok) throw new Error(`Common Crawl index returned ${res.status} (the index name ${index} may not exist)`);
       result = parseCdx(await res.text());
       ctx.log(`Common Crawl: ${result.count} record(s)`);
     } catch (e) {
       ctx.log(`Common Crawl query failed: ${(e as Error).message}`);
-      findings.push({ category: "seo", rule: "backlink:unavailable", severity: "info", title: "Could not reach the Common Crawl index", detail: "The Common Crawl index was not reachable from here. Run this against a Common Crawl mirror on GLV servers, which is the in-house setup. Google-ranking data and a full paid-index backlink graph cannot be reproduced in-house.", pageUrl: ctx.startUrl, key: "backlink:unavailable" });
+      findings.push({ category: "seo", rule: "backlink:unavailable", severity: "info", title: "Could not reach the Common Crawl index", detail: `The Common Crawl index was not reachable (${(e as Error).message}). Run this against a Common Crawl mirror on GLV servers, which is the in-house setup. Google-ranking data and a full paid-index backlink graph cannot be reproduced in-house.`, pageUrl: ctx.startUrl, key: "backlink:unavailable" });
     }
-    return { findings, summary: [result.count ? `${result.count} index record(s), ${result.sample.length} linking host(s) sampled` : "No Common Crawl data"], tested: host, table: result.sample.length ? { title: "Linking hosts (sample)", columns: ["Host"], rows: result.sample.map((h) => [h]) } : undefined };
+    // Honest framing: the URL-index query returns Common Crawl's own captures OF this domain, which show
+    // the domain's crawled footprint — not a true inbound-link (backlink) graph. A real backlink graph needs
+    // Common Crawl's separate web-graph dataset or a paid index; this is a free, directional proxy.
+    return { findings, summary: [result.count ? `${result.count} Common Crawl capture(s) of this domain (crawled footprint; not a true inbound-link graph)` : "No Common Crawl data"], tested: host, table: result.sample.length ? { title: "Common Crawl captures of this domain (sample)", columns: ["Host"], rows: result.sample.map((h) => [h]) } : undefined };
   },
 };
 
@@ -378,7 +410,7 @@ export const storeListingTool: Tool = {
     "From the uploaded app, checks the things stores reject for: a Data safety form / privacy labels that must match the permissions and tracking SDKs, and an app over the store's size limit. Static — the app is read, not launched.",
   checks: ["Sensitive permissions needing a Data safety declaration", "Tracking SDKs needing disclosure / ATT", "App size vs the store's APK limit"],
   products: ["android", "ios"],
-  category: "mobile",
+  category: "security",
   safety: "safe",
   takes: "under a minute",
   licence: "GLV's own",
@@ -390,7 +422,9 @@ export const storeListingTool: Tool = {
   async run(ctx: ToolContext): Promise<ToolOutput> {
     const app = ctx.app;
     if (!app) throw new Error("No app summary: upload the APK/AAB or IPA first.");
-    const findings: ToolFinding[] = storeListingProblems(app).map((p) => ({ category: "mobile", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: `app://${app.id}`, key: p.rule }));
+    // android/ios runs score security/functional/performance (not "mobile"), so map each finding there.
+    const storeCat = (rule: string): Category => (rule === "store:size" ? "performance" : "security");
+    const findings: ToolFinding[] = storeListingProblems(app).map((p) => ({ category: storeCat(p.rule), rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: `app://${app.id}`, key: p.rule }));
     ctx.log(`Store listing: ${findings.length} item(s)`);
     return { findings, summary: [`${findings.length} store-listing item(s)`], tested: app.name ?? app.id };
   },
@@ -421,7 +455,7 @@ export const iapTool: Tool = {
     "For apps that sell in-app purchases or subscriptions, checks the setup from the uploaded app: a billing library is present, a backend exists to validate receipts, and reminds you to test buy/restore/cancel/refund on the stores' test tracks.",
   checks: ["Detects Play Billing / StoreKit / RevenueCat", "Server-side receipt validation present", "Reminds to test buy, restore, cancel, refund"],
   products: ["android", "ios"],
-  category: "mobile",
+  category: "security",
   safety: "safe",
   takes: "under a minute",
   licence: "GLV's own",
@@ -434,7 +468,9 @@ export const iapTool: Tool = {
     const app = ctx.app;
     if (!app) throw new Error("No app summary: upload the APK/AAB or IPA first.");
     const problems = iapProblems(app);
-    const findings: ToolFinding[] = problems.map((p) => ({ category: "mobile", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: `app://${app.id}`, key: p.rule }));
+    // android/ios runs score security/functional/performance (not "mobile").
+    const iapCat = (rule: string): Category => (rule === "iap:test-flows" ? "functional" : "security");
+    const findings: ToolFinding[] = problems.map((p) => ({ category: iapCat(p.rule), rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: `app://${app.id}`, key: p.rule }));
     ctx.log(problems.length ? `IAP: billing detected, ${problems.length} note(s)` : "IAP: no billing library found");
     return { findings, summary: [problems.length ? `Billing detected, ${problems.length} note(s)` : "No in-app billing found"], tested: app.name ?? app.id };
   },

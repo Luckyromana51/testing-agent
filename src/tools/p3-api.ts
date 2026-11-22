@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { Severity } from "../types.js";
 import type { Tool, ToolContext, ToolFinding, ToolOutput } from "./types.js";
 
@@ -280,10 +281,13 @@ export const queuesTool: Tool = {
     try {
       spec = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      // Minimal YAML-ish fallback: just look for asyncapi + channels keys.
-      spec = { asyncapi: /asyncapi\s*:/.test(text) ? "yaml" : undefined, channels: /channels\s*:/.test(text) ? { _yaml: {} } : {} };
+      try {
+        spec = (parseYaml(text) as Record<string, unknown>) ?? {};
+      } catch {
+        throw new Error("Could not parse the AsyncAPI file as JSON or YAML.");
+      }
     }
-    const findings: ToolFinding[] = asyncApiProblems(spec).map((p) => ({ category: "functional", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: file, key: p.rule }));
+    const findings: ToolFinding[] = asyncApiProblems(spec).map((p, i) => ({ category: "functional", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: file, key: `${p.rule}:${i}` }));
     const channels = Object.keys((spec.channels as Record<string, unknown>) ?? {}).length;
     ctx.log(`AsyncAPI: ${channels} channel(s), ${findings.length} issue(s)`);
     return { findings, summary: [`${channels} channel(s), ${findings.length} issue(s)`], tested: `${channels} channels` };

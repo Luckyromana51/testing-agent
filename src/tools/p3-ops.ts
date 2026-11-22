@@ -43,7 +43,7 @@ const K8S_SCRIPT = [
 export function k8sFindings(out: string, at: string): ToolFinding[] {
   const s = sections(out);
   const findings: ToolFinding[] = [];
-  const add = (rule: string, severity: Severity, title: string, detail: string) => findings.push({ category: "security", rule, severity, title, detail, pageUrl: at, key: rule });
+  const add = (rule: string, severity: Severity, title: string, detail: string, key = rule) => findings.push({ category: "security", rule, severity, title, detail, pageUrl: at, key });
   const docker = (s.docker ?? []).join(" ");
   if (docker) {
     if (/rootless=false/.test(docker)) add("k8s:docker-rootful", "medium", "Docker runs as root (not rootless)", "The Docker daemon runs as root, so a container escape becomes host root. Consider rootless Docker, user namespaces, and drop capabilities.");
@@ -52,8 +52,8 @@ export function k8sFindings(out: string, at: string): ToolFinding[] {
   for (const line of s.pods ?? []) {
     const m = /^(\S+)\s+(\S+)\s+priv=(\S*)\s+hostNet=(\S*)/.exec(line.trim());
     if (!m) continue;
-    if (/true/.test(m[3])) add("k8s:privileged-pod", "high", `Privileged pod: ${m[1]}/${m[2]}`, "This pod runs a privileged container with full host access. Remove privileged: true and grant only the capabilities it needs.");
-    if (/true/.test(m[4])) add("k8s:host-network", "medium", `Pod on host network: ${m[1]}/${m[2]}`, "hostNetwork: true removes network isolation. Use a normal pod network unless a node agent truly needs the host.");
+    if (/true/.test(m[3])) add("k8s:privileged-pod", "high", `Privileged pod: ${m[1]}/${m[2]}`, "This pod runs a privileged container with full host access. Remove privileged: true and grant only the capabilities it needs.", `k8s:privileged-pod:${m[1]}/${m[2]}`);
+    if (/true/.test(m[4])) add("k8s:host-network", "medium", `Pod on host network: ${m[1]}/${m[2]}`, "hostNetwork: true removes network isolation. Use a normal pod network unless a node agent truly needs the host.", `k8s:host-network:${m[1]}/${m[2]}`);
   }
   if (!docker && !(s.kube ?? []).join("").includes("installed"))
     add("k8s:none", "info", "No Docker or Kubernetes found on this host", "This server has no Docker daemon or kubectl. If the cluster runs elsewhere, run this check from a host with cluster access, or install kube-bench/Kubescape there.");
@@ -174,8 +174,13 @@ export function drFindings(s: Record<string, string[]>, at: string): ToolFinding
     return findings;
   }
   const newest = backups.length ? Math.max(...backups) : 0;
-  const ageDays = newest ? (now - newest) / 86400 : 999;
-  if (ageDays > 2) add("dr:stale-backup", "high", `Newest backup is ${Math.round(ageDays)} days old`, "The most recent backup is stale. A failure now would lose days of data. Fix the backup job and alert on failures.");
+  if (!newest) {
+    // A backup job is scheduled but no backup file was found where we looked.
+    add("dr:stale-backup", "high", "A backup job is scheduled but no backup file was found", "A backup cron job exists, but no recent dump/archive was found in the usual places. The job may be failing silently. Check it runs and writes where expected, and alert on failure.");
+  } else {
+    const ageDays = (now - newest) / 86400;
+    if (ageDays > 2) add("dr:stale-backup", "high", `Newest backup is ${Math.round(ageDays)} days old`, "The most recent backup is stale. A failure now would lose days of data. Fix the backup job and alert on failures.");
+  }
   if (!restoreTests) add("dr:no-restore-test", "medium", "No restore/verify test found", "Backups exist but nothing restores them regularly. An untested backup often fails when you need it. Schedule a monthly restore to a temp server and run smoke tests against it.");
   return findings;
 }
@@ -238,7 +243,7 @@ export function dbCodeFindings(s: Record<string, string[]>, at: string): ToolFin
       rule: "dbcode:untested",
       severity: "medium",
       title: `${routines} stored procedure(s) and ${triggers} trigger(s) with no test framework`,
-      detail: `The database holds business logic in ${routines} routine(s) and ${triggers} trigger(s), but no database test framework (pgTAP / tSQLt) was found. This code is often the least tested and the hardest to change safely. Add pgTAP (PostgreSQL) or tSQLt (SQL Server) unit tests for it.`,
+      detail: `The database holds business logic in ${routines} routine(s) and ${triggers} trigger(s), but no database test framework was found. This code is often the least tested and the hardest to change safely. Add unit tests with the framework that matches the engine: MyTAP (MySQL/MariaDB — this check reads MySQL), pgTAP (PostgreSQL) or tSQLt (SQL Server).`,
       pageUrl: at,
       key: "dbcode:untested",
     });
@@ -248,10 +253,10 @@ export function dbCodeFindings(s: Record<string, string[]>, at: string): ToolFin
 export const dbCodeTool: Tool = {
   id: "db-code",
   name: "Database code tests (procedures & triggers)",
-  maker: "GLV Infotech (built in), with pgTAP / tSQLt",
+  maker: "GLV Infotech (built in), with MyTAP / pgTAP / tSQLt",
   description:
-    "Over SSH, lists the stored procedures and triggers in the database and checks whether a database test framework (pgTAP, tSQLt) is in place. Business logic in the database is often untested and risky to change. Read-only.",
-  checks: ["Counts stored procedures and triggers", "Looks for pgTAP / tSQLt", "Recommends unit tests for database code", "Read-only questions to information_schema"],
+    "Over SSH, lists the MySQL stored procedures and triggers and checks whether a database test framework is in place. Business logic in the database is often untested and risky to change. Read-only. (Reads MySQL today; recommends MyTAP for it.)",
+  checks: ["Counts MySQL stored procedures and triggers", "Flags missing database unit tests", "Recommends MyTAP (MySQL) / pgTAP / tSQLt", "Read-only questions to information_schema"],
   products: ["crm", "saas", "api", "code"],
   category: "functional",
   safety: "safe",
@@ -268,8 +273,11 @@ export const dbCodeTool: Tool = {
     try {
       ctx.log(`Database-code check on ${c.host}`);
       const out = await sshRun(s, DBCODE_SCRIPT, ctx.signal, 90_000);
-      const findings = dbCodeFindings(sections(out), where(c));
-      return { findings, summary: [findings.length ? "Untested database code found" : "No untested database code detected"], tested: `Read ${c.host} database schema (read-only)` };
+      const sec = sections(out);
+      const findings = dbCodeFindings(sec, where(c));
+      const readMysql = (sec.mysql ?? []).some((l) => l.trim());
+      const summary = [findings.length ? "Untested database code found" : readMysql ? "Database code present and a test framework is in place (or no routines)" : "No readable MySQL config on this host (nothing read — add ~/.my.cnf to check)"];
+      return { findings, summary, tested: readMysql ? `Read ${c.host} database schema (read-only)` : `No MySQL read on ${c.host}` };
     } finally {
       await s.cleanup();
     }

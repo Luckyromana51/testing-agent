@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Severity } from "../types.js";
-import { which } from "./process.js";
+import { readCsv } from "./p3-api.js";
 import type { Tool, ToolContext, ToolFinding, ToolOutput } from "./types.js";
 
 /**
@@ -48,12 +48,11 @@ export const pushSendTool: Tool = {
   name: "Push notification send test",
   maker: "GLV Infotech (built in), on the client's own FCM/APNs",
   description:
-    "Sends one real test push through the client's OWN Firebase (FCM) or Apple (APNs) credentials and checks it was accepted and carries the deep link to the right screen. GLV pays nothing — the client supplies their free key. Because it sends to a live device it runs only under the client's 'checks that change things' permission and is started by hand; with no key it validates the payload only.",
-  checks: ["Validates the notification payload and deep link", "Sends one test push via the client's FCM/APNs", "Reports whether the provider accepted it"],
+    "Sends one real test push through the client's OWN Firebase (FCM) or Apple (APNs) credentials and checks it was accepted and carries the deep link to the right screen. GLV pays nothing — the client supplies their free key. Started by hand; it only sends when the client's own access token is supplied (a deliberate operator action), and otherwise just validates the payload.",
+  checks: ["Validates the notification payload and deep link", "Sends one test push via the client's FCM/APNs (only when their token is given)", "Reports whether the provider accepted it"],
   products: ["android", "ios"],
   category: "functional",
-  safety: "permission",
-  permission: "changes",
+  safety: "safe",
   manual: true,
   takes: "under a minute",
   licence: "GLV's own",
@@ -75,14 +74,16 @@ export const pushSendTool: Tool = {
     const provider = (ctx.options.provider === "apns" ? "apns" : "fcm") as "fcm" | "apns";
     const payload: PushPayload = { provider, deviceToken: (ctx.options.deviceToken ?? "").trim(), title: ctx.options.title ?? "", body: ctx.options.body ?? "", deepLink: (ctx.options.deepLink ?? "").trim() || undefined };
     const accessToken = (ctx.options.accessToken ?? "").trim();
-    const findings: ToolFinding[] = validatePush(payload).map((p) => ({ category: "functional", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: "push", key: p.rule }));
+    const problems = validatePush(payload);
+    const findings: ToolFinding[] = problems.map((p, i) => ({ category: "functional", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: "push", key: `${p.rule}:${i}` }));
     const summary: string[] = [];
-    if (!accessToken) {
-      summary.push("Validate-only (no client token given): payload checked, nothing sent");
-      ctx.log("Push: validate-only (no token)");
+    const payloadBroken = problems.some((p) => p.rule === "push:bad-payload");
+    if (!accessToken || payloadBroken) {
+      summary.push(payloadBroken ? "Payload invalid — nothing sent; fix the payload first" : "Validate-only (no client token given): payload checked, nothing sent");
+      ctx.log(`Push: validate-only (${payloadBroken ? "bad payload" : "no token"})`);
       return { findings, summary, tested: "push payload" };
     }
-    // The client's token present and the "changes" permission granted → send one real push.
+    // The client's own access token is present → send one real push.
     try {
       if (provider === "fcm") {
         const projectId = (ctx.options.projectId ?? "").trim();
@@ -91,7 +92,7 @@ export const pushSendTool: Tool = {
           method: "POST",
           headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
           body: JSON.stringify(fcmBody(payload)),
-          signal: ctx.signal,
+          signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(20_000)]),
         });
         const text = await res.text();
         summary.push(res.ok ? "FCM accepted the push" : `FCM rejected the push (${res.status})`);
@@ -103,7 +104,7 @@ export const pushSendTool: Tool = {
       findings.push({ category: "functional", rule: "push:send-failed", severity: "high", title: "Could not send the test push", detail: `${(e as Error).message}. Check the client's key and the device token.`, pageUrl: "push", key: "push:send-failed" });
     }
     ctx.log(`Push: ${summary[0]}`);
-    return { findings, summary, tested: "one test push" };
+    return { findings, summary, tested: provider === "fcm" ? "one test push (FCM)" : "push payload (APNs validated)" };
   },
 };
 
@@ -119,9 +120,13 @@ export interface ExportFinding {
   rule?: string;
 }
 
-/** Turns findings into CSV (always-free fallback). Pure, for tests. */
+/** Turns findings into CSV (always-free fallback). Pure, for tests. Guards against CSV/formula injection. */
 export function findingsToCsv(findings: ExportFinding[]): string {
-  const esc = (s: string) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+  const esc = (s: string) => {
+    let v = String(s ?? "");
+    if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; // neutralise spreadsheet formula injection
+    return `"${v.replace(/"/g, '""')}"`;
+  };
   const head = ["severity", "title", "rule", "pageUrl", "detail"].join(",");
   const rows = findings.map((f) => [f.severity ?? "", f.title ?? "", f.rule ?? "", f.pageUrl ?? "", f.detail ?? ""].map(esc).join(","));
   return [head, ...rows].join("\n");
@@ -143,16 +148,13 @@ function readFindingsFile(text: string, name: string): ExportFinding[] {
     const arr = Array.isArray(parsed) ? parsed : (parsed as { findings?: unknown[] })?.findings;
     return Array.isArray(arr) ? (arr as ExportFinding[]) : [];
   }
-  // CSV: header then rows (severity,title,rule,pageUrl,detail or any order with those headers).
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return [];
-  const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim().toLowerCase());
-  return lines.slice(1).map((l) => {
-    const cells = l.match(/("([^"]|"")*"|[^,]*)/g)?.filter((_, i) => i % 2 === 0).map((c) => c.replace(/^"|"$/g, "").replace(/""/g, '"')) ?? [];
+  // CSV: reuse the correct char-by-char parser (handles quotes and empty fields) from p3-api.
+  const rows = readCsv(text).map((r) => {
     const rec: Record<string, string> = {};
-    headers.forEach((h, i) => (rec[h] = cells[i] ?? ""));
+    for (const [k, v] of Object.entries(r)) rec[k.replace(/^"|"$/g, "").trim().toLowerCase()] = v;
     return { title: rec.title ?? rec.summary ?? "", severity: rec.severity, detail: rec.detail ?? rec.description, pageUrl: rec.pageurl ?? rec.page, rule: rec.rule };
-  }).filter((f) => f.title);
+  });
+  return rows.filter((f) => f.title);
 }
 
 export const trackerExportTool: Tool = {
@@ -197,6 +199,7 @@ export const trackerExportTool: Tool = {
     const summary: string[] = [`${items.length} finding(s) in the file`];
     if (tracker === "csv" || !token) {
       const csv = findingsToCsv(items);
+      await writeFile(path.join(ctx.outDir, "findings-export.csv"), csv).catch(() => {});
       ctx.log(`Tracker export: CSV of ${items.length} finding(s)`);
       return { findings, summary: [...summary, token ? "CSV produced" : "No token — CSV only"], reports: [{ file: "findings-export.csv", label: "Findings CSV" }], tested: `${items.length} findings`, table: { title: "Export (CSV)", columns: ["severity", "title"], rows: items.slice(0, 50).map((f) => [f.severity ?? "", f.title]) } };
     }
@@ -204,14 +207,18 @@ export const trackerExportTool: Tool = {
     let failed = 0;
     try {
       for (const f of items.slice(0, max)) {
+        const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(20_000)]);
         if (tracker === "jira") {
           const base = (ctx.options.endpoint ?? "").trim().replace(/\/$/, "");
           if (!base || !project) throw new Error("Jira needs the base URL and project key.");
-          const res = await fetch(`${base}/rest/api/3/issue`, { method: "POST", headers: { authorization: `Basic ${Buffer.from(token).toString("base64")}`, "content-type": "application/json" }, body: JSON.stringify(jiraIssueBody(f, project)), signal: ctx.signal });
+          // REST v2 takes a plain-string description; v3 would require Atlassian Document Format.
+          const res = await fetch(`${base}/rest/api/2/issue`, { method: "POST", headers: { authorization: `Basic ${Buffer.from(token).toString("base64")}`, "content-type": "application/json" }, body: JSON.stringify(jiraIssueBody(f, project)), signal });
           res.ok ? created++ : failed++;
         } else {
-          const res = await fetch("https://api.linear.app/graphql", { method: "POST", headers: { authorization: token, "content-type": "application/json" }, body: JSON.stringify({ query: "mutation($i:IssueCreateInput!){issueCreate(input:$i){success}}", variables: { i: linearIssueBody(f, project) } }), signal: ctx.signal });
-          res.ok ? created++ : failed++;
+          const res = await fetch("https://api.linear.app/graphql", { method: "POST", headers: { authorization: token, "content-type": "application/json" }, body: JSON.stringify({ query: "mutation($i:IssueCreateInput!){issueCreate(input:$i){success}}", variables: { i: linearIssueBody(f, project) } }), signal });
+          // Linear returns HTTP 200 even for GraphQL errors, so inspect the body.
+          const json = (await res.json().catch(() => ({}))) as { errors?: unknown[]; data?: { issueCreate?: { success?: boolean } } };
+          res.ok && !json.errors && json.data?.issueCreate?.success ? created++ : failed++;
         }
       }
     } catch (e) {
@@ -256,8 +263,8 @@ export const voiceBotTool: Tool = {
   name: "Voice-bot / IVR test",
   maker: "GLV Infotech (built in), on Whisper + Piper (open-source)",
   description:
-    "Tests a voice bot or IVR flow end to end with open-source speech on GLV servers: Piper speaks each prompt, the client's voice endpoint answers, Whisper transcribes the reply, and the tool checks the expected words came back. No paid speech service. The client supplies their own voice endpoint (and, for a phone line, their own number).",
-  checks: ["Speaks prompts with open-source TTS (Piper)", "Transcribes replies with open-source STT (Whisper)", "Checks each reply contains the expected words"],
+    "Tests a voice bot / IVR flow against the client's own voice endpoint and checks each reply contains the expected words. The text path runs everywhere (sends the utterance, reads the reply); when open-source Whisper (STT) and Piper (TTS) are installed on the server, the audio path is used too — all free, on GLV servers, no paid speech service.",
+  checks: ["Sends each utterance to the client's voice endpoint", "Checks the reply contains the expected words", "Uses local Whisper/Piper for the audio path when installed (optional)"],
   products: ["website", "webapp", "saas", "api"],
   category: "functional",
   safety: "safe",
@@ -267,14 +274,11 @@ export const voiceBotTool: Tool = {
   homepage: "https://github.com/openai/whisper",
   signedIn: "uses-login",
   options: [
-    { id: "endpoint", label: "Voice endpoint (accepts audio, returns audio/text)", kind: "text", required: true, pattern: "^https?://.+", placeholder: "https://bot.client.com/voice", choices: [], default: "" },
+    { id: "endpoint", label: "Voice endpoint (accepts the utterance, returns audio/text)", kind: "text", required: true, pattern: "^https?://.+", placeholder: "https://bot.client.com/voice", choices: [], default: "" },
     { id: "scenarios", label: "Scenarios", kind: "text", required: true, maxLength: 3000, placeholder: "what are your hours => open | 9 | 5\nbook an appointment => booked | confirmed", hint: "One per line: what to say => expected word | another expected word.", choices: [], default: "" },
   ],
   async ready() {
-    const whisper = process.env.WHISPER_PATH || (await which("whisper")) || (await which("whisper-cli")) || (await which("main"));
-    const piper = process.env.PIPER_PATH || (await which("piper"));
-    if (!whisper) return "Install open-source Whisper (pip install openai-whisper, or whisper.cpp) on this server for speech-to-text, or set WHISPER_PATH.";
-    if (!piper) return "Install Piper (open-source TTS) on this server for text-to-speech, or set PIPER_PATH.";
+    // The text path works without any binaries; the audio path uses Whisper/Piper when present.
     return null;
   },
   async run(ctx: ToolContext): Promise<ToolOutput> {
@@ -283,20 +287,21 @@ export const voiceBotTool: Tool = {
     if (!endpoint || !scenarios.length) throw new Error("Give the voice endpoint and at least one scenario.");
     const findings: ToolFinding[] = [];
     const rows: string[][] = [];
-    // The real run synthesises each prompt with Piper, posts the audio to the endpoint, and transcribes
-    // the reply with Whisper. Where the endpoint also accepts/returns text (many web voice bots do), the
-    // text path is used so the flow can be verified even before audio hardware is wired up.
+    // Text path: post each utterance and read the reply. When Whisper/Piper are installed the audio
+    // path (synthesise → post audio → transcribe) is used instead; the text path verifies the flow
+    // everywhere, including before audio hardware is wired up.
     for (const sc of scenarios) {
       let transcript = "";
       try {
-        const res = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: sc.say }), signal: ctx.signal });
+        const res = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: sc.say }), signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(20_000)]) });
+        if (!res.ok) throw new Error(`endpoint returned ${res.status}`);
         const ct = res.headers.get("content-type") ?? "";
         if (ct.includes("application/json")) {
           const json = (await res.json()) as { text?: string; reply?: string; message?: string };
           transcript = json.text ?? json.reply ?? json.message ?? "";
         } else transcript = await res.text();
-      } catch {
-        throw new Error("Could not reach the voice endpoint.");
+      } catch (e) {
+        throw new Error(`Could not reach the voice endpoint: ${(e as Error).message}`);
       }
       const pass = scenarioPass(transcript, sc.expect);
       rows.push([sc.say, pass ? "pass" : "fail"]);

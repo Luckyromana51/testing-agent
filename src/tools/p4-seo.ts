@@ -97,27 +97,32 @@ export const rankTrackingTool: Tool = {
     if (!searxng && !(key && cx)) throw new Error("Set a SearXNG endpoint, or the client's Google key and cx. Both are free.");
     const findings: ToolFinding[] = [];
     const rows: string[][] = [];
+    const domainUrl = `https://${domain.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;
     for (const kw of keywords) {
       let results: SerpResult[] = [];
       try {
+        const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(20_000)]);
         if (searxng) {
           const u = `${searxng.replace(/\/$/, "")}/search?q=${encodeURIComponent(kw)}&format=json`;
-          const res = await fetch(u, { signal: ctx.signal, headers: { accept: "application/json" } });
+          const res = await fetch(u, { signal, headers: { accept: "application/json" } });
+          if (!res.ok) throw new Error(`SearXNG returned ${res.status}`);
           results = parseSearxng(await res.json());
         } else {
           const u = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(kw)}`;
-          const res = await fetch(u, { signal: ctx.signal });
+          const res = await fetch(u, { signal });
+          if (!res.ok) throw new Error(`Google Custom Search returned ${res.status} (quota or key/cx problem)`);
           results = parseGoogleCse(await res.json());
         }
-      } catch {
-        throw new Error("Could not reach the search source. Check the SearXNG endpoint or the Google key/cx.");
+      } catch (e) {
+        // A transport/quota/auth error must not masquerade as "not ranking" — fail the run so it shows as untested.
+        throw new Error(`Could not reach the search source: ${(e as Error).message}. Check the SearXNG endpoint or the Google key/cx.`);
       }
       const pos = findRank(results, domain);
       rows.push([kw, pos ? `#${pos}` : "not in top results"]);
       if (!pos)
-        findings.push({ category: "seo", rule: "rank:not-found", severity: "medium", title: `Not ranking for "${kw}"`, detail: `The domain did not appear in the sampled results for "${kw}". Strengthen the page targeting this keyword (title, headings, content depth, internal links) and earn links to it.`, pageUrl: `https://${domain}`, key: `rank:not-found:${kw}` });
+        findings.push({ category: "seo", rule: "rank:not-found", severity: "medium", title: `Not ranking for "${kw}"`, detail: `The domain did not appear in the sampled results for "${kw}". Strengthen the page targeting this keyword (title, headings, content depth, internal links) and earn links to it.`, pageUrl: domainUrl, key: `rank:not-found:${kw}` });
       else if (pos > target)
-        findings.push({ category: "seo", rule: "rank:low", severity: "low", title: `"${kw}" ranks below target (#${pos})`, detail: `The domain ranks at about position ${pos} for "${kw}", below the target of ${target}. Improve the matching page and its links to climb.`, pageUrl: `https://${domain}`, key: `rank:low:${kw}` });
+        findings.push({ category: "seo", rule: "rank:low", severity: "low", title: `"${kw}" ranks below target (#${pos})`, detail: `The domain ranks at about position ${pos} for "${kw}", below the target of ${target}. Improve the matching page and its links to climb.`, pageUrl: domainUrl, key: `rank:low:${kw}` });
     }
     ctx.log(`Rank: ${keywords.length} keyword(s), ${findings.length} below target`);
     return {
@@ -190,6 +195,7 @@ export const aiVisibilityTool: Tool = {
     if (apiKey) headers.authorization = `Bearer ${apiKey}`;
     const hits: boolean[] = [];
     const missed: string[] = [];
+    const domainUrl = `https://${domain.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;
     for (const prompt of prompts) {
       let answer = "";
       try {
@@ -197,12 +203,14 @@ export const aiVisibilityTool: Tool = {
           method: "POST",
           headers,
           body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0 }),
-          signal: ctx.signal,
+          signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(60_000)]),
         });
+        // Don't let a 401/429/5xx look like "the brand wasn't mentioned" — fail the run (shows as untested).
+        if (!res.ok) throw new Error(`LLM endpoint returned ${res.status}`);
         const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
         answer = json.choices?.[0]?.message?.content ?? "";
-      } catch {
-        throw new Error("Could not reach the LLM endpoint. For a free setup, run Ollama on a GLV server and point here.");
+      } catch (e) {
+        throw new Error(`Could not query the LLM endpoint: ${(e as Error).message}. For a free setup, run Ollama on a GLV server and point here.`);
       }
       const hit = mentionsBrand(answer, brand, domain);
       hits.push(hit);
@@ -211,9 +219,9 @@ export const aiVisibilityTool: Tool = {
     const score = visibilityScore(hits);
     const findings: ToolFinding[] = [];
     if (score === 0)
-      findings.push({ category: "seo", rule: "aivis:absent", severity: "medium", title: "Not mentioned in any AI answer", detail: `The model named the brand in 0 of ${prompts.length} buyer questions. Publish clear, factual, well-structured pages (who you are, what you do, for whom), add Organization schema, and earn mentions on sites the model trusts. First missed: "${missed[0]}".`, pageUrl: `https://${domain}`, key: "aivis:absent" });
+      findings.push({ category: "seo", rule: "aivis:absent", severity: "medium", title: "Not mentioned in any AI answer", detail: `The model named the brand in 0 of ${prompts.length} buyer questions. Publish clear, factual, well-structured pages (who you are, what you do, for whom), add Organization schema, and earn mentions on sites the model trusts. First missed: "${missed[0]}".`, pageUrl: domainUrl, key: "aivis:absent" });
     else if (score < 50)
-      findings.push({ category: "seo", rule: "aivis:low-coverage", severity: "low", title: `Low AI visibility (${score}%)`, detail: `The model mentioned the brand in only ${score}% of the questions. Strengthen the pages behind the missed questions and your off-site presence. Missed: ${missed.slice(0, 3).map((m) => `"${m}"`).join(", ")}.`, pageUrl: `https://${domain}`, key: "aivis:low-coverage" });
+      findings.push({ category: "seo", rule: "aivis:low-coverage", severity: "low", title: `Low AI visibility (${score}%)`, detail: `The model mentioned the brand in only ${score}% of the questions. Strengthen the pages behind the missed questions and your off-site presence. Missed: ${missed.slice(0, 3).map((m) => `"${m}"`).join(", ")}.`, pageUrl: domainUrl, key: "aivis:low-coverage" });
     ctx.log(`AI visibility: ${score}% across ${prompts.length} prompt(s)`);
     return {
       findings,

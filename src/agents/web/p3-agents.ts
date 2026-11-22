@@ -101,7 +101,8 @@ export const imageVideoSeoAgent: PageAgent = {
         const og = document.querySelector('meta[property="og:image"]') as HTMLMetaElement | null;
         const ogImage = og?.content ?? null;
         const w = document.querySelector('meta[property="og:image:width"]') as HTMLMetaElement | null;
-        const ogImageWide = w ? Number(w.content) >= 1200 : false;
+        // Only judge width when it is declared; an undeclared width is unknown, not "too small".
+        const ogImageWide = w ? Number(w.content) >= 1200 : true;
         let imagesNoDimensions = 0;
         for (const img of Array.from(document.querySelectorAll("img"))) {
           if (!img.getAttribute("width") && !img.getAttribute("height") && !(img as HTMLImageElement).style.width) imagesNoDimensions++;
@@ -226,15 +227,36 @@ export function phiInUrl(url: string): string[] {
   }
 }
 
+/** Third-party requests whose QUERY PARAMETERS carry PHI-looking keys. Pure, for tests. */
+export function phiToThirdParty(requests: string[], own: string): string[] {
+  const out: string[] = [];
+  for (const r of requests) {
+    try {
+      const u = new URL(r);
+      if (u.host === own) continue;
+      for (const [k] of u.searchParams) {
+        if (PHI_PARAM.test(k)) {
+          out.push(r);
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return out;
+}
+
 export const hipaaAgent: PageAgent = {
   id: "sec.hipaa",
   name: "HIPAA / health data leakage",
-  description: "For health clients, flags patient/health data (PHI) sitting in page URLs and, worse, being sent to third-party analytics and ad trackers — a common and serious HIPAA breach.",
+  description: "For health clients, flags patient/health data (PHI) sitting in page URLs and, worse, being sent to third-party analytics and ad trackers. Off by default — turn it on for health/healthcare projects.",
   category: "security",
   engine: "web",
   products: WEB_PRODUCTS,
   stage: "end",
   skipErrorPages: true,
+  defaultOff: true,
   run(ctx: PageContext): Finding[] {
     const out: Finding[] = [];
     const own = (() => {
@@ -247,16 +269,10 @@ export const hipaaAgent: PageAgent = {
     const inPage = phiInUrl(ctx.url);
     if (inPage.length)
       out.push(finding({ category: "security", rule: "hipaa:phi-in-url", severity: "high", title: `Possible health data in the page URL: ${inPage.join(", ")}`, detail: "Patient/health identifiers in the URL end up in server logs, browser history, the Referer header sent to third parties, and analytics. For HIPAA, keep PHI out of URLs — use POST bodies or opaque ids.", pageUrl: ctx.url, evidence: ctx.url }));
-    const thirdPartyPhi = ctx.signals.requests.filter((r) => {
-      try {
-        const u = new URL(r);
-        return u.host !== own && (PHI_PARAM.test(u.search) || PHI_PARAM.test(u.pathname));
-      } catch {
-        return false;
-      }
-    });
+    // Match query-PARAMETER keys only (not the whole path), so an asset like /healthcare-widget.js is not flagged.
+    const thirdPartyPhi = phiToThirdParty(ctx.signals.requests, own);
     if (thirdPartyPhi.length)
-      out.push(finding({ category: "security", rule: "hipaa:phi-to-tracker", severity: "critical", title: "Health data sent to a third-party tracker", detail: "A request to a third-party host carried health/PHI-looking data. Sending PHI to analytics/ad trackers (Meta Pixel, Google Analytics) without a BAA is a HIPAA violation and has drawn large fines. Remove PHI from tracker calls or stop loading the tracker on health pages.", pageUrl: ctx.url, evidence: thirdPartyPhi.slice(0, 3).join("\n") }));
+      out.push(finding({ category: "security", rule: "hipaa:phi-to-tracker", severity: "high", title: "Possible health data sent to a third-party tracker", detail: "A request to a third-party host carried a health/PHI-looking query parameter. Sending PHI to analytics/ad trackers (Meta Pixel, Google Analytics) without a BAA is a HIPAA violation and has drawn large fines. Confirm the parameter, then remove PHI from tracker calls or stop loading the tracker on health pages.", pageUrl: ctx.url, evidence: thirdPartyPhi.slice(0, 3).join("\n") }));
     return out;
   },
 };

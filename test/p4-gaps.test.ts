@@ -60,9 +60,9 @@ describe("wave 4: device profiles & games", () => {
     assert.ok(profs.some((p) => p.key === "androidtv" && p.remote));
     const tv = profs.find((p) => p.key === "androidtv")!;
     const probs = profileProblems(tv, { scrollWidth: 2200, viewportWidth: 1920, smallTargets: 3, focusVisible: false });
-    assert.ok(probs.some((x) => x.rule === "device:overflow"));
-    assert.ok(probs.some((x) => x.rule === "device:tiny-target"));
-    assert.ok(probs.some((x) => x.rule === "device:no-focus"));
+    assert.ok(probs.some((x) => x.rule === "screen:overflow"));
+    assert.ok(probs.some((x) => x.rule === "screen:tiny-target"));
+    assert.ok(probs.some((x) => x.rule === "screen:no-focus"));
   });
   it("flags missing fonts and low fps / webgl loss", () => {
     assert.ok(fontProblems({ Inter: true, "Segoe UI": false }).some((x) => x.rule === "winfont:missing"));

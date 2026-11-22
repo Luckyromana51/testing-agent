@@ -27,10 +27,10 @@ export const P4_FIXES: Record<string, Fix> = {
   "winbrowser:overflow": { steps: "Fix the Windows-specific overflow: account for the Windows scrollbar width and font fallback, and use responsive widths.", effort: "hours" },
   "winfont:missing": { steps: "Self-host the font as a @font-face web font (woff2) instead of relying on it being installed on Windows.", effort: "hours" },
 
-  // Wear / TV / Auto / kiosk / IoT
-  "device:overflow": { steps: "Use a responsive layout that fits the small/large device screen; test at the device's exact width.", effort: "hours" },
-  "device:tiny-target": { steps: "Make primary controls at least 44×44px (48×48 on TV/Auto, which use a remote).", effort: "hours" },
-  "device:no-focus": { steps: "Add a clear :focus-visible outline so remote/D-pad users can see what is selected on TV and Auto.", effort: "hours" },
+  // Wear / TV / Auto / kiosk / IoT screen profiles (screen: prefix — distinct from Appium's device:)
+  "screen:overflow": { steps: "Use a responsive layout that fits the small/large device screen; test at the device's exact width.", effort: "hours" },
+  "screen:tiny-target": { steps: "Make primary controls at least 44×44px (48×48 on TV/Auto, which use a remote).", effort: "hours" },
+  "screen:no-focus": { steps: "Add a clear :focus-visible outline so remote/D-pad users can see what is selected on TV and Auto.", effort: "hours" },
 
   // HTML5 games
   "game:no-canvas": { steps: "Point the game check at the page after the game has started, or confirm the game uses a <canvas>.", effort: "minutes" },

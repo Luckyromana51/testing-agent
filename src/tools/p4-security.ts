@@ -35,13 +35,15 @@ interface Sink {
   fix: string;
 }
 
+// Severities are capped at "high": this is a single-line pattern scan, not a proven data-flow result,
+// so it points a human at a line to check rather than asserting an exploit.
 const SINKS: Sink[] = [
-  { rule: "iast:taint-eval", severity: "critical", re: /\b(eval|Function|setTimeout|setInterval|vm\.runInNewContext|vm\.runInThisContext)\s*\(/, what: "runs the value as code", fix: "Never pass request input to eval/Function/vm. Parse it as data; use a safe interpreter or a fixed set of actions." },
-  { rule: "iast:taint-exec", severity: "critical", re: /\b(child_process\.)?(exec|execSync|spawn|spawnSync|execFile)\s*\(|\brequire\(['"]child_process['"]\)/, what: "runs it as a shell command", fix: "Use execFile with a fixed command and an argument array (never a shell string), and allow-list the argument values." },
-  { rule: "iast:taint-sql", severity: "high", re: /\b(query|execute|raw)\s*\(\s*[`'"].*\$\{|\b(query|execute)\s*\(\s*['"].*\+/, what: "builds a SQL string by concatenation", fix: "Use parameterised queries / prepared statements ($1, ?) instead of string concatenation." },
-  { rule: "iast:taint-fs", severity: "high", re: /\bfs\.(readFile|readFileSync|writeFile|writeFileSync|createReadStream|unlink|readdir)\s*\(|\brequire\s*\(/, what: "reads/writes a file path or loads a module", fix: "Resolve the path against a fixed base dir and reject '..'; never require() a value built from input." },
-  { rule: "iast:taint-redirect", severity: "medium", re: /\bres\.(redirect|writeHead)\s*\(|\.location\s*=/, what: "sends a redirect to it", fix: "Allow-list redirect targets or only allow same-origin relative paths." },
-  { rule: "iast:taint-html", severity: "high", re: /\.(innerHTML|outerHTML)\s*=|\bres\.(send|write|end)\s*\(|dangerouslySetInnerHTML/, what: "writes it into a page / response without escaping", fix: "Escape output or set text content; for HTML, sanitise with a library like DOMPurify." },
+  { rule: "iast:taint-eval", severity: "high", re: /\b(eval|Function|vm\.runInNewContext|vm\.runInThisContext)\s*\(/, what: "may run the value as code", fix: "Never pass untrusted input to eval/Function/vm. Parse it as data; use a safe interpreter or a fixed set of actions." },
+  { rule: "iast:taint-exec", severity: "high", re: /\bchild_process\b|\b(execSync|execFileSync|spawnSync|execFile|spawn)\s*\(/, what: "may run it as a shell command", fix: "Use execFile with a fixed command and an argument array (never a shell string), and allow-list the argument values." },
+  { rule: "iast:taint-sql", severity: "medium", re: /\b(query|execute|raw)\s*\(\s*[`'"].*\$\{|\b(query|execute)\s*\(\s*['"].*\+/, what: "may build a SQL string by concatenation", fix: "Use parameterised queries / prepared statements ($1, ?) instead of string concatenation." },
+  { rule: "iast:taint-fs", severity: "medium", re: /\bfs\.(readFile|readFileSync|writeFile|writeFileSync|createReadStream|unlink|readdir)\s*\(/, what: "may read/write a file path from it", fix: "Resolve the path against a fixed base dir and reject '..'." },
+  { rule: "iast:taint-redirect", severity: "low", re: /\bres\.(redirect|writeHead)\s*\(|\.location\s*=/, what: "may send a redirect to it", fix: "Allow-list redirect targets or only allow same-origin relative paths." },
+  { rule: "iast:taint-html", severity: "medium", re: /\.(innerHTML|outerHTML)\s*=|dangerouslySetInnerHTML/, what: "may write it into a page without escaping", fix: "Escape output or set text content; for HTML, sanitise with a library like DOMPurify." },
 ];
 
 /** Finds source→sink taint on a single statement. Pure, for tests. */
@@ -60,8 +62,8 @@ export function taintPaths(code: string, file: string): TaintHit[] {
           severity: sink.severity,
           file,
           line: i + 1,
-          title: `Request input reaches code that ${sink.what}`,
-          detail: `At ${file}:${i + 1}, a value that comes from untrusted input is used where the code ${sink.what}. ${sink.fix}`,
+          title: `Untrusted input on a line that ${sink.what}`,
+          detail: `At ${file}:${i + 1}, a value from an untrusted source (request input, argv, env, or the URL) appears on the same line as code that ${sink.what}. This is a single-line pattern match, not a proven data-flow path — confirm it, then: ${sink.fix}`,
         });
       }
     }
@@ -70,10 +72,11 @@ export function taintPaths(code: string, file: string): TaintHit[] {
 }
 
 /** The Node instrumentation hook written for the operator to load during the client's tests. */
-export const IAST_HOOK = `/* GLV in-house IAST hook — load during your tests with:
+export const IAST_HOOK = `/* GLV runtime sink logger — load during your tests with:
      NODE_OPTIONS="--require ./glv-iast-hook.cjs" npm test
-   It wraps dangerous sinks and prints a line whenever one is called with a value that
-   looks like it came from untrusted input. No data leaves the process. */
+   It wraps the dangerous child_process sinks and prints the command each time one is called while your
+   tests run, so you can review (by eye) whether any call is driven by untrusted input. It does NOT do
+   taint tracking — it logs every call, tainted or not. No data leaves the process. */
 'use strict';
 const log = (sink, arg) => {
   try { process.stderr.write('[GLV-IAST] ' + sink + ' called: ' + String(arg).slice(0, 200) + '\\n'); } catch (_) {}
@@ -83,19 +86,17 @@ for (const name of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile']) {
   const orig = cp[name];
   if (typeof orig === 'function') cp[name] = function (cmd, ...rest) { log('child_process.' + name, cmd); return orig.call(this, cmd, ...rest); };
 }
-const origEval = global.eval;
-global.__glvEval = function (s) { log('eval', s); return origEval(s); };
 `;
 
 export const iastTool: Tool = {
   id: "iast",
-  name: "IAST (interactive app security)",
+  name: "Taint pattern scan (IAST-style)",
   maker: "GLV Infotech (built in)",
   description:
-    "An in-house take on interactive application security testing: a taint scan over the client's JavaScript/TypeScript source that finds where untrusted request input reaches a dangerous sink (code execution, shell, SQL, file path, HTML output), plus a small Node hook you load during the client's own tests so the same sinks are watched at runtime. No paid agent.",
+    "An in-house, IAST-style check: a single-line pattern scan over the client's JavaScript/TypeScript source that flags where an untrusted source (request input, argv, env, the URL) sits on the same line as a dangerous sink (code execution, shell, SQL, file path, HTML output), plus a small Node hook you load during the client's own tests to log shell-sink calls at runtime. It points a human at lines to check — it is not a proven data-flow engine. No paid agent.",
   checks: [
-    "Traces request input (query/body/params/argv/env) into eval, exec, SQL, fs and HTML sinks",
-    "Writes a runtime hook you load with node --require during the client's tests",
+    "Flags untrusted sources (query/body/params/argv/env/URL) on a line with an eval, exec, SQL, fs or HTML sink",
+    "Writes a runtime shell-sink logger you load with node --require during the client's tests",
     "Reads source only; nothing is sent anywhere",
   ],
   products: ["code"],

@@ -417,7 +417,8 @@ export function tauriRisks(conf: Record<string, unknown>): { rule: string; sever
   const s = JSON.stringify(conf);
   if (/"all"\s*:\s*true/.test(s)) out.push({ rule: "desktop:tauri-allowlist-all", severity: "high", title: "Tauri allowlist enables everything", detail: '"all": true in the allowlist exposes every API (filesystem, shell, …) to the frontend. Enable only the specific APIs you use.' });
   if (/dangerousRemoteDomainIpcAccess/.test(s)) out.push({ rule: "desktop:tauri-remote-ipc", severity: "high", title: "Tauri allows remote IPC access", detail: "dangerousRemoteDomainIpcAccess lets remote pages call your Rust commands. Remove it unless absolutely required." });
-  const csp = (((conf.tauri as Record<string, unknown>)?.security as Record<string, unknown>)?.csp ?? (conf.app as Record<string, unknown>)?.security) as unknown;
+  // Tauri v1: tauri.security.csp; Tauri v2: app.security.csp. Read .csp from whichever is present.
+  const csp = (((conf.tauri as Record<string, unknown>)?.security as Record<string, unknown>)?.csp ?? ((conf.app as Record<string, unknown>)?.security as Record<string, unknown>)?.csp) as unknown;
   if (csp === null || csp === undefined || csp === "") out.push({ rule: "desktop:tauri-no-csp", severity: "medium", title: "Tauri has no Content-Security-Policy", detail: "Set tauri.security.csp so the webview blocks injected and remote scripts." });
   return out;
 }

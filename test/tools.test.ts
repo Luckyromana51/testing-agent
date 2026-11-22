@@ -177,9 +177,9 @@ describe("choosing tools", () => {
     assert.deepEqual(ids("code"), ["pqc", "soc2", "data-quality", "queues", "gitleaks", "opengrep", "osv-scanner", "trivy", "mutation", "cloud", "sbom", "unit-tests", "model-security", "iac", "code-fuzz", "browser-ext", "desktop-app", "iast", "conn-ssh", "conn-hostinger", "k8s", "db-code"]);
     assert.deepEqual(ids("ios"), ["tracker-export", "mac-ios-sim", "appium", "mobsf", "maestro", "store-listing", "iap", "push-send"], "the Mac helper and the test phone run the app; the iOS engine itself reads the IPA");
     assert.deepEqual(ids("android"), ["tracker-export", "appium", "mobsf", "mobile-runtime", "app-perf", "deeplink-run", "maestro", "talkback", "store-listing", "iap", "push-send"]);
-    // Load, attack and data-changing tools need the client's permission, each of its own kind.
+    // Load and attack tools need the client's permission, each of its own kind.
     const needs = TOOLS.filter((t) => t.safety !== "safe").map((t) => `${t.id}:${t.permission}`);
-    assert.deepEqual(needs, ["glv-probes:attack", "glv-attack:attack", "ai-redteam:attack", "ports:attack", "mcp-attack:attack", "race:attack", "chaos:attack", "zap-active:attack", "k6:load", "jmeter:load", "push-send:changes"]);
+    assert.deepEqual(needs, ["glv-probes:attack", "glv-attack:attack", "ai-redteam:attack", "ports:attack", "mcp-attack:attack", "race:attack", "chaos:attack", "zap-active:attack", "k6:load", "jmeter:load"]);
   });
 });
 

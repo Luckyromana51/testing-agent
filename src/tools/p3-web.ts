@@ -57,6 +57,7 @@ export const printLayoutTool: Tool = {
     const urls = [ctx.startUrl, ...ctx.urls.filter((u) => u !== ctx.startUrl)].slice(0, SAMPLE);
     const findings: ToolFinding[] = [];
     const checked: string[] = [];
+    let wrotePdf = false;
     const browser = await chromium.launch();
     try {
       const context = await browser.newContext(ctx.cookie ? { extraHTTPHeaders: { cookie: ctx.cookie } } : {});
@@ -64,6 +65,9 @@ export const printLayoutTool: Tool = {
         if (ctx.signal.aborted) break;
         const page = await context.newPage();
         try {
+          // Size the viewport to the A4 printable width so scrollWidth reflects real print overflow,
+          // not the desktop viewport (which would flag almost every page).
+          await page.setViewportSize({ width: 794, height: 1123 });
           await page.goto(url, { waitUntil: "networkidle", timeout: 25_000 });
           await page.emulateMedia({ media: "print" });
           const m = await page.evaluate(() => {
@@ -78,7 +82,10 @@ export const printLayoutTool: Tool = {
           });
           const pdf = await page.pdf({ format: "A4", printBackground: true }).catch(() => null);
           const metrics: PrintMetrics = { hasPrintCss: m.hasPrintCss, printWidthPx: 794, contentWidthPx: m.contentWidthPx, pageCount: 1 };
-          if (pdf && url === ctx.startUrl) await writeFile(path.join(ctx.outDir, "tool-print.pdf"), pdf);
+          if (pdf && url === ctx.startUrl) {
+            await writeFile(path.join(ctx.outDir, "tool-print.pdf"), pdf);
+            wrotePdf = true;
+          }
           for (const p of printProblems(metrics)) if (!findings.some((f) => f.rule === p.rule)) findings.push({ category: "functional", rule: p.rule, severity: p.severity, title: p.title, detail: p.detail, pageUrl: url, key: p.rule });
           checked.push(url);
         } catch (e) {
@@ -90,7 +97,7 @@ export const printLayoutTool: Tool = {
     } finally {
       await browser.close().catch(() => {});
     }
-    return { findings, summary: [`Checked print layout on ${checked.length} page(s)`], tested: `${checked.length} pages`, checked, reports: [{ file: "tool-print.pdf", label: "Printed PDF of the start page" }] };
+    return { findings, summary: [`Checked print layout on ${checked.length} page(s)`], tested: `${checked.length} pages`, checked, ...(wrotePdf ? { reports: [{ file: "tool-print.pdf", label: "Printed PDF of the start page" }] } : {}) };
   },
 };
 
@@ -212,8 +219,8 @@ export const pageWatchTool: Tool = {
   name: "Terms & privacy change watch",
   maker: "GLV Infotech (built in)",
   description:
-    "Finds the site's terms, privacy, refund and cookie pages and records a fingerprint (a hash of the text and the Last-Modified date). On the next run it flags any page whose legal text has changed, for your audit trail.",
-  checks: ["Locates terms/privacy/refund/cookie pages", "Records a content hash and Last-Modified date per page", "Flags legal pages that changed since the last run (saved baseline)"],
+    "Finds the site's terms, privacy, refund and cookie pages and records a fingerprint (a hash of the text and the Last-Modified date) to a CSV. Keep the CSV and compare it against the next run's to spot when legal text changed — a simple audit trail.",
+  checks: ["Locates terms/privacy/refund/cookie pages", "Records a content hash and Last-Modified date per page", "Writes a CSV fingerprint to compare against the next run by hand"],
   products: ["website", "ecommerce", "webapp", "saas", "crm"],
   category: "functional",
   safety: "safe",
@@ -247,7 +254,9 @@ export const pageWatchTool: Tool = {
     }
     if (!pages.length)
       findings.push({ category: "functional", rule: "watch:no-legal-pages", severity: "info", title: "No terms or privacy page found", detail: "The crawl found no terms, privacy, refund or cookie page. Most stores and SaaS products need published terms and a privacy policy (DPDP/GDPR). Add them and link them in the footer.", pageUrl: ctx.startUrl, key: "watch:no-legal-pages" });
-    await writeFile(path.join(ctx.outDir, "tool-legal-fingerprints.csv"), ["url,hash,words,last_modified", ...rows.map((r) => r.join(","))].join("\n"));
+    // Quote every cell — Last-Modified contains a comma ("Wed, 21 Oct …") which would break the CSV.
+    const csvCell = (s: string) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    await writeFile(path.join(ctx.outDir, "tool-legal-fingerprints.csv"), ["url,hash,words,last_modified", ...rows.map((r) => r.map(csvCell).join(","))].join("\n"));
     return {
       findings,
       summary: [`${pages.length} legal page(s) fingerprinted`],

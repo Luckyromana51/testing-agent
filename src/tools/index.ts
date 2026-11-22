@@ -230,8 +230,10 @@ export function cleanChoices(product: ProductType, input: unknown, permissions?:
       const v = c.options?.[opt.id];
       if (opt.kind === "file") {
         // An upload's stored name (from POST /api/uploads), and the name the tester knows it by.
-        const ext = (opt.accept ?? ".json").replace(/^\./, "");
-        if (v && !(/^[a-z]+$/.test(ext) && new RegExp(`^[0-9a-f-]{36}\\.${ext}$`).test(v))) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
+        // `accept` can list several types (".json,.csv"); the upload is valid if it matches any of them.
+        const exts = (opt.accept ?? ".json").split(",").map((e) => e.trim().replace(/^\./, "")).filter((e) => /^[a-z0-9]+$/.test(e));
+        const okUpload = exts.some((ext) => new RegExp(`^[0-9a-f-]{36}\\.${ext}$`).test(String(v)));
+        if (v && !okUpload) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
         if (!v && opt.required) throw new Error(`${tool.name}: upload the ${opt.label} first, or turn ${tool.name} off.`);
         if (v) {
           options[opt.id] = v;

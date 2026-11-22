@@ -85,7 +85,9 @@ export const windowsBrowserTool: Tool = {
     try {
       session = await wd(base, ctx.signal);
       await session.go(url);
-      const script = `return (function(){var fonts=${JSON.stringify(fonts)};var avail={};for(var i=0;i<fonts.length;i++){try{avail[fonts[i]]=document.fonts.check('16px "'+fonts[i]+'"');}catch(e){avail[fonts[i]]=true;}}return {title:document.title,bodyWidth:document.documentElement.scrollWidth,viewportWidth:window.innerWidth,fonts:avail};})();`;
+      // Font availability by WIDTH MEASUREMENT (document.fonts.check returns true even for absent fonts
+      // in several engines): a font is present only if its text width differs from every generic fallback.
+      const script = `return (function(){var fonts=${JSON.stringify(fonts)};var avail={};var c=document.createElement('canvas').getContext('2d');var s='mmmmmwwwwwiiiii0123 AaBbGg';var bases=['monospace','serif','sans-serif'];var baseW={};for(var b=0;b<bases.length;b++){c.font='72px '+bases[b];baseW[bases[b]]=c.measureText(s).width;}for(var i=0;i<fonts.length;i++){try{var present=false;for(var b2=0;b2<bases.length;b2++){c.font='72px \\''+fonts[i]+'\\','+bases[b2];if(Math.abs(c.measureText(s).width-baseW[bases[b2]])>0.5){present=true;break;}}avail[fonts[i]]=present;}catch(e){avail[fonts[i]]=true;}}return {title:document.title,bodyWidth:document.documentElement.scrollWidth,viewportWidth:window.innerWidth,fonts:avail};})();`;
       data = ((await session.exec(script)) as WdResult) ?? { title: "", bodyWidth: 0, viewportWidth: 0, fonts: {}, consoleErrors: 0 };
     } catch (e) {
       throw new Error(`Could not drive Edge on the Windows VM: ${(e as Error).message}. Check the WebDriver URL and that msedgedriver is running.`);
@@ -136,11 +138,11 @@ export interface DeviceMetrics {
 export function profileProblems(p: DeviceProfile, m: DeviceMetrics): { rule: string; severity: Severity; title: string; detail: string }[] {
   const out: { rule: string; severity: Severity; title: string; detail: string }[] = [];
   if (m.scrollWidth > m.viewportWidth * 1.05)
-    out.push({ rule: "device:overflow", severity: "medium", title: `Content overflows on ${p.label}`, detail: `On a ${p.label} (${p.width}×${p.height}) the content is ${Math.round(m.scrollWidth)}px wide in a ${p.width}px screen, so it scrolls sideways. Use a responsive layout that fits this width.` });
+    out.push({ rule: "screen:overflow", severity: "medium", title: `Content overflows on ${p.label}`, detail: `On a ${p.label} (${p.width}×${p.height}) the content is ${Math.round(m.scrollWidth)}px wide in a ${p.width}px screen, so it scrolls sideways. Use a responsive layout that fits this width.` });
   if (m.smallTargets > 0)
-    out.push({ rule: "device:tiny-target", severity: "low", title: `${m.smallTargets} tap target(s) too small on ${p.label}`, detail: `On a ${p.label}, ${m.smallTargets} button/link is under 44px, hard to hit on this screen. Make primary controls at least 44×44px (48×48 on TV/Auto).` });
+    out.push({ rule: "screen:tiny-target", severity: "low", title: `${m.smallTargets} tap target(s) too small on ${p.label}`, detail: `On a ${p.label}, ${m.smallTargets} button/link is under 44px, hard to hit on this screen. Make primary controls at least 44×44px (48×48 on TV/Auto).` });
   if (p.remote && !m.focusVisible)
-    out.push({ rule: "device:no-focus", severity: "medium", title: `No visible focus ring on ${p.label}`, detail: `${p.label} is driven by a remote/D-pad, but focused elements show no visible focus style, so the user cannot tell what is selected. Add a clear :focus-visible outline.` });
+    out.push({ rule: "screen:no-focus", severity: "medium", title: `No visible focus ring on ${p.label}`, detail: `${p.label} is driven by a remote/D-pad, but focused elements show no visible focus style, so the user cannot tell what is selected. Add a clear :focus-visible outline.` });
   return out;
 }
 
@@ -215,7 +217,7 @@ export const deviceMatrixTool: Tool = {
 /** Judges a measured frame rate. Pure, for tests. */
 export function fpsProblem(fps: number): { rule: string; severity: Severity; title: string; detail: string } | null {
   if (fps <= 0) return null;
-  if (fps < 24) return { rule: "game:low-fps", severity: "medium", title: `Low frame rate (~${Math.round(fps)} fps)`, detail: `The game canvas ran at about ${Math.round(fps)} frames per second, below 24 fps, so it looks choppy. Profile the render loop, cut per-frame allocations and draw calls, and use requestAnimationFrame.` };
+  if (fps < 24) return { rule: "game:low-fps", severity: "medium", title: `Low frame rate (~${Math.round(fps)} fps)`, detail: `The page rendered at about ${Math.round(fps)} frames per second while the game was on screen, below 24 fps, so it looks choppy. Profile the render loop, cut per-frame allocations and draw calls, and use requestAnimationFrame.` };
   return null;
 }
 
@@ -271,11 +273,10 @@ export const gameTestTool: Tool = {
       const measured = (await page.evaluate(async () => {
         const canvas = document.querySelector("canvas") as HTMLCanvasElement | null;
         const hasCanvas = !!canvas;
+        // Do NOT call getContext() on the game's own canvas — grabbing a "webgl" context would make the
+        // game's later getContext("2d") return null and break the game. Listen for a loss event instead.
         let webglLost = false;
-        if (canvas) {
-          const gl = canvas.getContext("webgl") || canvas.getContext("webgl2");
-          if (gl && (gl as WebGLRenderingContext).isContextLost && (gl as WebGLRenderingContext).isContextLost()) webglLost = true;
-        }
+        if (canvas) canvas.addEventListener("webglcontextlost", () => (webglLost = true), { once: true });
         let frames = 0;
         const start = performance.now();
         await new Promise<void>((resolve) => {
