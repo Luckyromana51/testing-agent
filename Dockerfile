@@ -131,6 +131,14 @@ RUN (curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh |
  && (python3 -m venv /opt/prowler && /opt/prowler/bin/pip install --no-cache-dir "prowler==${PROWLER_VERSION}" && ln -s /opt/prowler/bin/prowler /usr/local/bin/prowler || echo "Prowler was not installed: the cloud posture tab shows not installed") \
  && (npm install -g --prefix /opt/prism --no-audit --no-fund "@stoplight/prism-cli@${PRISM_VERSION}" && ln -s /opt/prism/bin/prism /usr/local/bin/prism || echo "Prism was not installed: API mocks use GLV's own mock server") \
  && npm cache clean --force || true
+# Wave 3 (2026 gap report, P3), all optional and best-effort. ModelScan: deeper model-file scan.
+# Checkov: deeper IaC scan. GLV's own model/pickle and IaC rules work without either. kube-bench,
+# Kubescape, Dockle and GoAccess run on the CLIENT'S server over SSH when installed there, not here.
+ARG MODELSCAN_VERSION=0.8.5 CHECKOV_VERSION=3.2.344 WITH_WAVE3_PY=1
+RUN if [ "${WITH_WAVE3_PY}" = "1" ]; then \
+      (python3 -m venv /opt/modelscan && /opt/modelscan/bin/pip install --no-cache-dir "modelscan==${MODELSCAN_VERSION}" && ln -s /opt/modelscan/bin/modelscan /usr/local/bin/modelscan || echo "ModelScan not installed: the model-security tool uses GLV's own pickle-format check"); \
+      (python3 -m venv /opt/checkov && /opt/checkov/bin/pip install --no-cache-dir "checkov==${CHECKOV_VERSION}" && ln -s /opt/checkov/bin/checkov /usr/local/bin/checkov || echo "Checkov not installed: the IaC tool uses GLV's own rules"); \
+    else echo "Wave-3 Python tools skipped (WITH_WAVE3_PY=0)"; fi || true
 # Appium and its Android driver (UiAutomator2), at fixed versions, in their own folder. They run only
 # when the Android emulator profile is used (see docker/start.sh and "Test phones" in the README).
 ENV ANDROID_HOME=/opt/android-sdk APPIUM_HOME=/opt/appium-home

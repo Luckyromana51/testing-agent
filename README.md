@@ -401,6 +401,17 @@ Same rule as wave 1: in-house, free or open-source tools in the image, attack an
 - **Mobile**: OTA update safety (CodePush/Expo), **App performance** tab (start time, jank, memory, size), **Maestro** tab, **Deep-link runner** tab, **TalkBack labels** tab, **In-app / India browsers** tab (WhatsApp/Instagram/Facebook webviews, Samsung, Opera, UC).
 - **Compliance**: GDPR/DPDP consent proof (trackers before consent, a real Reject that works) and PCI DSS 4.0 payment-page script controls (SRI, CSP).
 
+## Wave 3 testing types (2026 gap report, the P3 / niche tail)
+
+Same rule again: in-house, free or open-source tools in the image, the same safety gates, read-only. Optional external scanners (ModelScan, Checkov, kube-bench/Dockle, GoAccess) deepen a check when installed; GLV's own fallback runs otherwise.
+
+- **Code**: **Model file security** (pickle `.pkl/.pt` models that run code when loaded), **IaC** (Terraform/CloudFormation/Kubernetes/Dockerfile rules), **Code fuzzing** readiness (fast-check/Hypothesis/Jazzer), **Browser extension** (manifest permissions, content-script risks), **Desktop app** (Electron/Tauri security settings).
+- **Web**: **Print & PDF layout** (invoices/tickets print without being cut off), **Video/WebRTC quality** (start time, buffering), **Legal page change watch** (terms/privacy fingerprint), **Carbon** (CO2 per page view), **Image/video/Discover SEO**, **Video & audio accessibility** (captions/transcripts), a **second accessibility engine** beside axe, **HIPAA** (health data in URLs and to trackers).
+- **API / data**: **Reconciliation** (a total matches across two systems), **Data quality** (nulls/duplicates/ranges in an export), **Queues** (AsyncAPI validation), **Distributed tracing** (traceparent propagation).
+- **Servers (SSH)**: **Kubernetes/Docker host** (privileged pods, rootful Docker), **Log-file SEO** (what Googlebot really crawls), **Backup & DR drill** (recent backups, a restore test), **Database code** (untested stored procedures/triggers).
+- **Other**: **AI call cost & speed** (tokens, latency, timeouts), **SMS/WhatsApp** templates (length, opt-out, India DLT ids), **Post-quantum readiness** (TLS ML-KEM probe + weak-crypto in code), **SOC 2 / ISO 27001 evidence** report, **Backlinks** (Common Crawl open web graph), **Store listing** and **In-app purchases** (mobile, static).
+- **Deferred (noted in the handbook and gap doc, not built)**: IAST (research-grade), keyword/rank tracking (needs Google), AI-answer visibility (needs AI-service keys), Windows-only browsers (needs a Windows VM), Wear/TV/Auto/kiosk/IoT (emulators, niche), games (out of scope), push-notification live send (needs client FCM/APNs keys), Jira/Linear export (needs tracker tokens) and voice-bot testing (needs speech models). Test history and a combined risk score are already covered by the trends view and master-control gate.
+
 ## Client connections (SSH, Hostinger, MCP)
 
 Everything runs on GLV's own servers. A project's **Connections** tab is how they reach the client's own system. The owner adds a connection and presses **Test the connection**; from then on every test of the project (scheduled ones too) adds that connection's read-only checks to the report.
@@ -656,6 +667,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export
 - iOS traffic recording on the test phone (Android only for now), and Espresso or XCUITest suites the client wrote
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
-- Wave 3 of the 2026 gap report (P3 items); wave 2 (P2) is built, except the white-label client portal, which is a platform/product feature (tenant login and branding) rather than a test and is left for a separate decision
+- Waves 1–3 of the 2026 gap report (P1, P2 and the P3 niche tail) are built — the whole ~100-gap list. Left for a separate decision or as noted: the white-label client portal (a platform/product feature, tenant login and branding, not a test), and the P3 items that need outside infrastructure or paid-service/client keys (IAST, keyword/rank tracking, AI-answer visibility, Windows VM browsers, Wear/TV/Auto/kiosk/IoT, games, push live-send, Jira/Linear export, voice-bot testing)
 - A local copy of the OSV database kept up to date on the server
 - SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export
