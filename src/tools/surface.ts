@@ -6,6 +6,7 @@ import { WEB_PRODUCTS } from "../products.js";
 import type { Severity } from "../types.js";
 import { runProcess, which } from "./process.js";
 import type { Tool, ToolContext, ToolFinding, ToolOutput } from "./types.js";
+import { readNuclei, UNSAFE_TAGS } from "./nuclei.js";
 
 /**
  * Attack surface: every subdomain of the client's domain we can find, which of them still point at a
@@ -363,6 +364,7 @@ export const portsTool: Tool = {
     "Remote access: Telnet, RDP, VNC, SMB, an open Docker API",
     "Admin and development tools: Jenkins, Kibana, Webmin, Jupyter, dev servers",
     "A plain connect, nothing is sent: only on hosts in the client's written permission",
+    "Network CVE scan: Nuclei's network checks on each open port (known holes in SSH, FTP, mail, databases), safe checks only",
   ],
   products: [...WEB_PRODUCTS, "api"],
   category: "security",
@@ -372,12 +374,14 @@ export const portsTool: Tool = {
   licence: "GLV's own",
   homepage: "https://glvinfotechsolutions.com",
   signedIn: "public",
+  options: [{ id: "cves", label: "Known holes on open ports (Nuclei network checks)", choices: [{ value: "on", label: "Yes" }, { value: "off", label: "No" }], default: "on" }],
 
   async ready() {
     return null;
   },
 
   async run(ctx: ToolContext): Promise<ToolOutput> {
+    const openPorts: string[] = [];
     const hosts = [...new Set((ctx.permit?.hosts ?? [new URL(ctx.startUrl).host]).map((h) => h.replace(/:\d+$/, "")))];
     const findings: ToolFinding[] = [];
     const rows: string[][] = [];
@@ -387,6 +391,7 @@ export const portsTool: Tool = {
       const results = await pool(PORTS, 10, async ([port, what, severity]) => ({ port, what, severity, ...(await probePort(host, port)) }), ctx.signal);
       for (const r of results.filter((r) => r.open)) {
         rows.push([host, String(r.port), r.what, r.banner]);
+        if (![80, 443].includes(r.port)) openPorts.push(`${host}:${r.port}`);
         if (r.severity === "info") continue;
         findings.push({
           category: "security",
@@ -400,9 +405,22 @@ export const portsTool: Tool = {
         });
       }
     }
+    let cveNote = "";
+    if (ctx.options.cves !== "off" && openPorts.length) {
+      const bin = process.env.NUCLEI_PATH || "nuclei";
+      if (await which(bin)) {
+        ctx.log(`Network CVE scan: Nuclei network checks on ${openPorts.length} open ports`);
+        const list = path.join(ctx.workDir, "open-ports.txt");
+        await writeFile(list, openPorts.join("\n"));
+        const res = await runProcess(bin, ["-l", list, "-pt", "network,javascript", "-severity", "low,medium,high,critical", "-etags", UNSAFE_TAGS.join(","), "-jsonl", "-silent", "-nc", "-duc", "-ni", "-rl", "10", "-c", "5", "-timeout", "10"], { signal: ctx.signal, timeoutMs: 600_000, cwd: ctx.workDir }).catch((e: Error) => ({ code: 1, stdout: "", stderr: e.message }));
+        const net = readNuclei(res.stdout, ctx.startUrl).findings.map((f) => ({ ...f, rule: f.rule.replace(/^nuclei:/, "netscan:") }));
+        findings.push(...net);
+        cveNote = `Network CVE scan: ${net.length} known problems on ${openPorts.length} open ports`;
+      } else cveNote = "Network CVE scan skipped: Nuclei is not installed";
+    }
     return {
       findings,
-      summary: [`${rows.length} open ports on ${hosts.length} host${hosts.length === 1 ? "" : "s"}`],
+      summary: [`${rows.length} open ports on ${hosts.length} host${hosts.length === 1 ? "" : "s"}`, ...(cveNote ? [cveNote] : [])],
       tested: `${PORTS.length} ports on ${hosts.join(", ")}`,
       table: { title: "Open ports", columns: ["Host", "Port", "Service", "Says"], rows },
     };

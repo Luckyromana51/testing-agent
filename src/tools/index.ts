@@ -38,6 +38,8 @@ import { aiEvalTool } from "./ai-eval.js";
 import { mcpAttackTool } from "./mcp-attack.js";
 import { lookalikeTool } from "./lookalike.js";
 import { raceTool } from "./race.js";
+import { cloudTool } from "./cloud.js";
+import { chaosTool } from "./chaos.js";
 import { mutationTool } from "./mutation.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
@@ -67,6 +69,7 @@ export const TOOLS: Tool[] = [
   portsTool,
   mcpAttackTool,
   raceTool,
+  chaosTool,
   zapActiveTool,
   k6Tool,
   jmeterTool,
@@ -80,6 +83,7 @@ export const TOOLS: Tool[] = [
   osvTool,
   trivyTool,
   mutationTool,
+  cloudTool,
   // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
   safariTool,
   voiceOverTool,
