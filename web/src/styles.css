@@ -2052,6 +2052,13 @@ a.brand {
 .tool-options {
   max-width: 520px;
 }
+.tool-textarea {
+  min-height: 84px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
 .tool-toggles {
   max-width: 100%;
 }

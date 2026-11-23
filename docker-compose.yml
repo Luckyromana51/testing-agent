@@ -37,6 +37,20 @@ services:
       APPIUM_URL: ${APPIUM_URL:-}
       APP_SERVER_ADDRESS: ${APP_SERVER_ADDRESS:-}
       APP_PROXY_PORT: ${APP_PROXY_PORT:-8899}
+      # Wave 1 modules (each used only when set; see "Wave 1 modules" in README.md):
+      # GLV's public address for blind-hole callbacks, or an Interactsh server.
+      OOB_BASE_URL: ${OOB_BASE_URL:-}
+      INTERACTSH_SERVER: ${INTERACTSH_SERVER:-}
+      INTERACTSH_TOKEN: ${INTERACTSH_TOKEN:-}
+      # Browser version matrix (profile grid): SELENIUM_GRID_URL=http://selenium-hub:4444
+      SELENIUM_GRID_URL: ${SELENIUM_GRID_URL:-}
+      # Mobile security (profile mobsf): MOBSF_URL=http://mobsf:8000 and the key from MobSF's API page.
+      MOBSF_URL: ${MOBSF_URL:-}
+      MOBSF_API_KEY: ${MOBSF_API_KEY:-}
+      # Phone farm (profile farm): STF_URL=http://stf:7100 and an access token from STF's Settings > Keys.
+      STF_URL: ${STF_URL:-}
+      STF_TOKEN: ${STF_TOKEN:-}
+      DNS_SERVER: ${DNS_SERVER:-}
     depends_on:
       zap:
         condition: service_healthy
@@ -124,7 +138,100 @@ services:
     volumes:
       - android-data:/home/androidusr
 
+  # Optional: "Browser version matrix". Start with: docker compose --profile grid up -d
+  # then add SELENIUM_GRID_URL=http://selenium-hub:4444 to .env and restart the app. Each node is one
+  # older browser version real visitors still use. No ports are published.
+  selenium-hub:
+    image: selenium/hub:4.27.0
+    profiles: ["grid"]
+    restart: unless-stopped
+  chrome-109:
+    image: selenium/node-chrome:109.0
+    profiles: ["grid"]
+    restart: unless-stopped
+    shm_size: "1gb"
+    depends_on: [selenium-hub]
+    environment: &node
+      SE_EVENT_BUS_HOST: selenium-hub
+      SE_EVENT_BUS_PUBLISH_PORT: "4442"
+      SE_EVENT_BUS_SUBSCRIBE_PORT: "4443"
+  chrome-120:
+    image: selenium/node-chrome:120.0
+    profiles: ["grid"]
+    restart: unless-stopped
+    shm_size: "1gb"
+    depends_on: [selenium-hub]
+    environment: *node
+  firefox-115:
+    image: selenium/node-firefox:115.0
+    profiles: ["grid"]
+    restart: unless-stopped
+    shm_size: "1gb"
+    depends_on: [selenium-hub]
+    environment: *node
+  edge-120:
+    image: selenium/node-edge:120.0
+    profiles: ["grid"]
+    restart: unless-stopped
+    shm_size: "1gb"
+    depends_on: [selenium-hub]
+    environment: *node
+
+  # Optional: "Mobile security (MobSF)". Start with: docker compose --profile mobsf up -d
+  # then add MOBSF_URL=http://mobsf:8000 and MOBSF_API_KEY (MobSF screen, port 8000 > API docs) to .env.
+  mobsf:
+    image: opensecurity/mobile-security-framework-mobsf:v4.4.3
+    profiles: ["mobsf"]
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - mobsf-data:/home/mobsf/.MobSF
+
+  # Optional: GLV's own Interactsh server for blind holes. It needs a domain whose name servers point
+  # at this server (see README). Start with: docker compose --profile oob up -d, then set
+  # INTERACTSH_SERVER=https://oob.example.com and INTERACTSH_TOKEN in .env.
+  interactsh:
+    image: projectdiscovery/interactsh-server:v1.2.4
+    profiles: ["oob"]
+    restart: unless-stopped
+    command: -domain ${OOB_DOMAIN:-oob.example.com} -token ${INTERACTSH_TOKEN:-change-me} -skip-acme
+    ports:
+      - "53:53/udp"
+      - "8085:80"
+
+  # Optional: "Phone farm" (DeviceFarmer / STF) on the machine the Android phones are plugged into.
+  # Start with: docker compose --profile farm up -d, open port 7100, create a token in Settings > Keys,
+  # then add STF_URL and STF_TOKEN to .env. The phones' USB is shared through adb on the host.
+  rethinkdb:
+    image: rethinkdb:2.4.4
+    profiles: ["farm"]
+    restart: unless-stopped
+    command: rethinkdb --bind all --cache-size 2048
+    volumes:
+      - farm-db:/data
+  adbd:
+    image: devicefarmer/adb:latest
+    profiles: ["farm"]
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+  stf:
+    image: devicefarmer/stf:3.7.4
+    profiles: ["farm"]
+    restart: unless-stopped
+    depends_on: [rethinkdb, adbd]
+    environment:
+      RETHINKDB_PORT_28015_TCP: tcp://rethinkdb:28015
+    command: stf local --adb-host adbd --public-ip ${FARM_PUBLIC_IP:-127.0.0.1} --provider-min-port 7400 --provider-max-port 7700 --allow-remote
+    ports:
+      - "7100:7100"
+      - "7400-7700:7400-7700"
+
 volumes:
+  farm-db:
+  mobsf-data:
   agent-data:
   android-data:
   influx-data:

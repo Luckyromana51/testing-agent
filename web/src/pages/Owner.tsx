@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Category, User } from "../../../src/types.ts";
 import { api, type DeviceView, type HelperView, type Meta } from "../api.ts";
+import type { FarmPhone } from "../../../src/mobile/farm.ts";
 import { CATEGORY_LABEL, go, plural, timeAgo, usePoll } from "../lib.ts";
 import { CrawlNote, MAX_PAGES, OpenCounts, PasswordInput, Toggle } from "../ui.tsx";
 
@@ -721,6 +722,81 @@ function SettingsTab({ meta, reloadMeta, loginOff }: { meta: Meta; reloadMeta: (
 const EMPTY_DEVICE = { name: "", platform: "android", kind: "phone", appiumUrl: "http://", udid: "", deviceName: "", platformVersion: "", serverAddress: "" };
 type DeviceForm = typeof EMPTY_DEVICE;
 
+/** GLV's phone farm: real phones on DeviceFarmer (Android) and go-ios (iPhones), taken as test phones. */
+function FarmCard({ onTaken }: { onTaken: () => void }) {
+  const [farm, setFarm] = useState<{ phones: FarmPhone[]; notes: string[] } | null>(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const load = async () => {
+    try {
+      setFarm(await api.farm());
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  return (
+    <div className="card farm-card">
+      <div className="stat-label">
+        Phone farm{" "}
+        <button className="btn small ghost" onClick={load}>
+          Refresh
+        </button>
+      </div>
+      <p className="muted small">
+        GLV's own rack of real phones: Android through DeviceFarmer (STF), iPhones on USB through go-ios. Take one to use it as a test
+        phone; remove it from the list to give it back.
+      </p>
+      {err && <div className="error small">{err}</div>}
+      {farm?.notes.map((n) => (
+        <div key={n} className="muted small">
+          {n}
+        </div>
+      ))}
+      <ul className="user-list helper-list">
+        {farm?.phones.map((p) => (
+          <li key={`${p.source}:${p.serial}`}>
+            <div className="grow">
+              <div className="strong">
+                <span className={`helper-dot ${p.available ? "on" : ""}`} aria-hidden /> {p.name}{" "}
+                <span className="muted small">
+                  · {p.platform === "ios" ? "iOS" : "Android"} {p.version ?? ""}
+                  {p.battery !== undefined ? ` · battery ${p.battery}%` : ""}
+                </span>
+              </div>
+              <div className="muted small">
+                {p.serial}
+                {p.usedBy ? ` · in use by ${p.usedBy}` : ""}
+              </div>
+            </div>
+            <button
+              className="btn small"
+              disabled={!p.available || busy === p.serial}
+              onClick={async () => {
+                setBusy(p.serial);
+                setErr("");
+                try {
+                  await api.useFarmPhone(p.source, p.serial);
+                  onTaken();
+                  await load();
+                } catch (e) {
+                  setErr((e as Error).message);
+                } finally {
+                  setBusy("");
+                }
+              }}
+            >
+              {busy === p.serial ? "Taking…" : "Use as test phone"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function DevicesTab() {
   const [devices, setDevices] = useState<DeviceView[] | null>(null);
   const [checking, setChecking] = useState(false);
@@ -799,7 +875,7 @@ function DevicesTab() {
                       className="btn small ghost"
                       onClick={async () => {
                         if (!window.confirm(`Remove ${d.name}?`)) return;
-                        await api.removeDevice(d.id).catch((e: Error) => setErr(e.message));
+                        await (d.farm ? api.releaseFarmPhone(d.id) : api.removeDevice(d.id)).catch((e: Error) => setErr(e.message));
                         load(false);
                       }}
                     >
@@ -890,6 +966,7 @@ function DevicesTab() {
           </div>
         </form>
       </div>
+      <FarmCard onTaken={() => load(true)} />
       <div className="card helper-setup">
         <div className="stat-label">Set up Appium (once per machine)</div>
         <ol>

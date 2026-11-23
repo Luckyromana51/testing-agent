@@ -172,14 +172,14 @@ describe("choosing tools", () => {
 
   it("offers the right tools for each product type", () => {
     const ids = (p: Parameters<typeof cleanChoices>[0]) => TOOLS.filter((t) => t.products.includes(p)).map((t) => t.id);
-    assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "byo-playwright", "glv-probes", "glv-attack", "zap-active", "k6", "jmeter", "mac-safari", "mac-voiceover", "conn-ssh", "conn-hostinger", "conn-mcp"]);
-    assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "glv-probes", "zap-active", "k6", "jmeter", "schemathesis", "newman", "conn-ssh", "conn-hostinger", "conn-mcp"]);
-    assert.deepEqual(ids("code"), ["gitleaks", "opengrep", "osv-scanner", "trivy", "conn-ssh", "conn-hostinger"]);
-    assert.deepEqual(ids("ios"), ["mac-ios-sim", "appium"], "the Mac helper and the test phone run the app; the iOS engine itself reads the IPA");
-    assert.deepEqual(ids("android"), ["appium"]);
+    assert.deepEqual(ids("website"), ["lighthouse", "vnu", "zap", "nuclei", "testssl", "malware", "surface", "lookalike", "verapdf", "browser-matrix", "ai-eval", "email-render", "pairwise", "export-code", "vpat", "region-speed", "inapp-browser", "print-layout", "webrtc", "page-watch", "ai-cost", "messaging", "pqc", "soc2", "backlinks", "rank-tracking", "ai-visibility", "windows-browser", "device-matrix", "game-test", "voice-bot", "tracker-export", "byo-playwright", "glv-probes", "glv-attack", "ai-redteam", "ports", "mcp-attack", "race", "chaos", "zap-active", "k6", "jmeter", "cloud", "mac-safari", "mac-voiceover", "conn-ssh", "conn-hostinger", "conn-mcp", "k8s", "log-seo", "dr-drill"]);
+    assert.deepEqual(ids("api"), ["zap", "nuclei", "testssl", "surface", "ai-eval", "pairwise", "export-code", "region-speed", "ai-cost", "messaging", "pqc", "soc2", "voice-bot", "tracker-export", "glv-probes", "ai-redteam", "ports", "mcp-attack", "race", "chaos", "zap-active", "k6", "jmeter", "schemathesis", "newman", "replay", "openapi-diff", "api-mock", "payments", "reconciliation", "data-quality", "queues", "tracing", "cloud", "conn-ssh", "conn-hostinger", "conn-mcp", "k8s", "dr-drill", "db-code"]);
+    assert.deepEqual(ids("code"), ["pqc", "soc2", "data-quality", "queues", "gitleaks", "opengrep", "osv-scanner", "trivy", "mutation", "cloud", "sbom", "unit-tests", "model-security", "iac", "code-fuzz", "browser-ext", "desktop-app", "iast", "conn-ssh", "conn-hostinger", "k8s", "db-code"]);
+    assert.deepEqual(ids("ios"), ["tracker-export", "mac-ios-sim", "appium", "mobsf", "maestro", "store-listing", "iap", "push-send"], "the Mac helper and the test phone run the app; the iOS engine itself reads the IPA");
+    assert.deepEqual(ids("android"), ["tracker-export", "appium", "mobsf", "mobile-runtime", "app-perf", "deeplink-run", "maestro", "talkback", "store-listing", "iap", "push-send"]);
     // Load and attack tools need the client's permission, each of its own kind.
     const needs = TOOLS.filter((t) => t.safety !== "safe").map((t) => `${t.id}:${t.permission}`);
-    assert.deepEqual(needs, ["glv-probes:attack", "glv-attack:attack", "zap-active:attack", "k6:load", "jmeter:load"]);
+    assert.deepEqual(needs, ["glv-probes:attack", "glv-attack:attack", "ai-redteam:attack", "ports:attack", "mcp-attack:attack", "race:attack", "chaos:attack", "zap-active:attack", "k6:load", "jmeter:load"]);
   });
 });
 

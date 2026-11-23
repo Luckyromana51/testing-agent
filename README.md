@@ -369,6 +369,60 @@ Checks that change data (account lockout on a spare account you mark, file uploa
 - **Ask Claude to fix.** Save the site's repository (GitHub or GitLab, https) and a token in the project's vault. On an issue, **Ask Claude to fix** writes the smallest change and opens a pull request on a new `glv-fix/...` branch. Nothing is merged. Needs `ANTHROPIC_API_KEY`.
 - **Watch the sign-in live.** For a signed-in test, the live view shows the sign-in from **Start test**. When the sign-in gets stuck (a CAPTCHA, a code, a button that does nothing) and someone is watching, the screen is handed over: click and type on the picture, then press **Done**, and the test carries on.
 
+## Wave 1 testing types (2026 gap report)
+
+All in-house, with free or open-source tools in the Docker image. Attack-type checks keep the usual gates: the client's written permission with a proof file (or the owner's own-system unlock), started by hand, read-only, and never on other people's sites.
+
+- **AI chatbot red-team** (tool tab, attack permission naming the chatbot's host): about 30 GLV probes in 10 families (prompt injection, jailbreaks, system-prompt leaks, data leaks, indirect injection from a page GLV serves, unsafe output, excessive agency, made-up answers, endless output, harmful content), each mapped to the OWASP Top 10 for LLM apps 2025 and the OWASP Agentic Top 10 2026. Works on a chat API or the chat widget on the page. Probes that ask for refunds or admin changes run only when the permission allows changes. garak runs too when the image is built with `--build-arg WITH_GARAK=1`.
+- **Hacked site and malware**: hidden spam links, spam text, hidden iframes, skimmers, miners, defacement and cloaking (Googlebot sees other content, Google visitors redirected) on every test; the Malware scan tab runs YARA (GLV's rules in `rules/yara`) and ClamAV over the pages and scripts. An SSH connection also looks for web shells on the server.
+- **Email and DNS**: SPF (including the 10-lookup limit), DMARC, DKIM, MTA-STS, TLS-RPT, BIMI, DNSSEC and CAA for the site's domain, on every test.
+- **Attack surface** tab: subdomains from certificate logs and subfinder, subdomain takeover (26 services), forgotten staging and admin hosts. The **Open ports** tab needs attack permission and checks only the permitted hosts.
+- **Blind holes**: the attack agent's Blind family (blind SSRF and XSS, Log4Shell, header fetches), detected by a callback to `OOB_BASE_URL` or an Interactsh server.
+- **security.txt** (RFC 9116), **GEO / AI search readiness** (AI bots in robots.txt and the firewall, llms.txt, Organization markup, authors, dates, answer headings).
+- **Documents**: PDF and Office files linked from the site (tags, scanned pages, language, title, alt text, headings), and the veraPDF tab for full PDF/UA.
+- **India**: DPDP Rules 2025 (notice items, Board, grievance officer, languages, consent on forms), GIGW 3.0 (Owner can switch it on; off by default), IS 17802 view in the WCAG tab, and the 13 CCPA dark patterns (pre-ticked boxes, basket sneaking, confirm-shaming, false urgency, fake timers, drip pricing, trick questions).
+- **Browser version matrix** tab (profile `grid`): pages in Chrome 109 and 120, Firefox 115 and Edge 120.
+- **Phone farm** (Owner > Test phones > Phone farm): GLV's own Android rack (DeviceFarmer, profile `farm`) and iPhones on USB (go-ios). **MobSF** tab (profile `mobsf`) and **Mobile runtime security** tab (adb and Frida on a test phone).
+- **Journeys**: write a test in plain English and get the steps (Claude when the API key is set, else GLV's rules); steps heal themselves when a button's words or id change a little, and the report says so.
+- **Record and replay** tab (APIs): upload a HAR recording; every GET is replayed on each test and compared (status, JSON fields removed or changed type, speed). The recording also becomes WireMock mocks.
+- **Mutation testing** tab (code, started by hand): small changes to a copy of the code, the project's own tests run after each one, and the changes no test caught are listed.
+
+## Wave 2 testing types (2026 gap report)
+
+Same rule as wave 1: in-house, free or open-source tools in the image, attack and load checks keep the written-permission/own-system gates, started by hand, read-only. Each optional tool below works from its tab only when it is installed; GLV's own fallback runs otherwise.
+
+- **AI**: RAG answer quality and regression (`AI answer quality` tab — grades answers against a question set, checks sources and consistency, keeps a score history), AI agent/tool-use safety (in the red-team tab), and **MCP attack** tab (path, SQL, SSRF, command injection, calls without a token).
+- **Attacks** (attack permission): **Race conditions** tab (one action sent many times at the same instant), HTTP request smuggling / cache poisoning / host-header (attack agent), OAuth/OpenID/SAML flaws, store business logic (negative/fractional/huge quantities), file-upload code execution and photo EXIF location.
+- **Lookalike domains** tab: typosquat domains a phisher could register.
+- **Servers** (SSH / cloud): hardening score (CIS-style), CERT-In log retention and time sync, read-only database health (indexes, foreign keys, plain-text passwords, slow queries, backups), **network CVE scan** of open ports (nuclei), **Cloud posture** tab (Prowler, read-only keys), and **Chaos** tab (restart/stop/delay a service, each self-undoing).
+- **Code / API**: supply-chain depth (typosquats, install scripts, unpinned Actions, risky CI) and more-language SAST (Python, PHP, Go, Java, Kotlin, Swift, Dart), **SBOM** tab (CycloneDX + copyleft licences), **Run the client's tests** tab (npm/pytest/phpunit/flutter + coverage), **OpenAPI diff** tab (breaking changes + lint), **API mocks** tab, **Payment flows** tab (Stripe/Razorpay sandbox), **Email template** tab, **Pairwise** tab, **Export as code** tab (Playwright/Appium).
+- **Web quality**: local SEO, hreflang, social previews, JavaScript render diff, colour-blind / low-vision, WCAG AAA + cognitive, phone layout breaks, **VPAT / EN 301 549** report tab.
+- **Speed**: frontend profiling (INP/CLS/JS size), backend slow calls and N+1 (signed in), **Region speed** tab (proxies in other regions).
+- **Mobile**: OTA update safety (CodePush/Expo), **App performance** tab (start time, jank, memory, size), **Maestro** tab, **Deep-link runner** tab, **TalkBack labels** tab, **In-app / India browsers** tab (WhatsApp/Instagram/Facebook webviews, Samsung, Opera, UC).
+- **Compliance**: GDPR/DPDP consent proof (trackers before consent, a real Reject that works) and PCI DSS 4.0 payment-page script controls (SRI, CSP).
+
+## Wave 3 testing types (2026 gap report, the P3 / niche tail)
+
+Same rule again: in-house, free or open-source tools in the image, the same safety gates, read-only. Optional external scanners (ModelScan, Checkov, kube-bench/Dockle, GoAccess) deepen a check when installed; GLV's own fallback runs otherwise.
+
+- **Code**: **Model file security** (pickle `.pkl/.pt` models that run code when loaded), **IaC** (Terraform/CloudFormation/Kubernetes/Dockerfile rules), **Code fuzzing** readiness (fast-check/Hypothesis/Jazzer), **Browser extension** (manifest permissions, content-script risks), **Desktop app** (Electron/Tauri security settings).
+- **Web**: **Print & PDF layout** (invoices/tickets print without being cut off), **Video/WebRTC quality** (start time, buffering), **Legal page change watch** (terms/privacy fingerprint), **Carbon** (CO2 per page view), **Image/video/Discover SEO**, **Video & audio accessibility** (captions/transcripts), a **second accessibility engine** beside axe, **HIPAA** (health data in URLs and to trackers).
+- **API / data**: **Reconciliation** (a total matches across two systems), **Data quality** (nulls/duplicates/ranges in an export), **Queues** (AsyncAPI validation), **Distributed tracing** (traceparent propagation).
+- **Servers (SSH)**: **Kubernetes/Docker host** (privileged pods, rootful Docker), **Log-file SEO** (what Googlebot really crawls), **Backup & DR drill** (recent backups, a restore test), **Database code** (untested stored procedures/triggers).
+- **Other**: **AI call cost & speed** (tokens, latency, timeouts), **SMS/WhatsApp** templates (length, opt-out, India DLT ids), **Post-quantum readiness** (TLS ML-KEM probe + weak-crypto in code), **SOC 2 / ISO 27001 evidence** report, **Backlinks** (Common Crawl open web graph), **Store listing** and **In-app purchases** (mobile, static).
+## Wave 4 testing types (the previously-deferred tail, now in-house / free)
+
+Everything that was deferred in wave 3 for want of a paid account is now built so it runs on free/open-source tools on GLV servers, or works the moment the client plugs in **their own** free key — GLV never pays. All read-only except the test push (gated). Each is started by hand (`manual`), because each needs a target or key the operator/client supplies.
+
+- **Code**: **IAST** — a taint scan that traces request input (query/body/params/argv/env) into dangerous sinks (eval, shell, SQL, file path, HTML), plus a small Node hook you load with `node --require` during the client's own tests to catch the same sinks at runtime. No paid agent.
+- **SEO**: **Keyword & rank tracking** (via a self-hosted **SearXNG** or the client's own free Google Custom Search key) and **AI answer visibility** (via a local **Ollama** model or the client's own key). Both are clearly labelled **directional** — a sampled, non-personalised SERP and a local model are not identical to the paid commercial tools.
+- **Browsers / devices**: **Windows browsers & fonts** (real Edge on a self-hosted free Windows evaluation VM, driven over the W3C WebDriver HTTP protocol), **Wear / TV / Auto / kiosk / POS / IoT** screen profiles (bundled Chromium: fit, target size, remote-focus visibility), and an **HTML5 game** smoke test (canvas frame rate, WebGL health, JS errors).
+- **Integrations (client's own free credentials)**: **Push notifications** end to end (one test send through the client's own FCM/APNs, under the client's "changes" permission), **Jira / Linear export** (a findings file into the client's own tracker, or a CSV), and **Voice-bot / IVR** testing (open-source **Whisper** STT + **Piper** TTS on GLV servers; the client supplies the voice endpoint).
+
+**Operator / client setup, per tool**: SearXNG or a local Ollama for the SEO tools; a free Windows eval VM running `msedgedriver` for Windows; Whisper + Piper installed on the server for voice-bot; the client's own FCM/APNs key (push), Google key (rank), tracker token (export), or LLM key (AI visibility). Without its target or key a tool reports clearly that it needs it (and push/export fall back to validate-only / CSV).
+
+- **Still deferred (noted in the handbook and gap doc)**: component/Storybook visual tests (needs a running Storybook; visual-compare covers it), test management & traceability (covered by manual checklists + master-control gate), and richer Allure-style history / a single combined risk score (the trends view and master-control gate already cover these). Native Wear/TV apps and MQTT/BLE IoT still need the matching emulators/broker; the web/panel side is covered above.
+
 ## Client connections (SSH, Hostinger, MCP)
 
 Everything runs on GLV's own servers. A project's **Connections** tab is how they reach the client's own system. The owner adds a connection and presses **Test the connection**; from then on every test of the project (scheduled ones too) adds that connection's read-only checks to the report.
@@ -624,6 +678,6 @@ npx tsx test/fixtures/demo-api.ts  # demo API on :4200 (spec at /openapi.json)
 - Jira export
 - iOS traffic recording on the test phone (Android only for now), and Espresso or XCUITest suites the client wrote
 - VoiceOver on iPhone (the Mac helper reads pages with VoiceOver on the Mac), and the Mac helper as a signed app that starts with the Mac
-- More tool tabs (see the [tools plan](https://claude.ai/artifact/AUtm8C8zmdxb4qFxnTTYGD)): MobSF for Android and iOS apps
+- Waves 1–3 of the 2026 gap report (P1, P2 and the P3 niche tail) are built — the whole ~100-gap list. Left for a separate decision or as noted: the white-label client portal (a platform/product feature, tenant login and branding, not a test), and the P3 items that need outside infrastructure or paid-service/client keys (IAST, keyword/rank tracking, AI-answer visibility, Windows VM browsers, Wear/TV/Auto/kiosk/IoT, games, push live-send, Jira/Linear export, voice-bot testing)
 - A local copy of the OSV database kept up to date on the server
 - SEO: finding backlinks nobody listed and rankings without Search Console data need a web-wide crawl or Google's data, so the in-house audit works from the backlinks you list and your Search Console export

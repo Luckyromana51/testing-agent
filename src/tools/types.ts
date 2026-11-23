@@ -13,8 +13,16 @@ export interface ToolOption {
    * "choice" (the default) picks one from choices; "file" is a file the tester uploads (a Postman
    * collection); "toggles" is a set of checkboxes, each of `choices` on or off, stored as the chosen
    * values joined by commas (so the attack agent's families can each be switched on or off).
+   * "text" is a line the tester types (the chatbot's address); choices is then empty.
    */
-  kind?: "choice" | "file" | "toggles";
+  kind?: "choice" | "file" | "toggles" | "text";
+  /** For text: what it must look like (checked when the test is started), and a sample shown in the empty box. */
+  pattern?: string;
+  placeholder?: string;
+  /** For text: the most characters it takes (500 when not set). */
+  maxLength?: number;
+  /** For text: a multi-line box (one value per line), e.g. keywords or scenarios. Newlines are kept. */
+  multiline?: boolean;
   /** For a file: the file types the upload takes, e.g. ".json". */
   accept?: string;
   /** For a file: the tool cannot run without it. */
@@ -64,6 +72,11 @@ export interface ToolInfo {
   ownCategory?: boolean;
   /** Runs only when this optional module is on (Owner panel > Modules). */
   module?: ModuleId;
+  /**
+   * Started by hand only, never part of a default test: it runs the client's own code (mutation
+   * testing runs their test suite) or takes long. The tester switches it on in its tab.
+   */
+  manual?: boolean;
   /** Reads a client system through the project's saved connection (Connections tab); never on by default. */
   needsConnection?: ConnectionKind;
 }

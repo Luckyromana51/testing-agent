@@ -295,6 +295,34 @@ export function ToolTabs({
                       {o.hint && <span className="muted small">{o.hint}</span>}
                       {uploadError && <span className="error-text small">{uploadError}</span>}
                     </div>
+                  ) : o.kind === "text" ? (
+                    <label className="form-field tool-text" key={o.id}>
+                      <span>
+                        {o.label}
+                        {o.required ? " *" : ""}
+                      </span>
+                      {o.multiline ? (
+                        <textarea
+                          className="input tool-textarea"
+                          rows={4}
+                          value={draft[tool.id]?.options[o.id] ?? o.default}
+                          placeholder={o.placeholder}
+                          maxLength={o.maxLength ?? 500}
+                          disabled={!tool.ready}
+                          onChange={(e) => set(tool.id, { options: { ...draft[tool.id].options, [o.id]: e.target.value } })}
+                        />
+                      ) : (
+                        <input
+                          className="input"
+                          value={draft[tool.id]?.options[o.id] ?? o.default}
+                          placeholder={o.placeholder}
+                          maxLength={o.maxLength ?? 500}
+                          disabled={!tool.ready}
+                          onChange={(e) => set(tool.id, { options: { ...draft[tool.id].options, [o.id]: e.target.value } })}
+                        />
+                      )}
+                      {o.hint && <span className="muted small">{o.hint}</span>}
+                    </label>
                   ) : o.kind === "toggles" ? (
                     <div className="form-field tool-toggles" key={o.id}>
                       <span>{o.label}</span>

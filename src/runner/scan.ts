@@ -935,6 +935,15 @@ export async function scanSite(input: ScanOptions): Promise<ScanResult> {
       }
     };
     await Promise.all(Array.from({ length: Math.min(parallel, maxPages) }, (_, slot) => worker(slot)));
+    // Record the links from any pages still buffered in page order (a page can finish out of order,
+    // and if an earlier page never released its turn the later ones wait here). The site-wide checks
+    // (linked documents, broken links) must see every link a crawled page found, as one screen would,
+    // so several pages at once and one page at a time agree. Flush in page order before they run.
+    for (const index of [...found.keys()].sort((a, b) => a - b)) {
+      const entry = found.get(index)!;
+      found.delete(index);
+      addLinks(entry.pageUrl, entry.links);
+    }
     gate?.clearSkipAll();
     const finishedEarly = gate?.finishing();
     if (finishedEarly) {

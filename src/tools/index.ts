@@ -27,6 +27,44 @@ import { iosSimulatorTool, safariTool, voiceOverTool } from "./mac.js";
 import { appiumTool } from "./appium.js";
 import { zapActiveTool, zapTool } from "./zap.js";
 import { attackTool } from "./attack/index.js";
+import { portsTool, surfaceTool } from "./surface.js";
+import { malwareTool } from "./malware.js";
+import { verapdfTool } from "./verapdf.js";
+import { aiRedTeamTool } from "./ai-redteam/index.js";
+import { browserMatrixTool } from "./browser-matrix.js";
+import { mobileRuntimeTool, mobsfTool } from "./mobile-security.js";
+import { replayTool } from "./replay.js";
+import { aiEvalTool } from "./ai-eval.js";
+import { mcpAttackTool } from "./mcp-attack.js";
+import { lookalikeTool } from "./lookalike.js";
+import { raceTool } from "./race.js";
+import { cloudTool } from "./cloud.js";
+import { chaosTool } from "./chaos.js";
+import { mutationTool } from "./mutation.js";
+import { sbomTool } from "./sbom.js";
+import { unitTestsTool } from "./unit-tests.js";
+import { pairwiseTool } from "./pairwise.js";
+import { openapiDiffTool } from "./openapi-diff.js";
+import { apiMockTool } from "./api-mock.js";
+import { paymentsTool } from "./payments.js";
+import { emailRenderTool } from "./email-render.js";
+import { exportCodeTool } from "./export-code.js";
+import { vpatTool } from "./vpat.js";
+import { regionSpeedTool } from "./region-speed.js";
+import { inAppBrowserTool } from "./inapp-browser.js";
+import { appPerfTool } from "./app-perf.js";
+import { deeplinkRunTool } from "./deeplink-run.js";
+import { maestroTool } from "./maestro.js";
+import { talkbackTool } from "./talkback.js";
+import { browserExtTool, codeFuzzTool, desktopAppTool, iacTool, modelSecurityTool } from "./p3-code.js";
+import { pageWatchTool, printLayoutTool, webrtcTool } from "./p3-web.js";
+import { dataQualityTool, queuesTool, reconciliationTool, tracingTool } from "./p3-api.js";
+import { dbCodeTool, drDrillTool, k8sTool, logSeoTool } from "./p3-ops.js";
+import { aiCostTool, backlinksTool, iapTool, messagingTool, pqcTool, soc2Tool, storeListingTool } from "./p3-misc.js";
+import { iastTool } from "./p4-security.js";
+import { aiVisibilityTool, rankTrackingTool } from "./p4-seo.js";
+import { deviceMatrixTool, gameTestTool, windowsBrowserTool } from "./p4-device.js";
+import { pushSendTool, trackerExportTool, voiceBotTool } from "./p4-integrate.js";
 
 export type { ToolChoice, ToolInfo, ToolStat } from "./types.js";
 
@@ -38,31 +76,102 @@ export const TOOLS: Tool[] = [
   zapTool,
   nucleiTool,
   testsslTool,
+  // Hacked sites, the client's other servers, and documents (2026 gap report, wave 1).
+  malwareTool,
+  surfaceTool,
+  lookalikeTool,
+  verapdfTool,
+  browserMatrixTool,
+  aiEvalTool,
+  emailRenderTool,
+  pairwiseTool,
+  exportCodeTool,
+  vpatTool,
+  regionSpeedTool,
+  inAppBrowserTool,
+  // 2026 gap report, wave 3 (P3) web checks.
+  printLayoutTool,
+  webrtcTool,
+  pageWatchTool,
+  aiCostTool,
+  messagingTool,
+  pqcTool,
+  soc2Tool,
+  backlinksTool,
+  // 2026 gap report, wave 4 (previously-deferred items, now in-house / free).
+  rankTrackingTool,
+  aiVisibilityTool,
+  windowsBrowserTool,
+  deviceMatrixTool,
+  gameTestTool,
+  voiceBotTool,
+  trackerExportTool,
   // Optional module: the client's own Playwright tests.
   byoTool,
   // Only with the client's written permission: attacks, then load (GLV's probes first, so ZAP's
   // copies of the same holes fold into them). The attack agent runs the deeper, orchestrated pen test.
   probesTool,
   attackTool,
+  aiRedTeamTool,
+  portsTool,
+  mcpAttackTool,
+  raceTool,
+  chaosTool,
   zapActiveTool,
   k6Tool,
   jmeterTool,
   // APIs
   schemathesisTool,
   newmanTool,
+  replayTool,
+  openapiDiffTool,
+  apiMockTool,
+  paymentsTool,
+  // 2026 gap report, wave 3 (P3) API/data checks.
+  reconciliationTool,
+  dataQualityTool,
+  queuesTool,
+  tracingTool,
   // Source code
   gitleaksTool,
   opengrepTool,
   osvTool,
   trivyTool,
+  mutationTool,
+  cloudTool,
+  sbomTool,
+  unitTestsTool,
+  // 2026 gap report, wave 3 (P3) code checks.
+  modelSecurityTool,
+  iacTool,
+  codeFuzzTool,
+  browserExtTool,
+  desktopAppTool,
+  // 2026 gap report, wave 4 (code): in-house IAST taint scan + runtime hook.
+  iastTool,
   // On GLV's Mac helper: real Safari and VoiceOver for websites, the iOS Simulator for iOS apps.
   safariTool,
   voiceOverTool,
   iosSimulatorTool,
-  // Mobile apps on a test phone (Appium).
+  // Mobile apps on a test phone (Appium), GLV's MobSF server, and runtime security on a test phone.
   appiumTool,
+  mobsfTool,
+  mobileRuntimeTool,
+  appPerfTool,
+  deeplinkRunTool,
+  maestroTool,
+  talkbackTool,
+  storeListingTool,
+  iapTool,
+  // 2026 gap report, wave 4 (mobile): test push send through the client's own FCM/APNs.
+  pushSendTool,
   // Client connections (Connections tab): the client's server over SSH, their Hostinger account, their MCP server.
   ...CONNECTION_TOOLS,
+  // 2026 gap report, wave 3 (P3) ops checks over the client's SSH connection.
+  k8sTool,
+  logSeoTool,
+  drDrillTool,
+  dbCodeTool,
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);
@@ -121,8 +230,10 @@ export function cleanChoices(product: ProductType, input: unknown, permissions?:
       const v = c.options?.[opt.id];
       if (opt.kind === "file") {
         // An upload's stored name (from POST /api/uploads), and the name the tester knows it by.
-        const ext = (opt.accept ?? ".json").replace(/^\./, "");
-        if (v && !(/^[a-z]+$/.test(ext) && new RegExp(`^[0-9a-f-]{36}\\.${ext}$`).test(v))) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
+        // `accept` can list several types (".json,.csv"); the upload is valid if it matches any of them.
+        const exts = (opt.accept ?? ".json").split(",").map((e) => e.trim().replace(/^\./, "")).filter((e) => /^[a-z0-9]+$/.test(e));
+        const okUpload = exts.some((ext) => new RegExp(`^[0-9a-f-]{36}\\.${ext}$`).test(String(v)));
+        if (v && !okUpload) throw new Error(`${tool.name}: upload the ${opt.label} again.`);
         if (!v && opt.required) throw new Error(`${tool.name}: upload the ${opt.label} first, or turn ${tool.name} off.`);
         if (v) {
           options[opt.id] = v;
@@ -131,7 +242,16 @@ export function cleanChoices(product: ProductType, input: unknown, permissions?:
         }
         continue;
       }
+      if (opt.kind === "text" && opt.required && !String(v ?? "").trim()) throw new Error(`${tool.name}: fill in ${opt.label}, or turn ${tool.name} off.`);
       if (v === undefined) continue;
+      if (opt.kind === "text") {
+        // Keep newlines and tabs (a multi-line option is one-value-per-line); strip other control chars. Normalise CRLF.
+        const text = String(v).replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ").trim();
+        if (text.length > (opt.maxLength ?? 500)) throw new Error(`${tool.name}: ${opt.label} is too long.`);
+        if (text && opt.pattern && !new RegExp(opt.pattern).test(text)) throw new Error(`${tool.name}: ${opt.label} does not look right${opt.placeholder ? ` (like ${opt.placeholder})` : ""}.`);
+        if (text) options[opt.id] = text;
+        continue;
+      }
       if (opt.kind === "toggles") {
         // A set of switched-on values, joined by commas; each must be one of the option's choices.
         const picked = v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -160,7 +280,7 @@ export async function defaultChoices(product: ProductType): Promise<ToolChoice[]
   if (process.env.DEFAULT_TOOLS === "none") return [];
   const status = await toolStatus();
   return toolsFor(product)
-    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && !t.needsConnection && status[t.id] === null && !(t.options ?? []).some((o) => o.required))
+    .filter((t) => t.safety === "safe" && !t.needsMac && !t.needsDevice && !t.needsConnection && status[t.id] === null && !t.manual && !(t.options ?? []).some((o) => o.required))
     .map((t) => ({ id: t.id }));
 }
 

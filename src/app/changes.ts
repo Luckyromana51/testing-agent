@@ -144,7 +144,13 @@ const MARK = "glv-upload-check";
 export const TEST_FILES = [
   { name: `${MARK}.html`, mimeType: "text/html", body: `<!doctype html><title>${MARK}</title><p>GLV Testing Agent: a harmless test file. Safe to delete.</p><script>document.title = "${MARK}-ran"</script>` },
   { name: `${MARK}.svg`, mimeType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><title>${MARK}</title><script>document.title = "${MARK}-ran"</script><rect width="10" height="10"/></svg>` },
+  // Server-side code: harmless PHP that only prints a word made at run time (the file itself never
+  // contains the joined word), as .php and with a double extension that slips past name checks.
+  { name: `${MARK}.php`, mimeType: "application/x-php", body: `<?php echo "${MARK}" . "-php-" . "ran"; ?>`, php: true },
+  { name: `${MARK}.php.jpg`, mimeType: "image/jpeg", body: `<?php echo "${MARK}" . "-php-" . "ran"; ?>`, php: true },
 ];
+/** Shows the uploaded PHP ran on the server: the word it builds at run time. Pure, for tests. */
+export const phpRan = (body: string) => body.includes(`${MARK}-php-ran`);
 
 /** Where an uploaded file is now served: a link or image on the page, or an address in the answer. */
 async function findUploaded(page: Page, name: string, answers: string[]): Promise<string | undefined> {
@@ -236,7 +242,11 @@ export const uploadAgent: SiteAgent = {
               await viewer.close().catch(() => {});
             }
             const sameSite = new URL(where).origin === origin;
-            if (ran && sameSite) {
+            if ("php" in file && file.php) {
+              const body = res ? await res.text().catch(() => "") : "";
+              if (phpRan(body))
+                out.push(finding({ category: "security", rule: "app:upload-runs-code", severity: "critical", title: `An uploaded ${file.name.endsWith(".jpg") ? "PHP file named .php.jpg" : "PHP file"} runs on the server`, detail: `The test uploaded a harmless PHP file through "${form.name}" and opened it: the server ran it. Anyone who can upload can run any code on the server (a web shell), read the database and take the site over. Store uploads outside the web folder or in a storage bucket, never allow .php (check the real file type, not the name), and turn off PHP in the upload folder.`, pageUrl: url, evidence: `Uploaded ${file.name} → ${where}\nThe answer contains the word the PHP builds when it runs`, agent: "app.file-upload" }));
+            } else if (ran && sameSite) {
               out.push(
                 finding({
                   category: "security",
@@ -254,7 +264,7 @@ export const uploadAgent: SiteAgent = {
             }
           }
           if (!where) {
-            out.push(finding({ category: "security", rule: "app:upload-any-type", severity: "low", title: `The upload form accepts ${file.name.endsWith(".svg") ? "SVG" : "HTML"} files`, detail: `"${form.name}" saved ${file.name}. The test could not find where it is served, so it could not check it is safe to open. Allow only the file types the feature needs (check the content, not just the name).`, pageUrl: url, evidence: `${file.name}: ${sent.message ?? "saved"}`, agent: "app.file-upload" }));
+            out.push(finding({ category: "security", rule: "app:upload-any-type", severity: "low", title: `The upload form accepts ${file.name.endsWith(".svg") ? "SVG" : file.name.includes(".php") ? "PHP" : "HTML"} files`, detail: `"${form.name}" saved ${file.name}. The test could not find where it is served, so it could not check it is safe to open. Allow only the file types the feature needs (check the content, not just the name).`, pageUrl: url, evidence: `${file.name}: ${sent.message ?? "saved"}`, agent: "app.file-upload" }));
           }
           await page.goto(url, { waitUntil: "load", timeout: 20_000 }).catch(() => {});
           if (await removeUploaded(page, MARK)) c.cleaned(`Removed the test file ${file.name} from ${new URL(url).pathname}`);

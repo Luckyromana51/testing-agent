@@ -172,7 +172,7 @@ describe("GLV attack agent", () => {
   it("parses cookies and the family toggle list", () => {
     assert.deepEqual(parseCookies("a=1; b=two; c="), [{ name: "a", value: "1" }, { name: "b", value: "two" }]);
     assert.deepEqual(parseCookies(undefined), []);
-    assert.equal(enabledFamilies(undefined).length, 10);
+    assert.equal(enabledFamilies(undefined).length, 14);
     assert.deepEqual(enabledFamilies("ssrf,cors").map((f) => f.id), ["cors", "ssrf"]);
     assert.deepEqual(enabledFamilies("").map((f) => f.id), []);
   });

@@ -46,6 +46,22 @@ import { speedAgent } from "./web/speed.js";
 import { consentGateAgent } from "./web/consent.js";
 import { coverAgent, cutTextAgent, overlapAgent, overlapPhoneAgent, readabilityAgent, tabletAgent } from "./web/ui.js";
 import { seoAuditAgent } from "../seo/audit.js";
+import { geoAgent, securityTxtAgent } from "./web/geo.js";
+import { cloakingAgent, hackedAgent } from "./web/hacked.js";
+import { emailDnsAgent } from "./web/email-dns.js";
+import { darkPatternsAgent, fakeTimerAgent } from "./web/dark-patterns.js";
+import { dpdpAgent, dpdpFormsAgent, gigwAgent } from "./web/india.js";
+import { documentsAgent } from "./web/documents.js";
+import { oauthAgent } from "./web/oauth.js";
+import { exifAgent } from "./web/exif.js";
+import { hreflangAgent, localSeoAgent, socialPreviewAgent } from "./web/seo-more.js";
+import { jsRenderAgent } from "./web/js-render.js";
+import { aaaAgent, colourVisionAgent } from "./web/a11y-more.js";
+import { visualLayoutAgent } from "./web/visual-layout.js";
+import { frontendProfileAgent } from "./web/frontend-profile.js";
+import { slowCallsAgent } from "./web/slow-calls.js";
+import { a11yEngine2Agent, carbonAgent, hipaaAgent, imageVideoSeoAgent, mediaA11yAgent } from "./web/p3-agents.js";
+import { consentProofAgent, pciScriptAgent } from "./web/compliance.js";
 
 /** Every specialist agent of the browser engine. Add new agents here. */
 export const WEB_AGENTS: WebAgent[] = [
@@ -115,6 +131,38 @@ export const WEB_AGENTS: WebAgent[] = [
   orphanPagesAgent,
   corsAgent,
   cspAgent,
+  // Wave 1 of the 2026 gap report: AI search, disclosure, hacked sites, email and DNS, dark
+  // patterns, the India pack (DPDP, GIGW 3.0) and documents.
+  geoAgent,
+  securityTxtAgent,
+  hackedAgent,
+  cloakingAgent,
+  emailDnsAgent,
+  darkPatternsAgent,
+  fakeTimerAgent,
+  dpdpAgent,
+  dpdpFormsAgent,
+  gigwAgent,
+  documentsAgent,
+  oauthAgent,
+  exifAgent,
+  // Wave 2 of the gap report: local SEO, hreflang, social previews, JS-render diff, colour-blind
+  // and low-vision, WCAG AAA/cognitive, and layout breaks on phones.
+  localSeoAgent,
+  hreflangAgent,
+  socialPreviewAgent,
+  jsRenderAgent,
+  colourVisionAgent,
+  aaaAgent,
+  visualLayoutAgent,
+  frontendProfileAgent,
+  carbonAgent,
+  imageVideoSeoAgent,
+  mediaA11yAgent,
+  a11yEngine2Agent,
+  hipaaAgent,
+  consentProofAgent,
+  pciScriptAgent,
   // Testing handbook: back and forward, downloads, caching, cookies, navigation, spelling, reliability.
   ...HANDBOOK_WEB_AGENTS,
   // Checks for one kind of product: store pages, and the private pages of web apps, SaaS and CRMs.
@@ -122,6 +170,7 @@ export const WEB_AGENTS: WebAgent[] = [
   // Signed-in apps (CRM, ERP, SaaS...): app calls, lists and tables, ID numbers, CSRF, tokens, and
   // the checks that sign in again in their own browser: who can see what, then the session.
   appCallsAgent,
+  slowCallsAgent,
   exposedAgent,
   tablesAgent,
   idNumbersAgent,

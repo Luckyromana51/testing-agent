@@ -183,6 +183,17 @@ export function HackAgent({ meta }: { meta: Meta }) {
                             })}
                           </div>
                         </details>
+                      ) : o.kind === "text" ? (
+                        <label key={o.id} className="hack-option small">
+                          {o.label}
+                          <input
+                            className="input"
+                            value={options[t.id]?.[o.id] ?? o.default}
+                            placeholder={o.placeholder}
+                            maxLength={o.maxLength ?? 500}
+                            onChange={(e) => setOptions({ ...options, [t.id]: { ...options[t.id], [o.id]: e.target.value } })}
+                          />
+                        </label>
                       ) : (
                         <label key={o.id} className="hack-option small">
                           {o.label}

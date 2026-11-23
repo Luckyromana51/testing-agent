@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { api } from "../api.ts";
 import type { Journey, RoleSummary } from "../../../src/types.ts";
 
 const EXAMPLE = `# One step per line. Lines starting with # are notes.
@@ -107,6 +108,7 @@ export function JourneysEditor({ journeys, onSave, roles = [], signedIn = false 
               </select>
             </label>
           )}
+          <PlainEnglish onSteps={(steps) => set(i, { steps })} />
           <textarea className="input code" rows={Math.min(14, Math.max(5, j.steps.split("\n").length + 1))} value={j.steps} onChange={(e) => set(i, { steps: e.target.value })} aria-label={`Steps of ${j.name}`} spellCheck={false} />
           <details className="journey-cleanup" open={Boolean(j.cleanup)}>
             <summary>Clean-up steps (always run at the end, even when the journey fails)</summary>
@@ -175,5 +177,54 @@ export function JourneysEditor({ journeys, onSave, roles = [], signedIn = false 
         )}
       </div>
     </div>
+  );
+}
+
+/** Write the test in plain English; Claude (or GLV's rules) turns it into steps the tester can check and save. */
+function PlainEnglish({ onSteps }: { onSteps: (steps: string) => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string[]>([]);
+  const [err, setErr] = useState("");
+  return (
+    <details className="journey-plain">
+      <summary>Write it in plain English</summary>
+      <textarea
+        className="input"
+        rows={3}
+        placeholder="Log in, add a red shirt to the cart, and check the total shows ₹999"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label="The test in plain English"
+      />
+      <div className="row gap">
+        <button
+          className="btn small"
+          disabled={busy || !text.trim()}
+          onClick={async () => {
+            setBusy(true);
+            setErr("");
+            try {
+              const d = await api.draftJourney(text);
+              onSteps(d.steps);
+              setNote([d.by === "claude" ? "Written by Claude. Check the steps, then save." : "Written by GLV's rules. Check the steps, then save.", ...d.notes]);
+            } catch (e) {
+              setErr((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Writing steps…" : "Turn into steps"}
+        </button>
+        <span className="muted small">Replaces the steps below. Steps that no longer match after a release heal themselves and are flagged in the report.</span>
+      </div>
+      {err && <div className="error-text small">{err}</div>}
+      {note.map((n) => (
+        <div key={n} className="muted small">
+          {n}
+        </div>
+      ))}
+    </details>
   );
 }

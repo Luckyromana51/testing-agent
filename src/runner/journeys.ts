@@ -6,6 +6,7 @@ import type { WriteCall } from "../agents/types.js";
 import { safeRead } from "../app/reads.js";
 import type { Finding, HookInbox, Journey, JourneyResult, JourneyStepResult, Login } from "../types.js";
 import { finding } from "./finding.js";
+import { healLocator } from "./heal.js";
 
 /**
  * User journeys: steps in plain words, one per line, that the test follows like a person would.
@@ -346,7 +347,24 @@ export function emailLink(email: { html: string; text: string }, words: string):
   return undefined;
 }
 
-export async function runStep(page: Page, step: Step, base: string, vars: StepVars, signal?: AbortSignal, since = new Date().toISOString()): Promise<void> {
+/**
+ * Runs an action on the step's element; when the element is not found the usual way, the closest
+ * match is used instead (self-healing) and noted in `healed`, so the journey can be updated.
+ */
+async function withHeal(page: Page, t: string, kind: "click" | "field", first: () => Promise<Locator>, action: (l: Locator) => Promise<unknown>, healed?: string[]): Promise<void> {
+  const primary = await first();
+  try {
+    await action(primary);
+  } catch (err) {
+    if (!healed || !/Timeout|not found|waiting for|strict mode/i.test((err as Error).message)) throw err;
+    const alt = await healLocator(page, t, kind);
+    if (!alt) throw err;
+    await action(alt.locator);
+    healed.push(`"${t}" was not found; used ${alt.how} instead`);
+  }
+}
+
+export async function runStep(page: Page, step: Step, base: string, vars: StepVars, signal?: AbortSignal, since = new Date().toISOString(), healed?: string[]): Promise<void> {
   const mail = vars.mail;
   const t = fillTarget(step.target ?? "", vars);
   switch (step.kind) {
@@ -354,14 +372,14 @@ export async function runStep(page: Page, step: Step, base: string, vars: StepVa
       await page.goto(resolveUrl(t, base), { waitUntil: "load", timeout: 30_000 });
       return;
     case "click":
-      await (await findClick(page, t)).click({ timeout: TIMEOUT });
+      await withHeal(page, t, "click", () => findClick(page, t), (l) => l.click({ timeout: TIMEOUT }), healed);
       await page.waitForLoadState("load", { timeout: TIMEOUT }).catch(() => {});
       return;
     case "fill":
-      await find(page, t, "field").fill(fillValue(step.value ?? "", vars), { timeout: TIMEOUT });
+      await withHeal(page, t, "field", async () => find(page, t, "field"), (l) => l.fill(fillValue(step.value ?? "", vars), { timeout: TIMEOUT }), healed);
       return;
     case "select":
-      await find(page, t, "field").selectOption({ label: step.value ?? "" }, { timeout: TIMEOUT });
+      await withHeal(page, t, "field", async () => find(page, t, "field"), (l) => l.selectOption({ label: step.value ?? "" }, { timeout: TIMEOUT }), healed);
       return;
     case "check":
       await find(page, t, "field").or(page.getByRole("checkbox", { name: t })).first().check({ timeout: TIMEOUT });
@@ -374,7 +392,7 @@ export async function runStep(page: Page, step: Step, base: string, vars: StepVa
       await page.waitForLoadState("load", { timeout: TIMEOUT }).catch(() => {});
       return;
     case "hover":
-      await (await findClick(page, t)).hover({ timeout: TIMEOUT });
+      await withHeal(page, t, "click", () => findClick(page, t), (l) => l.hover({ timeout: TIMEOUT }), healed);
       return;
     case "see":
       try {
@@ -555,8 +573,24 @@ export async function runJourneys(
       const started = Date.now();
       stepCalls = [];
       const r: JourneyStepResult = { line: step.line, text: shownValue(step, vars), ok: true, ms: 0, ...(isCleanup ? { cleanup: true } : {}) };
+      const healedNotes: string[] = [];
       try {
-        await runStep(page, step, page.url().startsWith("http") ? page.url() : opts.startUrl, vars, opts.signal, since);
+        await runStep(page, step, page.url().startsWith("http") ? page.url() : opts.startUrl, vars, opts.signal, since, healedNotes);
+        if (healedNotes.length) {
+          r.healed = healedNotes[0];
+          findings.push(
+            finding({
+              category: "functional",
+              rule: "journey:healed",
+              severity: "low",
+              title: `Journey "${j.name}" healed a step: update it`,
+              detail: `Step "${step.text}" no longer matched the page, so the journey found the closest button or field instead and went on. ${healedNotes[0]}. If that is the right one, change the step's words so it matches exactly; if not, the page changed and the journey may test the wrong thing.`,
+              pageUrl: page.url().startsWith("http") ? page.url() : opts.startUrl,
+              evidence: `${j.name}, line ${step.line}: ${healedNotes[0]}`,
+              agent: "journeys",
+            }),
+          );
+        }
         // Let the screen's own calls finish, so they count towards this step.
         await page.waitForLoadState("networkidle", { timeout: 2_000 }).catch(() => {});
       } catch (err) {
