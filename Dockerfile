@@ -109,8 +109,10 @@ RUN ln -s /opt/jmeter/bin/jmeter /usr/local/bin/jmeter
 # freshclam in the container); without them ClamAV is skipped and YARA still runs.
 RUN apt-get update && apt-get install -y --no-install-recommends yara clamav clamav-freshclam \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /var/lib/clamav && chown -R pwuser /var/lib/clamav \
- && (freshclam --quiet --stdout || echo "ClamAV signatures were not downloaded: ClamAV is skipped until they are")
+ && mkdir -p /var/lib/clamav && chown -R clamav:clamav /var/lib/clamav \
+ && (freshclam --stdout || (sleep 30 && freshclam --stdout) \
+     || echo "ClamAV signatures were not downloaded: the app downloads them when it starts") \
+ && chown -R pwuser /var/lib/clamav
 # veraPDF (PDF/UA checks for the PDF accessibility tool), installed with its own unattended installer.
 # Optional: if the download fails it is left out and the tab says so.
 RUN mkdir -p /tmp/vera && cd /tmp/vera \
@@ -198,7 +200,13 @@ RUN mkdir -p /data && chown pwuser /data && chown -R pwuser /opt/appium-home
 USER pwuser
 # Nuclei's community checks, downloaded once when the image is built (signed by ProjectDiscovery).
 # Rebuild the image to update them. If the download fails, Nuclei shows as "not tested" in reports.
-RUN nuclei -update-templates -duc -silent || echo "Nuclei checks were not downloaded"
+# Not -duc here: with -duc, nuclei skips the template download too and exits 0 having done nothing.
+# A shallow clone of the same repository is the fallback when nuclei's own download fails.
+RUN (nuclei -update-templates || true) \
+ && if [ ! -d "$HOME/nuclei-templates/http" ]; then \
+      git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git "$HOME/nuclei-templates" || true; \
+    fi \
+ && if [ -d "$HOME/nuclei-templates/http" ]; then echo "Nuclei checks downloaded"; else echo "Nuclei checks were not downloaded"; fi
 VOLUME ["/data"]
 EXPOSE 4000
 CMD ["./start.sh"]
