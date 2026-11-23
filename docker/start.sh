@@ -11,4 +11,10 @@ if [ -n "$ANDROID_DEVICE" ] && [ -z "$APPIUM_URL" ] && command -v appium >/dev/n
   export APPIUM_URL=http://127.0.0.1:4723
   export APPIUM_LOCAL=1
 fi
+# ClamAV's signatures normally come with the image. If that download failed (ClamAV's servers
+# sometimes refuse image builds), fetch them now in the background; the malware check uses
+# YARA alone until they arrive.
+if command -v freshclam >/dev/null 2>&1 && ! ls /var/lib/clamav/*.c[lv]d >/dev/null 2>&1; then
+  (freshclam --stdout --log=/tmp/freshclam-update.log >/tmp/freshclam.log 2>&1 || true) &
+fi
 exec node dist/server.js
